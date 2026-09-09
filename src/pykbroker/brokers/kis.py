@@ -1,0 +1,232 @@
+"""KIS translation over the optional Pykis client and domestic/overseas helpers."""
+
+from collections.abc import Callable, Mapping
+from decimal import Decimal
+from importlib import import_module
+from typing import Any
+
+from pykbroker.exceptions import ConfigurationError, InvalidResponseError, MissingDependencyError, NotSupportedError
+from pykbroker.models import Balance, Capabilities, Order, OrderRequest, Position, Quote
+from pykbroker.safety.gate import OrderSafety
+
+from ._common import BaseBroker, check_response, decimal, field, optional_price, whole
+
+VENUES = {"NASDAQ": ("NAS", "NASD"), "NYSE": ("NYS", "NYSE"), "AMEX": ("AMS", "AMEX")}
+
+
+class KIS(BaseBroker):
+    broker_code = "kis"
+
+    def __init__(
+        self,
+        *,
+        account: str,
+        client: Any = None,
+        api: Any = None,
+        client_factory: Callable[..., Any] | None = None,
+        client_options: Mapping[str, Any] | None = None,
+        safety: OrderSafety | None = None,
+        market: str = "KR",
+        venue: str | None = None,
+        cash_provider: Callable[[Any], Decimal] | None = None,
+    ) -> None:
+        super().__init__(account=account, safety=safety, market=market)
+        if market == "US" and venue not in VENUES:
+            raise ConfigurationError("US KIS requires NASDAQ, NYSE, or AMEX venue")
+        self.venue = venue
+        self._cash_provider = cash_provider
+        self._client, self._api = client, api
+        self._factory, self._options = client_factory, dict(client_options or {})
+        self._scope = None
+        self._owns_client = client is None
+
+    def _connect(self) -> tuple[Any, Any]:
+        try:
+            if self._client is None:
+                factory = self._factory or import_module("Pykis._pykis").PyKis
+                if not self._options and self._factory is None:
+                    raise ConfigurationError("Supply KIS client_options or an authenticated client")
+                options = {**self._options, "realtime": False, "market_auto_sync": False, "late_init": True}
+                self._client = factory(**options)
+            if self._scope is None:
+                self._scope = self._client.account(self._account)
+            if self._api is None:
+                self._api = import_module("Pykis.base.domestic" if self.market == "KR" else "Pykis.base.overseas")
+        except ImportError:
+            raise MissingDependencyError("Supply Pykis source and pykbroker[kis], or inject client and api") from None
+        return self._scope, self._api
+
+    def capabilities(self) -> Capabilities:
+        return Capabilities(supports_spot=True, supports_market_order=self.market == "KR", markets=(self.market,))
+
+    def get_quote(self, symbol: str, *, market: str = "KR") -> Quote:
+        symbol = self._symbol(symbol, market)
+
+        def read() -> Quote:
+            scope, api = self._connect()
+            if market == "KR":
+                price = check_response(api.get_price_domestic(kis_account=scope, stock_code=symbol), "kis")["output"]
+                book = check_response(api.get_quote_domestic(kis_account=scope, stock_code=symbol), "kis")["output1"]
+                return Quote(
+                    symbol=symbol,
+                    last=decimal(price["stck_prpr"]),
+                    bid=optional_price(book["bidp1"]),
+                    ask=optional_price(book["askp1"]),
+                    prev_close=optional_price(price.get("stck_sdpr")),
+                )
+            kwargs = dict(kis_account=scope, excd=VENUES[self.venue][0], code=symbol)
+            price = check_response(api.get_price_overseas_detail(**kwargs), "kis")["output"]
+            book = check_response(api.get_quote_overseas(**kwargs), "kis")["output2"]
+            return Quote(
+                symbol=symbol,
+                market="US",
+                last=decimal(price["last"]),
+                bid=optional_price(book["pbid1"]),
+                ask=optional_price(book["pask1"]),
+            )
+
+        return self._call(read)
+
+    def get_balance(self) -> Balance:
+        def read() -> Balance:
+            scope, _ = self._connect()
+            if self.market == "US":
+                if self._cash_provider is None:
+                    raise ConfigurationError("US cash requires a caller-supplied cash_provider")
+                return Balance(
+                    currency="USD",
+                    cash_available=decimal(self._cash_provider(scope)),
+                    position_value=sum((p.market_value for p in self.get_positions()), Decimal(0)),
+                )
+            balance, amount = scope.balance_all(), scope.amount(code=None)
+            return Balance(
+                cash_available=decimal(field(amount, "ord_psbl_cash")),
+                position_value=decimal(field(balance, "evlu_amt_smtl_amt")),
+            )
+
+        return self._call(read)
+
+    def get_positions(self) -> list[Position]:
+        def read() -> list[Position]:
+            scope, api = self._connect()
+            if self.market == "US":
+                rows = check_response(api.get_balances(kis_account=scope, NATN_CD="840", TR_MKET_CD="00"), "kis")[
+                    "output1"
+                ]
+                return [
+                    Position(
+                        symbol=row["pdno"],
+                        name=row["prdt_name"],
+                        market="US",
+                        quantity=whole(row["ccld_qty_smtl1"]),
+                        sellable=whole(row["ord_psbl_qty1"]),
+                        average_price=decimal(row["avg_unpr3"]),
+                        last=decimal(row["ovrs_now_pric1"]),
+                        market_value=decimal(row["frcr_evlu_amt2"]),
+                    )
+                    for row in rows
+                ]
+            return [
+                Position(
+                    symbol=field(row, "pdno"),
+                    name=field(row, "prdt_name", ""),
+                    quantity=whole(field(row, "hldg_qty")),
+                    sellable=whole(field(row, "ord_psbl_qty")),
+                    average_price=decimal(field(row, "pchs_avg_pric")),
+                    last=decimal(field(row, "prpr")),
+                    market_value=decimal(field(row, "evlu_amt")),
+                )
+                for row in field(scope.balance_all(), "stocks")
+            ]
+
+        return self._call(read)
+
+    def list_orders(self, symbol: str | None = None) -> list[Order]:
+        if symbol is not None:
+            symbol = self._symbol(symbol, self.market)
+
+        def read() -> list[Order]:
+            scope, api = self._connect()
+            if self.market == "US":
+                response = api.get_open_orders_overseas_all(kis_account=scope, market=VENUES[self.venue][1])
+                rows = check_response(response, "kis")["output"]
+                return [
+                    Order(id=str(row["odno"]), symbol=row["pdno"], market="US", status="unknown")
+                    for row in rows
+                    if symbol is None or row["pdno"] == symbol
+                ]
+            rows = field(api.get_open_orders_domestic(kis_account=scope), "orders")
+            result = []
+            for row in rows:
+                code = field(row, "pdno")
+                if symbol is not None and symbol != code:
+                    continue
+                order_id = field(row, "odno")
+                if order_id is None:
+                    raise InvalidResponseError("KIS order identifier missing")
+                remaining = whole(field(row, "psbl_qty"))
+                result.append(
+                    Order(
+                        id=str(order_id),
+                        symbol=code,
+                        remaining=remaining,
+                        status="open" if remaining > 0 else "unknown",
+                    )
+                )
+            return result
+
+        return self._call(read)
+
+    def _place_order(self, request: OrderRequest) -> Order:
+        scope, api = self._connect()
+        symbol = self._symbol(request.symbol, request.market)
+        if self.market == "KR":
+            response = api.post_order_domestic(
+                kis_account=scope,
+                stock_code=symbol,
+                order_type=request.side,
+                order_qty=request.quantity,
+                order_price=int(request.price) if request.order_type == "limit" else 0,
+                dvsn={"limit": "지정가", "market": "시장가", "close": "장후 시간외"}[request.order_type],
+            )
+        else:
+            if request.order_type != "limit":
+                raise NotSupportedError("US KIS only implements limit orders")
+            if request.venue not in (None, self.venue):
+                raise NotSupportedError("Order venue must match the configured US venue")
+            response = api.post_order_overseas(
+                kis_account=scope,
+                ticker=symbol,
+                market=VENUES[self.venue][1],
+                order_type=request.side,
+                order_qty=request.quantity,
+                order_price=float(request.price),
+            )
+        envelope = check_response(response, "kis")
+        if isinstance(response, Mapping) and field(envelope, "rt_cd") is None:
+            raise InvalidResponseError("KIS submission response lacks a success status")
+        output = field(envelope, "output", envelope)
+        order_id = field(output, "ODNO", field(output, "odno"))
+        if order_id is None or not str(order_id).strip():
+            raise InvalidResponseError("KIS response lacks an order identifier; reconcile before retrying")
+        return Order(
+            id=str(order_id),
+            symbol=symbol,
+            side=request.side,
+            order_type=request.order_type,
+            quantity=request.quantity,
+            price=request.price,
+            status="accepted",
+            market=request.market,
+        )
+
+    def close(self) -> None:
+        if not self._closed and self._owns_client and self._client is not None:
+            try:
+                close = getattr(self._client, "close", None)
+                if callable(close):
+                    self._call(close)
+            finally:
+                super().close()
+        else:
+            super().close()

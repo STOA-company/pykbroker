@@ -1,0 +1,18 @@
+{
+  "rsp_cd": "00000",
+  "Out": {
+    "Dps2": "200000",
+    "TotEvalAmt": "140000"
+  },
+  "Out1": [
+    {
+      "IsuNo": "A005930",
+      "IsuNm": "Fixture equity",
+      "BalQty0": "2",
+      "AbleQty": "1",
+      "PchsAmt": "136000",
+      "NowPrc": "70000",
+      "EvalAmt": "140000"
+    }
+  ]
+}

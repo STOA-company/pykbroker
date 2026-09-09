@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>pykbroker · 실행 SDK 계약</title>
+<style>
+:root{color-scheme:light dark;--bg:#f5f7fb;--fg:#17243b;--panel:#fff;--line:#d7dfeb;--accent:#234ac7}
+@media(prefers-color-scheme:dark){:root{--bg:#101722;--fg:#e3e9f3;--panel:#192536;--line:#40506a;--accent:#a5baff}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.7 system-ui,sans-serif}
+header,main{max-width:1060px;margin:auto;padding:24px}header{padding-bottom:0}header p{margin:0}
+small{opacity:.8}nav{display:flex;flex-wrap:wrap;gap:8px 18px;margin:20px 0;padding:18px;background:var(--panel);border-radius:10px}
+a{color:var(--accent);text-underline-offset:3px}nav a{font-size:14px}h1{font-size:2rem;line-height:1.3}h2{margin-top:2.7rem;scroll-margin-top:24px;font-size:1.4rem}
+main{overflow-wrap:anywhere}pre{background:var(--panel);padding:18px;overflow:auto;border:1px solid var(--line);border-radius:8px}
+code{font-size:.9em}table{border-collapse:collapse;min-width:540px;width:100%;font-size:14px}th,td{padding:12px;text-align:left;border:1px solid var(--line);vertical-align:top}th{background:var(--panel)}
+.table-scroll{overflow:auto;max-width:100%;margin:20px 0}.banner{padding:16px;border-left:4px solid var(--accent);background:var(--panel)}
+@media(max-width:600px){header,main{padding:16px}h1{font-size:1.7rem}nav{display:block}nav a{display:block;margin:8px 0}}
+</style>
+<header><p><strong>pykbroker</strong> · 한국 증권사 통합 SDK</p><small>Markdown 정본의 오프라인 검토본 · 외부 리소스 없음</small>
+<div class="banner">계약과 타입만 제공합니다. 실행기·디스패치·재개·자동 주문 구현은 포함하지 않습니다.</div>
+<nav aria-label="목차"><a href="#section-1">실행 SDK 계약</a>
+<a href="#section-2">1. 실행 경계와 고정 컨텍스트</a>
+<a href="#section-3">2. 수량 계산</a>
+<a href="#section-4">3. 시세 읽기</a>
+<a href="#section-5">4. 시간과 대기</a>
+<a href="#section-6">5. 주문과 상태</a>
+<a href="#section-7">6. 기록과 종료</a>
+<a href="#section-8">7. 예외와 안전 게이트</a>
+<a href="#section-9">8. 트레이더 HTTP 계약</a>
+<a href="#section-10">9. 실행기 구현자의 검증 기준</a></nav></header><main><h1 id="section-1">실행 SDK 계약</h1>
+<p>이 문서와 <code>pykbroker.contracts.execution</code>은 실행기가 구현해야 할 <strong>계약</strong>을 정의합니다. 실행기, 코드 실행, 의도 디스패치, 재시작 복구, 스케줄러는 이 패키지에 없습니다. 이 계약의 어떤 함수도 실행 코드를 트레이더에 전달하지 않습니다.</p>
+<h2 id="section-2">1. 실행 경계와 고정 컨텍스트</h2>
+<p>실행 하나는 <strong>계좌 1 · 종목 1 · 확정 수량 1 · 세션 1</strong>에 묶입니다. 사용자가 확인한 뒤 계좌·종목·방향·목표 수량·선택 세션을 바꿀 수 없습니다. 변경은 새 실행으로 확인받아야 합니다. 계좌는 실행 시작 시 한 번 갱신한 읽기 전용 스냅샷이며 깊은 복사나 불변 저장으로 보장해야 합니다.</p>
+<div class="table-scroll" tabindex="0"><table>
+<thead>
+<tr>
+<th>속성</th>
+<th>계약 타입</th>
+<th>의미</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ctx.account</code></td>
+<td><code>Account</code></td>
+<td><code>account_id</code>, <code>broker</code>, <code>cash_available</code>, <code>holdings</code></td>
+</tr>
+<tr>
+<td><code>ctx.symbol</code></td>
+<td><code>Symbol</code></td>
+<td><code>code</code>, <code>name</code>, <code>market: KR/US/COIN</code>, <code>venue</code>, <code>tick</code>, <code>lot</code>, <code>min_notional</code></td>
+</tr>
+<tr>
+<td><code>ctx.side</code></td>
+<td><code>buy / sell</code></td>
+<td>한 방향</td>
+</tr>
+<tr>
+<td><code>ctx.target_qty()</code></td>
+<td><code>int</code></td>
+<td>확인한 총 수량(주)</td>
+</tr>
+<tr>
+<td><code>ctx.remaining()</code></td>
+<td><code>int</code></td>
+<td>목표 수량 − 해당 실행의 체결 누계</td>
+</tr>
+<tr>
+<td><code>ctx.filled_qty()</code></td>
+<td><code>int</code></td>
+<td>해당 실행의 체결 누계</td>
+</tr>
+<tr>
+<td><code>ctx.filled_avg()</code></td>
+<td><code>float</code></td>
+<td>해당 실행 체결의 가중 평균가</td>
+</tr>
+</tbody>
+</table></div>
+<p>상태는 계좌 전체 체결이나 보유 수량 변화로 추정하면 안 됩니다. 실행 ID에 속한 체결 원장으로 누계와 잔량을 계산해야 합니다. 초기 미체결 상태의 평균가 표현은 실행기가 일관되게 정하고 문서화해야 합니다.</p>
+<p>타입 표의 <code>ctx</code> 수량은 주식 정수 수량입니다. 의도 전송 타입의 COIN 수량은 float를 허용하지만, 이 패키지의 주식 브로커와 <code>ctx</code> 수량 계산을 소수 코인 수량으로 임의 확장하지 않습니다.</p>
+<h2 id="section-3">2. 수량 계산</h2>
+<p>순수 계산은 주문 의도를 만들지 않습니다. 계산 결과가 사용자 확인과 다른 주문으로 조용히 바뀌지 않도록 하기 위한 구분입니다.</p>
+<div class="table-scroll" tabindex="0"><table>
+<thead>
+<tr>
+<th>함수</th>
+<th>반환</th>
+<th>실행기가 지킬 규칙</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>qty_for_krw(krw: int, price: float)</code></td>
+<td><code>int</code> 주</td>
+<td><code>floor(krw / price)</code>; 0이면 <code>Clarify(&quot;금액이 1주 값보다 작습니다&quot;)</code></td>
+</tr>
+<tr>
+<td><code>split(total: int, n: int, i: int)</code></td>
+<td><code>int</code> 주</td>
+<td>균등 분할, 나머지는 마지막 라운드; <code>1 ≤ n ≤ 40</code>; 인덱스는 이 계약에서 <code>0 ≤ i &lt; n</code>으로 정의</td>
+</tr>
+<tr>
+<td><code>round_price(price: float)</code></td>
+<td><code>int</code> 원</td>
+<td>종목 호가 단위로 매수 내림·매도 올림</td>
+</tr>
+<tr>
+<td><code>held()</code></td>
+<td><code>int</code> 주</td>
+<td>매도 수량 상한으로 사용하는 보유 수량</td>
+</tr>
+</tbody>
+</table></div>
+<p>0 이하 가격·잘못된 분할 개수·누락 종목 규칙은 확인 단계에서 <code>Clarify</code>로 처리해야 합니다. 호가·수량 계산 함수는 실행기 쪽에서 구현합니다. <code>rules.kr</code>은 별도 시장 규칙 도우미이며 이 파일에 실행기 구현을 추가하는 근거가 아닙니다.</p>
+<h2 id="section-4">3. 시세 읽기</h2>
+<p>트레이더 시세 프록시를 통해 조회하고 <strong>지연 1초 이하, 실행당 초당 2회 상한</strong>을 지켜야 합니다. 오래되거나 누락된 시세를 0으로 바꿔 주문 수량을 계산하지 않습니다.</p>
+<div class="table-scroll" tabindex="0"><table>
+<thead>
+<tr>
+<th>함수</th>
+<th>반환</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>last()</code></td>
+<td>현재가 <code>float</code></td>
+</tr>
+<tr>
+<td><code>best_bid()</code> / <code>best_ask()</code></td>
+<td>매수·매도 1호가 <code>float</code></td>
+</tr>
+<tr>
+<td><code>prev_close()</code></td>
+<td>전일 종가 <code>float</code>, 가격 밴드 기준</td>
+</tr>
+<tr>
+<td><code>vwap_today()</code></td>
+<td>1분봉으로 계산한 당일 누적 VWAP <code>float</code></td>
+</tr>
+<tr>
+<td><code>bars(n: int)</code></td>
+<td>최근 n개 1분봉 <code>list[Bar]</code>, <code>n ≤ 390</code></td>
+</tr>
+</tbody>
+</table></div>
+<p><code>Bar</code>는 <code>t, o, h, l, c, v</code> 필드를 갖습니다. 시각과 가격은 종목의 거래일·통화와 일치해야 하며 실행기가 조회 제한·신선도 검증·계산을 책임집니다. 이 패키지의 <code>Quote</code>가 모든 프록시 지표를 제공한다고 가정하지 않습니다.</p>
+<h2 id="section-5">4. 시간과 대기</h2>
+<div class="table-scroll" tabindex="0"><table>
+<thead>
+<tr>
+<th>함수</th>
+<th>반환 또는 규칙</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>now()</code></td>
+<td>KST <code>datetime</code>, timezone 포함</td>
+</tr>
+<tr>
+<td><code>session()</code></td>
+<td><code>Session{open, close, is_open}</code>; 확인 시 선택한 다음 거래일 세션 고정</td>
+</tr>
+<tr>
+<td><code>wait(duration: str)</code></td>
+<td><code>&quot;30s&quot;</code>~<code>&quot;120m&quot;</code>, 최소 30초; 장 마감에 도달하면 <code>ExecutionEnded</code></td>
+</tr>
+<tr>
+<td><code>wait_until(hhmm: str)</code></td>
+<td>선택 세션 안 시각만 허용; 밖이면 빌드 시 <code>Clarify</code></td>
+</tr>
+<tr>
+<td><code>wait_for(pred, timeout: str)</code></td>
+<td>30초마다 <code>pred()</code> 평가</td>
+</tr>
+</tbody>
+</table></div>
+<p>실행기는 휴장·특별 개장일을 반영한 달력을 제공해야 합니다. 시간 비교는 선택 세션으로 수행하고 서버의 UTC 날짜나 단순 요일로 거래일을 추측하지 않습니다. 대기·폴링·재개 구현은 실행기 책임이며 이 패키지는 서명만 제공합니다.</p>
+<h2 id="section-6">5. 주문과 상태</h2>
+<p><strong>주문 함수 하나는 트레이더 의도 하나</strong>에 대응합니다. 부분체결과 취소는 의도·실행 ID 기준으로 추적하며, 타임아웃을 새 주문으로 자동 변환하지 않습니다.</p>
+<div class="table-scroll" tabindex="0"><table>
+<thead>
+<tr>
+<th>함수</th>
+<th>반환</th>
+<th>트레이더 의도 / 규칙</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>place_limit(qty, price, ttl=&quot;5m&quot;)</code></td>
+<td><code>Order</code></td>
+<td><code>kind=&quot;limit&quot;</code>, price, ttl_sec; TTL은 1~60분 또는 <code>until_close</code></td>
+</tr>
+<tr>
+<td><code>place_market(qty)</code></td>
+<td><code>Order</code></td>
+<td><code>kind=&quot;market&quot;</code>; 정규장에서만</td>
+</tr>
+<tr>
+<td><code>cancel(order)</code></td>
+<td>없음</td>
+<td>해당 의도의 미체결분만 취소</td>
+</tr>
+<tr>
+<td><code>cancel_open()</code></td>
+<td>없음</td>
+<td>이 실행의 열린 의도 전부 취소; 실행 종료 시 자동 호출</td>
+</tr>
+<tr>
+<td><code>order.status()</code></td>
+<td><code>Status</code></td>
+<td>실행 조회 결과에서 해당 의도를 식별</td>
+</tr>
+<tr>
+<td><code>order.wait(timeout)</code></td>
+<td><code>Status</code></td>
+<td>체결·취소·타임아웃까지 폴링</td>
+</tr>
+</tbody>
+</table></div>
+<p><code>Status</code>는 <code>state</code>, <code>filled_qty</code>, <code>avg_price</code>이며 state는 <code>open</code>, <code>partial</code>, <code>filled</code>, <code>cancelled</code>, <code>rejected</code> 중 하나입니다. 이 실행 계약의 <code>Order</code>는 SDK의 Pydantic <code>models.Order</code>와 별개인 행동 인터페이스입니다. 상태·대기를 구현하는 책임은 실행기에 있습니다.</p>
+<p>TTL <code>until_close</code>는 고정 세션 종료까지 남은 시간으로 변환해야 합니다. 시장가 의도에 지정가를 끼워 넣거나, 단일 주문 취소를 계좌·종목 전체 취소로 확대하지 않습니다. 취소 응답을 체결이 사라졌다는 뜻으로 해석하지 않습니다.</p>
+<h2 id="section-7">6. 기록과 종료</h2>
+<div class="table-scroll" tabindex="0"><table>
+<thead>
+<tr>
+<th>함수</th>
+<th>의미</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>note(text)</code></td>
+<td>사용자에게 보이는 실행 로그 한 줄</td>
+</tr>
+<tr>
+<td><code>done(reason)</code></td>
+<td>조기 종료; 열린 의도 자동 취소</td>
+</tr>
+</tbody>
+</table></div>
+<p>실행기는 기록에서 계좌·인증값을 제거하고 중복 종료를 안전하게 처리해야 합니다. 종료 요청 후 취소 결과를 원장으로 확인하는 책임도 실행기 소유입니다. 계약 패키지는 기록 저장·취소 루프를 실행하지 않습니다.</p>
+<h2 id="section-8">7. 예외와 안전 게이트</h2>
+<div class="table-scroll" tabindex="0"><table>
+<thead>
+<tr>
+<th>예외</th>
+<th>발생 조건</th>
+<th>실행기 처리</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Clarify(question)</code></td>
+<td>빌드·드라이런 시 값 누락, 세션 밖</td>
+<td>사용자에게 확인 요청</td>
+</tr>
+<tr>
+<td><code>Rejected(reason)</code></td>
+<td>한도·가격 밴드·킬스위치·장외 등 의도 거절</td>
+<td>사용자 코드가 잡을 수 있음; 미처리면 실행 종료</td>
+</tr>
+<tr>
+<td><code>ExecutionEnded</code></td>
+<td>장 마감·런타임 상한·사용자 취소</td>
+<td>열린 의도 자동 취소 후 종료</td>
+</tr>
+</tbody>
+</table></div>
+<p>수량·소유권·세션·가격 밴드·드라이런·한도·멱등성·속도 제한을 트레이더가 확인해야 합니다. ctx나 SDK의 사전 검증으로 서버 측 권한·게이트 검증을 생략할 수 없습니다. 실제 한도와 승인 정책은 호출자가 제공합니다.</p>
+<h2 id="section-9">8. 트레이더 HTTP 계약</h2>
+<p>다음 경로는 <strong>구현 요구사항</strong>이며 pykbroker가 HTTP 서버로 등록하는 엔드포인트가 아닙니다.</p>
+<pre><code class="language-text">POST /orders/intents
+{
+  execution_id, seq, account_id, ticker,
+  market: &quot;KR&quot; | &quot;US&quot; | &quot;COIN&quot;, venue?, side: &quot;buy&quot; | &quot;sell&quot;,
+  qty, kind: &quot;limit&quot; | &quot;market&quot;, price, ttl_sec, client_key
+}
+</code></pre>
+<ul>
+<li>KR·US <code>qty</code>는 정수, COIN은 실수. 가격·수량의 양수·유한성은 서버에서 검증합니다.</li>
+<li><code>execution_id</code>는 실행 경계, <code>seq</code>는 실행 내 순서, <code>client_key</code>는 같은 의도의 재전송 식별입니다.</li>
+<li>계좌 ID는 호출자가 전달한 계약상의 불투명 식별자이며 특정 저장소의 컬럼 규칙을 가정하지 않습니다.</li>
+<li>limit에는 price가 필요하고, market에는 지정가 제한을 암시하지 않습니다.</li>
+</ul>
+<pre><code class="language-text">200 { intent_id, status: &quot;accepted&quot;, broker_order_id }
+409 { status: &quot;rejected&quot;, reason:
+      kill_switch | dry_run | not_owner | cap_exceeded |
+      price_band | session_closed | rate_limit | duplicate }
+
+POST /orders/intents/{intent_id}/cancel
+GET  /orders/executions/{execution_id}
+     → { intents[], filled_qty, avg_price, remaining }
+GET  /quotes/{ticker}
+     → { last, bid1, ask1, prev_close, vwap }
+</code></pre>
+<p><code>Trader</code> Protocol은 이 네 동작의 타입을 표현합니다. 의도 데이터는 숫자·문자열·상태만 전달하고 사용자 코드·함수·직렬화된 실행 코드를 보내지 않습니다. 인증, 소유권 확인, 디스패치, 체결 동기화, 재개·복구·게이트 정책 구현은 패키지 범위 밖입니다.</p>
+<h2 id="section-10">9. 실행기 구현자의 검증 기준</h2>
+<p>고정 컨텍스트 변경 거부, 분할 합계·마지막 잔량, 호가 반올림 방향, 거래일 경계, 오래된 시세, 조회 상한, 장외 시장가, 중복 의도, 부분체결 취소, 만료, 종료 정리, 권한 거절을 실행기 저장소에서 검증해야 합니다. 이 저장소는 Protocol의 모든 함수 본문이 <code>raise NotImplementedError</code>만 포함하는지 AST로 검사합니다.</p>
+<p>함수 규칙이 문서에 있다고 실행기가 구현된 것은 아닙니다. 이 파일과 HTML 검토본은 같은 계약을 읽는 두 표면이며 Markdown이 정본입니다.</p>
+</main></html>

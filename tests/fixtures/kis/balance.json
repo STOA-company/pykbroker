@@ -1,0 +1,14 @@
+{
+  "evlu_amt_smtl_amt": "140000",
+  "stocks": [
+    {
+      "pdno": "005930",
+      "prdt_name": "Fixture equity",
+      "hldg_qty": "2",
+      "ord_psbl_qty": "1",
+      "pchs_avg_pric": "68000",
+      "prpr": "70000",
+      "evlu_amt": "140000"
+    }
+  ]
+}

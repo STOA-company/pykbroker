@@ -1,0 +1,179 @@
+"""Shared lifecycle and safety boundary; adapters only translate vendor calls."""
+
+from collections.abc import Callable, Mapping
+from decimal import Decimal, InvalidOperation
+from typing import Any, TypeVar
+
+from pydantic import ValidationError
+
+from pykbroker.exceptions import (
+    BrokerError,
+    BrokerRejectedError,
+    ConfigurationError,
+    InvalidResponseError,
+    NotSupportedError,
+    TransportError,
+)
+from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
+from pykbroker.rules.kr import equity_rules, normalize_symbol
+from pykbroker.safety.gate import OrderSafety
+
+T = TypeVar("T")
+
+
+def field(value: Any, name: str, default: Any = None) -> Any:
+    return value.get(name, default) if isinstance(value, Mapping) else getattr(value, name, default)
+
+
+def decimal(value: Any) -> Decimal:
+    if isinstance(value, bool) or value is None:
+        raise InvalidResponseError("Missing or invalid numeric field")
+    try:
+        result = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        raise InvalidResponseError("Invalid numeric field") from None
+    if not result.is_finite() or result < 0:
+        raise InvalidResponseError("Nonfinite or negative numeric field")
+    return result
+
+
+def whole(value: Any) -> int:
+    number = decimal(value)
+    if number != number.to_integral_value():
+        raise InvalidResponseError("Fractional stock quantity in response")
+    return int(number)
+
+
+def optional_price(value: Any) -> Decimal | None:
+    if value in (None, "", "0", 0):
+        return None
+    return decimal(value)
+
+
+def check_response(value: Any, broker: str) -> Any:
+    envelope = field(value, "json_data", value)
+    code = field(envelope, "rt_cd" if broker == "kis" else "rsp_cd")
+    if code is not None and str(code) not in ({"0"} if broker == "kis" else {"00000", "0"}):
+        raise BrokerRejectedError("Broker rejected the request; inspect vendor status securely")
+    return envelope
+
+
+class BaseBroker:
+    broker_code = "base"
+
+    def __init__(self, *, account: str, safety: OrderSafety | None = None, market: str = "KR") -> None:
+        if not isinstance(account, str) or not account.strip():
+            raise ConfigurationError("Supply an account identifier")
+        if market not in {"KR", "US"}:
+            raise NotSupportedError("Supported stock markets: KR, US")
+        self._account = account
+        self.market = market
+        self.safety = safety if safety is not None else OrderSafety()
+        self._closed = False
+
+    def _call(self, function: Callable[[], T]) -> T:
+        if self._closed:
+            raise ConfigurationError("Broker is closed")
+        try:
+            return function()
+        except BrokerError:
+            raise
+        except (KeyError, TypeError, ValueError, AttributeError, ValidationError):
+            raise InvalidResponseError("Vendor response or client contract is invalid") from None
+        except Exception:
+            raise TransportError("Vendor call failed; reconcile uncertain orders before retrying") from None
+
+    def _symbol(self, symbol: str, market: str) -> str:
+        if market != self.market:
+            raise NotSupportedError("Request market must match this broker instance")
+        return normalize_symbol(symbol) if market == "KR" else symbol
+
+    def capabilities(self) -> Capabilities:
+        return Capabilities()
+
+    def get_rules(self, symbol: str) -> Rules:
+        if self.market == "KR":
+            return equity_rules(symbol)
+        return Rules(symbol=symbol, market="US", currency="USD", timezone="America/New_York")
+
+    def _validate_order(self, request: OrderRequest | CancelRequest) -> None:
+        self._symbol(request.symbol, request.market)
+        if request.venue == "NXT" and not self.capabilities().supports_nxt:
+            raise NotSupportedError("NXT is not supported")
+        if request.venue not in (None, "KRX", "NXT") and self.market == "KR":
+            raise NotSupportedError("Unknown KR venue")
+        if isinstance(request, OrderRequest) and request.price is not None:
+            if self.market == "KR" and request.price != request.price.to_integral_value():
+                raise ConfigurationError("KR prices must be whole won; round explicitly before submission")
+        if isinstance(request, OrderRequest) and request.order_type == "market":
+            if not self.capabilities().supports_market_order:
+                raise NotSupportedError("Market orders are not supported")
+
+    def place_order(self, request: OrderRequest) -> Order:
+        # Revalidate even models constructed with model_construct/model_copy.
+        request = OrderRequest.model_validate(request.model_dump())
+        self._validate_order(request)
+        return self.safety.execute(
+            self.broker_code, self._account, request, lambda: self._call(lambda: self._place_order(request))
+        )
+
+    def cancel_order(self, request: CancelRequest) -> Order:
+        request = CancelRequest.model_validate(request.model_dump())
+        self._validate_order(request)
+        return self.safety.execute(
+            self.broker_code, self._account, request, lambda: self._call(lambda: self._cancel_order(request))
+        )
+
+    def _place_order(self, request: OrderRequest) -> Order:
+        raise NotSupportedError("Order submission is not implemented")
+
+    def _cancel_order(self, request: CancelRequest) -> Order:
+        raise NotSupportedError("Single-order cancellation is not implemented")
+
+    def get_quote(self, symbol: str, *, market: str = "KR") -> Quote:
+        raise NotSupportedError("Quotes are not implemented")
+
+    def get_balance(self) -> Balance:
+        raise NotSupportedError("Balance is not implemented")
+
+    def get_positions(self) -> list[Position]:
+        raise NotSupportedError("Positions are not implemented")
+
+    def list_orders(self, symbol: str | None = None) -> list[Order]:
+        raise NotSupportedError("Order listing is not implemented")
+
+    def status(self, order: Order) -> Order:
+        for candidate in self.list_orders(order.symbol):
+            if candidate.id == order.id:
+                return candidate
+        # Missing from an open-order list never proves a fill or cancellation.
+        return order.model_copy(update={"status": "unknown"})
+
+    def quote(self, symbol: str, *, market: str = "KR") -> Quote:
+        return self.get_quote(symbol, market=market)
+
+    def balance(self) -> Balance:
+        return self.get_balance()
+
+    def positions(self) -> list[Position]:
+        return self.get_positions()
+
+    def rules(self, symbol: str) -> Rules:
+        return self.get_rules(symbol)
+
+    def place(self, request: OrderRequest) -> Order:
+        return self.place_order(request)
+
+    def cancel(self, request: CancelRequest) -> Order:
+        return self.cancel_order(request)
+
+    def close(self) -> None:
+        self._closed = True
+
+    def __enter__(self):
+        if self._closed:
+            raise ConfigurationError("Broker is closed")
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self.close()

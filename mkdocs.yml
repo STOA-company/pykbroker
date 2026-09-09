@@ -1,0 +1,53 @@
+site_name: pykbroker
+site_description: Unified Python SDK and MCP server for Korean stock brokers
+repo_url: https://github.com/STOA-company/pykbroker
+repo_name: STOA-company/pykbroker
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - content.code.copy
+    - navigation.sections
+    - navigation.expand
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - pymdownx.details
+  - toc:
+      permalink: true
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - API Reference:
+      - Brokers: api/brokers.md
+      - Models: api/models.md
+      - Rules: api/rules.md
+  - MCP Server: mcp.md
+  - Safety: safety.md
+  - CLI: cli.md
+  - Broker Matrix: BROKER_MATRIX.md
+  - Adding a Broker: BROKER_ADAPTER_RECIPE.md
+  - Execution SDK Contract: execution-sdk-contract.md
+  - Changelog: changelog.md
+  - Contributing: contributing.md
+  - Security: security.md
+  - Notice: notice.md

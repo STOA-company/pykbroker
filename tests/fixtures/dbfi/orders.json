@@ -1,0 +1,17 @@
+[
+  {
+    "rsp_cd": "00000",
+    "Out1": [
+      {
+        "OrdNo": "42",
+        "IsuNo": "A005930",
+        "AllExecQty": "1",
+        "MrcAbleQty": "1"
+      }
+    ]
+  },
+  {
+    "rsp_cd": "00000",
+    "Out1": []
+  }
+]
