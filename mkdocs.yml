@@ -1,10 +1,16 @@
 site_name: pykbroker
-site_description: Unified Python SDK and MCP server for Korean stock brokers
+site_description: 한국 증권사 Open API를 공통 Python SDK와 기본 읽기 전용 MCP 서버로 연결합니다.
+# Planned canonical address; this configuration does not publish the site.
+site_url: https://stoa-company.github.io/pykbroker/
+site_author: Quantus Technologies
 repo_url: https://github.com/STOA-company/pykbroker
 repo_name: STOA-company/pykbroker
+edit_uri: blob/main/docs/
 
 theme:
   name: material
+  language: ko
+  font: false
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
@@ -12,19 +18,35 @@ theme:
       accent: amber
       toggle:
         icon: material/brightness-7
-        name: Switch to dark mode
+        name: 어두운 테마 / Dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
       primary: indigo
       accent: amber
       toggle:
         icon: material/brightness-4
-        name: Switch to light mode
+        name: 밝은 테마 / Light mode
   features:
     - content.code.copy
     - navigation.sections
     - navigation.expand
+
+plugins:
+  - search:
+      lang:
+        - ko
+        - en
+# MkDocs core generates sitemap.xml from site_url; no third-party sitemap
+# plugin is needed. The checked-in sitemap is an offline fallback only.
+exclude_docs: |
+  /_hooks/
+  /sitemap.xml
+hooks:
+  - docs/_hooks/seo.py
+
 markdown_extensions:
+  - meta
+  - tables
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.superfences
@@ -34,20 +56,42 @@ markdown_extensions:
   - pymdownx.details
   - toc:
       permalink: true
+# Python-Markdown preserves raw block HTML, including the JSON-LD scripts
+# in index.md and en/index.md. No inline-script execution is required.
 nav:
-  - Home: index.md
-  - Getting Started: getting-started.md
-  - API Reference:
-      - Brokers: api/brokers.md
-      - Models: api/models.md
-      - Rules: api/rules.md
-  - MCP Server: mcp.md
-  - Safety: safety.md
-  - CLI: cli.md
-  - Broker Matrix: BROKER_MATRIX.md
-  - Adding a Broker: BROKER_ADAPTER_RECIPE.md
-  - Execution SDK Contract: execution-sdk-contract.md
-  - Changelog: changelog.md
-  - Contributing: contributing.md
-  - Security: security.md
-  - Notice: notice.md
+  - 한국어:
+      - 소개: index.md
+      - 시작하기: getting-started.md
+      - API 참조:
+          - 증권사: api/brokers.md
+          - 모델: api/models.md
+          - 거래 규칙: api/rules.md
+      - MCP 서버: mcp.md
+      - Claude Desktop 연결: claude-desktop.md
+      - 안전 부품: safety.md
+      - CLI: cli.md
+      - 지원 범위: BROKER_MATRIX.md
+      - 어댑터 추가: BROKER_ADAPTER_RECIPE.md
+      - 실행 SDK 계약: execution-sdk-contract.md
+      - 변경 기록: changelog.md
+      - 기여: contributing.md
+      - 보안: security.md
+      - 출처: notice.md
+  - English:
+      - Home: en/index.md
+      - Getting Started: en/getting-started.md
+      - API Reference:
+          - Brokers: en/api/brokers.md
+          - Models: en/api/models.md
+          - Rules: en/api/rules.md
+      - MCP Server: en/mcp.md
+      - Claude Desktop Setup: en/claude-desktop.md
+      - Safety: en/safety.md
+      - CLI: en/cli.md
+      - Broker Matrix: en/BROKER_MATRIX.md
+      - Adding a Broker: en/BROKER_ADAPTER_RECIPE.md
+      - Execution SDK Contract: en/execution-sdk-contract.md
+      - Changelog: en/changelog.md
+      - Contributing: en/contributing.md
+      - Security: en/security.md
+      - Notice: en/notice.md

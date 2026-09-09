@@ -1,3 +1,8 @@
+---
+description: "pykbroker 소스 설치, KIS·DB·Toss 벤더 SDK 준비, 인증 환경변수와 클라이언트 주입 방법."
+lang: ko
+---
+
 # Getting Started
 
 Python 3.11 이상과 Pydantic v2를 사용합니다. 패키지 import는 인증·토큰 발급·소켓 연결을 수행하지 않습니다.
@@ -5,10 +10,11 @@ Python 3.11 이상과 Pydantic v2를 사용합니다. 패키지 import는 인증
 ## 설치
 
 ```bash
-pip install pykbroker
-pip install 'pykbroker[mcp]'
-# 게시 전 체크아웃:
+# 현재: 게시 전 소스 체크아웃에서 설치
 pip install -e '.[mcp,dev]'
+# 향후 PyPI 배포판이 게시된 뒤에만:
+# pip install pykbroker
+# pip install 'pykbroker[mcp]'
 ```
 
 | extra | 설치 범위 |
@@ -61,3 +67,5 @@ KR·US 현물 정수 수량만 다룹니다. 파생상품·레버리지·포트�
 KIS/DB US 생성 시 `market="US"`, `venue="NASDAQ" | "NYSE" | "AMEX"`를 명시합니다. US 잔고에는 `cash_provider(client_or_scope) -> Decimal` 콜백으로 USD 주문 가능 현금을 제공해야 합니다. 특정 종목·계좌 유형을 임의로 선택하지 않습니다. US 주문의 KRW 한도 환산은 `OrderSafety.valuation`으로 주입합니다.
 
 모든 벤더 클라이언트는 **주문 재시도를 끈 상태**로 공급해야 합니다. 이 패키지는 실패한 제출·취소를 재시도하지 않습니다. 벤더 SDK 안의 재시도 동작은 호출자가 확인해야 합니다.
+
+[English](en/getting-started.md)

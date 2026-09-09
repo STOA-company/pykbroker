@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If you use this source snapshot, please cite it with this metadata. This does not indicate a PyPI release."
+authors:
+  - name: Quantus Technologies
+title: pykbroker
+license: Apache-2.0
+repository-code: "https://github.com/STOA-company/pykbroker"
+# Date of the source snapshot; version 0.1.0 remains unreleased in CHANGELOG.md.
+date-released: "2026-09-09"

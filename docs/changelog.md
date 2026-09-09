@@ -1,3 +1,8 @@
+---
+description: "pykbroker 0.1.0 미출시 변경 기록: 증권사 어댑터, 안전 부품, MCP·CLI와 미완료 검증 범위."
+lang: ko
+---
+
 # Changelog
 
 ## 0.1.0 — Unreleased
@@ -11,3 +16,5 @@
 - 오프라인 fixture/mock 테스트와 네트워크 차단.
 
 벤더 소스의 설치 가능한 배포판 연결, LS·키움 US 확장, 실제 API 검증은 후속 과제입니다.
+
+[English](en/changelog.md)

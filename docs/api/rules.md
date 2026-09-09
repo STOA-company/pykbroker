@@ -1,3 +1,8 @@
+---
+description: "KRX 현물 주식 기본 호가 단위와 정규장 규칙 도우미, 거래일 콜백과 미지원 상품 범위."
+lang: ko
+---
+
 # Korean cash-equity rules
 
 `rules.kr`은 KRX 현물 주식의 기본 호가 표와 정규장 시간만 제공합니다. ETF·ETN·다른 거래소·특별 개장일은 호출자가 별도 규칙을 제공해야 합니다. 상품 구분이 없는 `get_rules()`는 `tick=None`을 반환합니다.
@@ -17,3 +22,5 @@
 정규장 기본 시간은 KST 09:00~15:30입니다. [KRX 거래 시간·휴장 안내](https://global.krx.co.kr/contents/GLB/06/0602/0602010201/GLB0602010201T1.jsp)를 대조했습니다. `regular_session_open()`은 휴장일을 직접 추측하지 않으며 거래일 판정 콜백이 없으면 False입니다. 단순 요일 검사는 거래일 달력을 대체하지 않습니다.
 
 `normalize_symbol()`은 6자리 영숫자 단축코드와 DB식 A 접두사를 처리합니다. `round_price()`는 매수 내림·매도 올림을 제공하지만 실제 주문에서 몰래 호출하지 않습니다. 호출자가 정한 가격을 소수점 절삭해서 전송하지 않습니다.
+
+[English](../en/api/rules.md)

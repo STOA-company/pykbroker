@@ -1,0 +1,52 @@
+# pykbroker
+
+> Apache-2.0 Python SDK and read-only-by-default MCP server for Korean broker Open APIs.
+
+한국어 기본 문서와 영어 번역 / Korean documentation with English translations.
+KIS, DBFI and Toss are implemented adapters with offline mock/fixture validation only.
+Real APIs, paper accounts and live trading have not been validated. LS/Kiwoom are
+unverified locked mappings; NH/KB are offline skeletons, excluded from the registry.
+Dry-run blocks order/cancellation transmission; it does not simulate successful orders.
+Vendor source SDKs and authentication must be supplied separately.
+The execution SDK contains contracts only, without an execution engine.
+Canonical URLs below are planned publication targets; public availability is unverified.
+These files do not publish the site or guarantee crawling or AI citations.
+
+[Source repository](https://github.com/STOA-company/pykbroker)
+
+[Full documentation text](https://stoa-company.github.io/pykbroker/llms-full.txt)
+
+## Documentation
+
+- [Adding a broker adapter](https://stoa-company.github.io/pykbroker/BROKER_ADAPTER_RECIPE/): 한국 증권사 어댑터 추가 절차: 공식 응답 증거, 클라이언트 주입, 주문 안전 게이트와 오프라인 테스트.
+- [Broker support matrix](https://stoa-company.github.io/pykbroker/BROKER_MATRIX/): KIS·DBFI·Toss의 오프라인 검증 범위와 LS·키움·NH·KB experimental 상태, KR·US 시장과 취소 제약.
+- [Brokers](https://stoa-company.github.io/pykbroker/api/brokers/): KIS·DBFI·Toss와 create_broker의 조회·주문 계약, 인스턴스 수명과 experimental 어댑터 제한.
+- [Models](https://stoa-company.github.io/pykbroker/api/models/): pykbroker의 불변 Pydantic 모델: 잔고·시세·주문·취소·거래 규칙 필드와 Decimal·미확인 값 처리.
+- [Korean cash-equity rules](https://stoa-company.github.io/pykbroker/api/rules/): KRX 현물 주식 기본 호가 단위와 정규장 규칙 도우미, 거래일 콜백과 미지원 상품 범위.
+- [Changelog](https://stoa-company.github.io/pykbroker/changelog/): pykbroker 0.1.0 미출시 변경 기록: 증권사 어댑터, 안전 부품, MCP·CLI와 미완료 검증 범위.
+- [클로드 데스크톱에 한국 증권사 MCP 서버 연결하기](https://stoa-company.github.io/pykbroker/claude-desktop/): 클로드 데스크톱에 pykbroker-mcp를 연결하는 JSON 설정, 인증 환경 주입, 읽기 전용 도구 확인과 오류 점검.
+- [CLI](https://stoa-company.github.io/pykbroker/cli/): pykbroker CLI로 시세·잔고·보유 종목·주문 상태·규칙을 조회하는 명령과 오류 종료 코드.
+- [Contributing](https://stoa-company.github.io/pykbroker/contributing/): pykbroker 기여 절차, 안전 변경 리뷰, 오프라인 테스트와 어댑터 문서·라이선스 갱신 기준.
+- [Adding a broker adapter](https://stoa-company.github.io/pykbroker/en/BROKER_ADAPTER_RECIPE/): Add a Korean broker adapter with documented response evidence, client injection, order safety gates and offline tests.
+- [Broker support matrix](https://stoa-company.github.io/pykbroker/en/BROKER_MATRIX/): Offline verification scope for KIS, DBFI and Toss, experimental LS/Kiwoom/NH/KB status, KR/US markets and cancellation limits.
+- [Brokers](https://stoa-company.github.io/pykbroker/en/api/brokers/): Query and order contracts for KIS, DBFI, Toss and create_broker, instance lifetimes and experimental adapter restrictions.
+- [Models](https://stoa-company.github.io/pykbroker/en/api/models/): Immutable Pydantic models for balances, quotes, orders, cancellations and trading rules, including Decimal and unknown-value semantics.
+- [Korean cash-equity rules](https://stoa-company.github.io/pykbroker/en/api/rules/): Basic KRX cash-equity tick and regular-session helpers, trading-day callbacks and unsupported product scope.
+- [Changelog](https://stoa-company.github.io/pykbroker/en/changelog/): Unreleased pykbroker 0.1.0 changes: broker adapters, safety primitives, MCP/CLI and remaining verification work.
+- [Connect Korean brokerage tools to Claude Desktop](https://stoa-company.github.io/pykbroker/en/claude-desktop/): Connect pykbroker-mcp to Claude Desktop with JSON configuration, authentication environment injection, read-only checks and troubleshooting.
+- [CLI](https://stoa-company.github.io/pykbroker/en/cli/): Read-only pykbroker CLI commands for quotes, balances, positions, order status and rules, with error exit-code behavior.
+- [Contributing](https://stoa-company.github.io/pykbroker/en/contributing/): Contribute to pykbroker with safety-change reviews, offline tests and coordinated adapter documentation and license updates.
+- [Execution SDK contract](https://stoa-company.github.io/pykbroker/en/execution-sdk-contract/): Fixed-context, quantity, quote, order, safety and HTTP contracts for engine implementers. pykbroker supplies no execution engine.
+- [Getting started](https://stoa-company.github.io/pykbroker/en/getting-started/): Install pykbroker from source, prepare KIS/DB/Toss vendor SDKs, configure authentication environment variables and inject clients.
+- [pykbroker](https://stoa-company.github.io/pykbroker/en/): pykbroker unifies KIS, DB Securities and Toss APIs in a Python SDK and read-only-by-default MCP server. Installation, support limits and safety.
+- [MCP server](https://stoa-company.github.io/pykbroker/en/mcp/): Default query tools in pykbroker-mcp, limits.toml order-tool registration, dry-run blocking and SQLite ledger behavior.
+- [Notice](https://stoa-company.github.io/pykbroker/en/notice/): pykbroker Apache-2.0 notice, extraction and rewriting attribution, referenced vendor revisions and separate license scope.
+- [Safety primitives](https://stoa-company.github.io/pykbroker/en/safety/): Default order/cancellation blocking and injection contracts for caps, idempotency, kill switches and optional circuit breakers.
+- [Security](https://stoa-company.github.io/pykbroker/en/security/): Environment-based credential injection, log masking, order-ledger preservation and private security reporting for pykbroker.
+- [실행 SDK 계약](https://stoa-company.github.io/pykbroker/execution-sdk-contract/): 실행기 구현자를 위한 고정 컨텍스트·수량·시세·주문·안전·HTTP 계약. pykbroker는 실행 로직을 제공하지 않습니다.
+- [Getting Started](https://stoa-company.github.io/pykbroker/getting-started/): pykbroker 소스 설치, KIS·DB·Toss 벤더 SDK 준비, 인증 환경변수와 클라이언트 주입 방법.
+- [pykbroker](https://stoa-company.github.io/pykbroker/): 한국투자·DB증권·토스증권 Open API를 공통 Python SDK와 기본 읽기 전용 MCP 서버로 연결하는 pykbroker의 설치, 지원 범위와 안전장치.
+- [MCP Server](https://stoa-company.github.io/pykbroker/mcp/): pykbroker-mcp의 기본 조회 도구, limits.toml 주문 도구 등록 조건, 드라이런 차단과 SQLite 원장 동작.
+- [Notice](https://stoa-company.github.io/pykbroker/notice/): pykbroker의 Apache-2.0 고지, 추출·재작성 출처, 벤더 소스 리비전과 별도 라이선스 범위.
+- [Safety primitives](https://stoa-company.github.io/pykbroker/safety/): 주문·취소 기본 차단, 한도·멱등성·킬스위치와 선택적 차단기 등 pykbroker 안전 부품의 주입 계약.
+- [Security](https://stoa-company.github.io/pykbroker/security/): pykbroker 인증정보 환경 주입, 로그 마스킹, 주문 원장 보존과 비공개 보안 신고 안내.

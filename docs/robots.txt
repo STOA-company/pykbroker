@@ -1,0 +1,6 @@
+# Planned project-site asset. Crawlers consult /robots.txt at the host root;
+# /pykbroker/robots.txt alone does not set host-wide crawling policy.
+User-agent: *
+Allow: /pykbroker/
+
+Sitemap: https://stoa-company.github.io/pykbroker/sitemap.xml

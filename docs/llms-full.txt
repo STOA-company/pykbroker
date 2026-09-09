@@ -1,0 +1,1479 @@
+# pykbroker
+
+> Apache-2.0 Python SDK and read-only-by-default MCP server for Korean broker Open APIs.
+
+한국어 기본 문서와 영어 번역 / Korean documentation with English translations.
+KIS, DBFI and Toss are implemented adapters with offline mock/fixture validation only.
+Real APIs, paper accounts and live trading have not been validated. LS/Kiwoom are
+unverified locked mappings; NH/KB are offline skeletons, excluded from the registry.
+Dry-run blocks order/cancellation transmission; it does not simulate successful orders.
+Vendor source SDKs and authentication must be supplied separately.
+The execution SDK contains contracts only, without an execution engine.
+Canonical URLs below are planned publication targets; public availability is unverified.
+These files do not publish the site or guarantee crawling or AI citations.
+
+Source: https://stoa-company.github.io/pykbroker/BROKER_ADAPTER_RECIPE/
+
+# Adding a broker adapter
+
+## 1. 계약과 증거
+
+`base.py`와 `models/`의 계약을 먼저 읽습니다. 조회·주문·취소에 필요한 공식 응답과 호출 방법을 확인하고, 사용한 문서 버전과 fixture 출처를 기록합니다. mock 응답과 벤더에서 녹화한 응답은 명확히 구분합니다. 모르는 필드나 기능을 성공값·0으로 대체하지 않습니다.
+
+## 2. 주입 경계
+
+어댑터는 `BaseBroker`를 상속하고 벤더 호출·모델 변환만 구현합니다. 계좌 선택은 생성자에서 전달받은 값만 사용합니다. 로거는 표준 logging을 사용하며 요청 본문·인증값·계좌 실값은 기록하지 않습니다. 인증·토큰 갱신·DB 접근이 필요하면 클라이언트나 콜백을 받습니다. SDK import는 연결이 필요한 시점까지 지연합니다.
+
+## 3. 안전 게이트
+
+공개 `place_order`·`cancel_order`를 통해 `OrderSafety`를 거친 뒤 `_place_order`·`_cancel_order`를 호출합니다. 주문 재시도나 수량 축소 루프를 추가하지 않습니다. 취소 요청을 종목 전체로 확대하지 않습니다. 네이티브 취소 범위를 확인하지 못하면 미지원으로 남깁니다.
+
+미검증 어댑터는 `experimental/`에 두고 모듈의 `*_SPEC_VERIFIED = False`를 유지합니다. 공개 주문 메서드는 값이 정확히 `True`일 때만 다음 단계로 갑니다. 미확인 열거값은 caller `codes`로 주입되기 전까지 오류로 처리합니다. 잠금만 바꾸는 것으로 미확인 요청이 전송되어서는 안 됩니다.
+
+## 4. 수명과 응답
+
+동기 SDK는 인스턴스 종료 시 소유한 클라이언트를 정리합니다. 주입받은 클라이언트의 수명은 호출자가 관리합니다. async SDK는 생성·호출·종료를 하나의 이벤트 루프에 묶고 겹치는 사용을 방지합니다. 요청별 새 루프는 사용하지 않습니다.
+
+잔고는 통화를 분리합니다. 미체결 목록 부재는 체결 증거가 아닙니다. 불명확한 주문 응답에는 `InvalidResponseError` 또는 `unknown` 상태를 사용합니다. 페이지 일부가 실패하면 부분 잔고를 전체 잔고로 반환하지 않습니다.
+
+## 5. 검증
+
+`tests/conftest.py`의 JSON fixture 로더와 네트워크 금지 fixture를 사용합니다. 최소 검증은 시세·빈 호가·누락 현금·페이지 실패·정확한 매수/매도 인자·취소 범위·드라이런 차단·중복 제출·한도 경계·SDK 미설치 import·종료입니다.
+
+잠금 제거, 매수/매도 코드 교환, limiter 우회 같은 변이가 테스트 실패를 일으키는지 확인합니다. 검증 후 지원 표와 capability를 함께 갱신합니다. 라이브 거래 검증은 이 오프라인 테스트 스위트에 넣지 않습니다.
+
+## 6. 공개 전 확인
+
+소스·문서·예제에 비밀값, 회사별 주소, 계좌 저장 스키마가 없는지 검사합니다. 라이선스와 NOTICE를 검토하고, 실제 실행한 검증만 기록합니다. 미완료 항목은 TODO와 지원 표에 남깁니다.
+
+[English](https://stoa-company.github.io/pykbroker/en/BROKER_ADAPTER_RECIPE/)
+
+-----
+
+Source: https://stoa-company.github.io/pykbroker/BROKER_MATRIX/
+
+# Broker support matrix
+
+2026-09-09 추출 구현 기준입니다. 이 작업의 검증은 전부 mock·합성 fixture에 의한 오프라인 계약 검사입니다. **실 API·모의계좌·실거래 검증은 수행하지 않았습니다.**
+
+| 어댑터 | 조회·주문 시장 | 단일 취소 | 시장가 | NXT | 상태 |
+| --- | --- | --- | --- | --- | --- |
+| KIS | KR / US | 미지원 | KR, 별도 세션·평가 승인 필요 | 미지원 | 변환 구현·오프라인 테스트 |
+| DBFI | KR / US | 지원 | KR, 별도 세션·평가 승인 필요 | KR | 변환 구현·오프라인 테스트 |
+| Toss | KR / US | 전체 미체결분 | KR, 별도 세션·평가 승인 필요 | 미지원 | SDK 브리지 mock 검사 |
+| LS | KR | 잠금 상태 | 미검증 | 미지원 | `LS_SPEC_VERIFIED = False` |
+| Kiwoom | KR | 미구현 | 미검증 | 미지원 | `KIWOOM_SPEC_VERIFIED = False` |
+| NH | KR 스켈레톤 | 미구현 | 미구현 | 미지원 | `NH_SPEC_VERIFIED = False` |
+| KB | KR 스켈레톤 | 미구현 | 미구현 | 미지원 | `KB_SPEC_VERIFIED = False` |
+
+KIS는 정정·취소 가능 주문 목록을, Toss는 열린 주문 목록을 제공합니다. 이 목록에서 사라진 주문을 체결 완료로 추정하지 않습니다. DB 조회는 SDK가 반환한 연속 조회 페이지를 검증·병합합니다. DB의 잔량 0만으로 최종 상태를 확정하지 않습니다.
+
+KIS/DB US 잔고의 주문 가능 현금은 계좌 유형별로 달라 `cash_provider` 주입을 요구합니다. US 매수·매도는 지정가만 노출합니다. 계좌에 없는 NXT·상품·시장 기능을 유추하지 않습니다.
+
+TODO: LS·키움 해외 요청 매핑은 원본에도 열거값 검증이 없으며 이번 패키지에는 국내 매핑만 옮겼습니다. 공식 스펙과 fixture 확보 후 확장해야 합니다. NH·KB는 엔드포인트/TR 확보부터 필요하며 잠금만 바꿔도 실행되지 않습니다. LS·키움의 조회 결과도 미검증 참고 데이터이며, 실사용 지원 수에 포함하지 않습니다.
+
+[English](https://stoa-company.github.io/pykbroker/en/BROKER_MATRIX/)
+
+-----
+
+Source: https://stoa-company.github.io/pykbroker/api/brokers/
+
+# Brokers
+
+`KIS`, `DBFI`, `Toss`와 `create_broker()`를 최상위에서 import합니다. 공개 조회는 `get_quote`, `get_balance`, `get_positions`, `list_orders`, `get_rules`이며 변이는 `place_order`, `cancel_order`입니다. `BrokerAdapter` 어휘로 `quote`, `balance`, `positions`, `rules`, `place`, `cancel`, `status`, `close`도 제공합니다.
+
+클라이언트·계좌·safety는 인스턴스마다 명시적으로 결박됩니다. 계좌별 동시 호출 조정은 호출자가 책임지며 MCP는 어댑터 접근을 직렬화합니다. [지원 표](https://stoa-company.github.io/pykbroker/BROKER_MATRIX/)와 [설치](https://stoa-company.github.io/pykbroker/getting-started/)를 참고하세요.
+
+`experimental` 어댑터는 최상위 `BROKERS` 팩터리에 등록하지 않습니다. 모듈을 직접 import해야 하며 기본 주문 잠금은 항상 닫혀 있습니다.
+
+[English](https://stoa-company.github.io/pykbroker/en/api/brokers/)
+
+-----
+
+Source: https://stoa-company.github.io/pykbroker/api/models/
+
+# Models
+
+Pydantic v2의 불변 모델이며 알 수 없는 필드는 거절합니다. 금액은 `Decimal`로 유지하고 JSON에서는 문자열로 직렬화됩니다. 정수 수량에 boolean·문자열·소수 수량을 허용하지 않습니다.
+
+| 모델 | 핵심 필드 |
+| --- | --- |
+| `Balance` | currency, cash_available, position_value; total 속성 |
+| `Position` | symbol, market, quantity, sellable, average_price, last, market_value |
+| `Quote` | symbol, market, last, bid, ask, prev_close, timestamp |
+| `OrderRequest` | symbol, side, quantity, order_type, price, market, venue, client_key |
+| `CancelRequest` | order_id, symbol, quantity, market, venue, client_key |
+| `Order` | id, symbol, status, quantity, price, filled, remaining |
+| `Rules` | symbol, market, currency, tick, lot, min_notional, regular_open, regular_close, timezone |
+| `Capabilities` | 시장·단일 취소·시장가·NXT·주문 내역 지원 여부 |
+
+`None`은 확인되지 않은 값입니다. `accepted`는 요청 접수이며 체결 또는 최종 취소를 의미하지 않습니다. 모델에 원시 응답이나 계좌·키를 저장하지 않습니다. `client_key`는 repr에서 숨기지만 호출자가 모델 전체를 직접 직렬화하면 포함되므로 로그로 출력하지 마세요.
+
+[English](https://stoa-company.github.io/pykbroker/en/api/models/)
+
+-----
+
+Source: https://stoa-company.github.io/pykbroker/api/rules/
+
+# Korean cash-equity rules
+
+`rules.kr`은 KRX 현물 주식의 기본 호가 표와 정규장 시간만 제공합니다. ETF·ETN·다른 거래소·특별 개장일은 호출자가 별도 규칙을 제공해야 합니다. 상품 구분이 없는 `get_rules()`는 `tick=None`을 반환합니다.
+
+| 가격 (원) | 호가 단위 (원) |
+| --- | --- |
+| 2,000 미만 | 1 |
+| 2,000 이상 5,000 미만 | 5 |
+| 5,000 이상 20,000 미만 | 10 |
+| 20,000 이상 50,000 미만 | 50 |
+| 50,000 이상 200,000 미만 | 100 |
+| 200,000 이상 500,000 미만 | 500 |
+| 500,000 이상 | 1,000 |
+
+2026-09-09 [KRX 호가 단위 안내](https://global.krx.co.kr/contents/GLB/06/0602/0602010201/GLB0602010201T3.jsp)를 대조했습니다.
+
+정규장 기본 시간은 KST 09:00~15:30입니다. [KRX 거래 시간·휴장 안내](https://global.krx.co.kr/contents/GLB/06/0602/0602010201/GLB0602010201T1.jsp)를 대조했습니다. `regular_session_open()`은 휴장일을 직접 추측하지 않으며 거래일 판정 콜백이 없으면 False입니다. 단순 요일 검사는 거래일 달력을 대체하지 않습니다.
+
+`normalize_symbol()`은 6자리 영숫자 단축코드와 DB식 A 접두사를 처리합니다. `round_price()`는 매수 내림·매도 올림을 제공하지만 실제 주문에서 몰래 호출하지 않습니다. 호출자가 정한 가격을 소수점 절삭해서 전송하지 않습니다.
+
+[English](https://stoa-company.github.io/pykbroker/en/api/rules/)
+
+-----
+
+Source: https://stoa-company.github.io/pykbroker/changelog/
+
+# Changelog
+
+## 0.1.0 — Unreleased
+
+- StockBroker/BrokerAdapter와 Pydantic v2 모델.
+- KIS·DBFI 변환과 선택적 Toss 비동기 SDK 브리지.
+- fail-closed 안전 부품, 주입형 정책, 로컬 SQLite 원장.
+- 기본 읽기 전용 FastMCP 서버와 CLI.
+- LS·Kiwoom 잠금 매핑, NH·KB 오프라인 스켈레톤.
+- 실행 SDK 계약 문서와 실행 로직 없는 Protocol 타입.
+- 오프라인 fixture/mock 테스트와 네트워크 차단.
+
+벤더 소스의 설치 가능한 배포판 연결, LS·키움 US 확장, 실제 API 검증은 후속 과제입니다.
+
+[English](https://stoa-company.github.io/pykbroker/en/changelog/)
+
+-----
+
+Source: https://stoa-company.github.io/pykbroker/claude-desktop/
+
+# 클로드 데스크톱에 한국 증권사 MCP 서버 연결하기
+
+pykbroker는 `pykbroker-mcp` 명령으로 기본 읽기 전용 stdio 서버를 제공합니다. 이 가이드는 소스 체크아웃 기준이며 PyPI 설치나 MCP 레지스트리 등록을 전제로 하지 않습니다. Claude Desktop의 로컬 서버 설정 위치와 재시작 절차는 [MCP 공식 로컬 서버 가이드](https://modelcontextprotocol.io/docs/develop/connect-local-servers)를 참고했습니다.
+
+## 1. 설치와 인증 준비
+
+저장소에서 Python 3.11 이상으로 가상환경을 만들고 설치합니다.
+
+```bash
+python -m venv .venv
+.venv/bin/python -m pip install -e '.[mcp,kis]'
+```
+
+Windows에서는 `.venv\Scripts\python.exe`를 사용합니다. `kis` extra는 보조 의존성만 설치합니다. [설치 안내](https://stoa-company.github.io/pykbroker/getting-started/)에 따라 호환 `Pykis` 소스 또는 인증 클라이언트 구성을 준비해야 실제 조회가 가능합니다.
+
+`PYKBROKER_ACCOUNT`와 JSON 객체인 `PYKBROKER_CLIENT_OPTIONS`는 외부 비밀 관리 도구가 **서버 프로세스 환경에** 주입하도록 구성하세요. GUI 앱은 터미널의 환경변수를 자동으로 물려받지 않을 수 있습니다. 필요하면 비밀 관리 도구의 실행 래퍼에서 `pykbroker-mcp`를 시작하도록 `command`와 `args`를 바꾸세요. pykbroker는 이 래퍼나 인증 토큰 관리 기능을 제공하지 않습니다. 실제 계좌·키를 설정 예제, 대화, 명령 이력에 복사하지 마세요.
+
+## 2. claude_desktop_config.json 설정
+
+Claude Desktop의 Settings → Developer → Edit Config에서 기존 `mcpServers`에 `pykbroker` 항목을 병합합니다. 기존 서버 설정을 덮어쓰지 마세요.
+
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+
+다음은 macOS 경로 템플릿입니다. `/absolute/path/to/pykbroker`를 실제 체크아웃의 **절대경로**로 바꾸세요. `command` 안의 `~`나 `$VARIABLE`은 셸처럼 확장된다고 가정하지 않습니다.
+
+```json
+{
+  "mcpServers": {
+    "pykbroker": {
+      "command": "/absolute/path/to/pykbroker/.venv/bin/pykbroker-mcp",
+      "args": [],
+      "env": {
+        "PYKBROKER_BROKER": "kis"
+      }
+    }
+  }
+}
+```
+
+Windows의 `command` 예시는 `C:\\absolute\\path\\to\\pykbroker\\.venv\\Scripts\\pykbroker-mcp.exe`입니다. JSON에서는 역슬래시를 두 번 씁니다. 계좌와 인증 옵션은 위에서 준비한 프로세스 환경으로 공급합니다. 이 JSON만으로 인증이 완료되지는 않습니다.
+
+## 3. 읽기 전용 확인
+
+Claude Desktop을 완전히 종료하고 다시 실행합니다. 서버 도구 목록에서 `get_quote`, `get_balance`, `get_positions`, `list_orders`, `get_rules`를 확인한 뒤 “한국투자증권에서 삼성전자 005930 현재가를 조회해 줘”처럼 요청합니다. `get_rules`는 기본 규칙을 반환하며 모든 상품의 호가 단위를 알 수 있는 것은 아닙니다.
+
+`~/.pykbroker/limits.toml`이 없는 기본 환경에서는 `place_order`, `cancel_order`가 **목록에 없어야** 합니다. 기존에 주문 허용 설정이 있는 계정은 이 기본 조건과 다르므로 [MCP 안전 설정](https://stoa-company.github.io/pykbroker/mcp/)을 먼저 확인하세요. 이 조회 가이드는 주문 허용 파일을 만들지 않습니다.
+
+## 연결 실패 시
+
+| 증상 | 확인할 것 |
+| --- | --- |
+| 서버가 표시되지 않음 / ENOENT | JSON 문법, 실제 절대 실행 경로, 설치한 가상환경, 앱 완전 재시작 |
+| 도구는 보이나 조회 실패 | 서버 프로세스의 환경변수 주입, 호환 벤더 소스 import 경로, 인증 클라이언트 설정 |
+| 네트워크가 없거나 인증 실패 | 실제 시세 대신 오류가 반환되는지 확인; 오프라인 확인은 `python examples/offline_quote.py`의 합성 시세 사용 |
+| 주문 도구가 보이지 않음 | 기본 동작; 조회를 위해 주문을 활성화할 필요 없음 |
+
+로그는 macOS `~/Library/Logs/Claude/`, Windows `%APPDATA%\Claude\logs`에서 확인합니다. 공유 전 계좌·토큰과 벤더 SDK 로그를 점검하세요. 이번 sandbox에서는 Claude Desktop 실제 연결을 검증하지 않았으며, 오프라인 도구 등록·호출 테스트와 실제 데스크톱 연결 검증은 별개입니다.
+
+[English](https://stoa-company.github.io/pykbroker/en/claude-desktop/)
+
+-----
+
+Source: https://stoa-company.github.io/pykbroker/cli/
+
+# CLI
+
+```bash
+pykbroker --help
+pykbroker --version
+pykbroker brokers
+pykbroker --broker kis quote 005930
+pykbroker --broker dbfi balance
+pykbroker --broker dbfi positions
+pykbroker --broker kis orders --symbol 005930
+pykbroker --broker kis rules 005930
+```
+
+인증 설정은 [환경변수 안내](https://stoa-company.github.io/pykbroker/getting-started/)를 따릅니다. CLI는 조회 전용입니다. 설정·벤더 오류는 계좌·인증값을 포함하지 않는 오류와 종료 코드 2로 보고합니다.
+
+[English](https://stoa-company.github.io/pykbroker/en/cli/)
+
+-----
+
+Source: https://stoa-company.github.io/pykbroker/contributing/
+
+# Contributing
+
+버그 리포트와 PR을 받습니다. 병합 권한은 지정된 메인테이너 1인에게 있습니다. 안전 관련 변경은 작성자 외 추가 리뷰를 거친 뒤 메인테이너가 병합합니다.
+
+```bash
+python -m venv .venv
+. .venv/bin/activate
+pip install -e '.[dev,mcp]'
+pytest
+ruff check src tests examples
+ruff format --check src tests examples
+```
+
+모든 테스트는 오프라인이어야 합니다. 벤더 응답 fixture에는 실계좌·인증값을 넣지 마세요. 주문·취소 변경은 정확한 요청 인자, 드라이런, 한도, 중복·타임아웃을 검증합니다. 새 어댑터는 문서·테스트·capability·지원 표를 함께 갱신합니다. 미검증 스펙 잠금 해제는 문서와 독립 검증 증거가 필요합니다.
+
+Python 소스는 `src/`, Pydantic 모델은 `models/`, JSON fixture는 `tests/fixtures/<broker>/`에 둡니다. pycex와 같이 hatchling, ruff, pytest-asyncio, MkDocs Material을 사용합니다. 요청 실행기·전략 실행·회사별 저장소는 추가하지 않습니다.
+
+기여물은 Apache-2.0으로 제공할 권리가 있어야 합니다. 기존 코드를 참고했다면 출처와 실제 재사용 범위를 NOTICE에 명시하세요.
+
+## 문서와 검색 자산 갱신
+
+한국어 Markdown을 바꾸면 대응하는 `docs/en/` 번역과 양쪽 `description`을 함께 갱신하세요. pycex에는 다국어 설정이 없어 이 저장소는 `docs/en/`과 한·영 nav를 사용합니다. 새 페이지는 양쪽 nav에 등록합니다.
+
+```bash
+pip install -e '.[docs]'
+python docs/_hooks/seo.py
+mkdocs build --strict
+```
+
+생성기는 실제 Markdown 전체에서 `llms.txt`, `llms-full.txt`, `robots.txt`, 오프라인 확인용 `sitemap.xml`을 갱신합니다. 빌드 전 훅도 같은 생성기를 실행하며 MkDocs core가 배포 산출물의 sitemap을 만듭니다. 페이지 훅은 HTML 언어와 대응 번역의 `hreflang` 링크를 넣습니다. 계획 주소는 `mkdocs.yml`의 `site_url`에서 읽으며, 변경하면 생성물을 다시 확인하세요. 이 명령은 문서를 게시하지 않습니다.
+
+프로젝트 경로의 `robots.txt`는 호스트 루트의 robots 정책을 대신하지 않습니다. 공개 가용성, 실제 MkDocs 렌더, 데스크톱·모바일 탐색과 테마·표 overflow 확인은 게시 전에 별도로 필요합니다.
+
+[English](https://stoa-company.github.io/pykbroker/en/contributing/)
+
+-----
+
+Source: https://stoa-company.github.io/pykbroker/en/BROKER_ADAPTER_RECIPE/
+
+# Adding a broker adapter
+
+## 1. Contracts and evidence
+
+Read the contracts in `base.py` and `models/` first. Confirm official responses and invocation methods for queries, orders, and cancellations; record documentation versions and fixture provenance. Clearly distinguish mock responses from recorded vendor responses. Do not substitute success values or zero for unknown fields or features.
+
+## 2. Injection boundary
+
+Subclass `BaseBroker` and implement vendor calls and model conversion only. Use only the account passed to the constructor. Use standard logging without request bodies, credentials, or actual account values. Accept clients or callbacks for authentication, token refresh, or database access. Defer SDK imports until a connection is needed.
+
+## 3. Safety gate
+
+Route public `place_order` and `cancel_order` through `OrderSafety` before calling `_place_order` and `_cancel_order`. Do not add order retries or quantity-reduction loops. Do not widen cancellation to every order for a symbol. Leave cancellation unsupported if its native scope is unverified.
+
+Keep unverified adapters in `experimental/` with their module's `*_SPEC_VERIFIED = False`. Public order methods proceed only when that value is exactly `True`. Reject unknown enum values until the caller supplies verified `codes`. Changing a lock alone must never send an unverified request.
+
+## 4. Lifetimes and responses
+
+Synchronous adapters close owned clients on shutdown; callers manage injected clients. Async SDK construction, invocation, and shutdown belong to one event loop, with overlapping use prevented. Do not create a new loop per request.
+
+Keep balances separate by currency. Absence from an open-order list is not fill evidence. Use `InvalidResponseError` or an `unknown` status for ambiguous order responses. If a page fails, do not return a partial balance as a complete balance.
+
+## 5. Validation
+
+Use the JSON fixture loader and network-denial fixture in `tests/conftest.py`. Minimum checks cover quotes, empty books, missing cash, failed pages, exact buy/sell arguments, cancellation scope, dry-run blocking, duplicate submissions, cap boundaries, import without vendor SDKs, and shutdown.
+
+Confirm that mutations such as removing locks, swapping buy/sell codes, or bypassing a limiter fail tests. Update the support matrix and capabilities together after verification. Keep live trading validation outside this offline suite.
+
+## 6. Before publication
+
+Check source, documentation, and examples for secrets, company-specific addresses, and account storage schemas. Review the license and NOTICE, record only checks actually executed, and leave unfinished work in TODOs and the support matrix.
+
+[한국어](https://stoa-company.github.io/pykbroker/BROKER_ADAPTER_RECIPE/)
+
+-----
+
+Source: https://stoa-company.github.io/pykbroker/en/BROKER_MATRIX/
+
+# Broker support matrix
+
+This describes the extracted implementation as of 2026-09-09. All validation uses mocks and synthetic fixtures for offline contract checks. **Real APIs, paper accounts, and live trading have not been validated.**
+
+| Adapter | Query/order markets | Single-order cancellation | Market orders | NXT | Status |
+| --- | --- | --- | --- | --- | --- |
+| KIS | KR / US | Unsupported | KR, separate session and valuation authorization required | Unsupported | Conversion implementation and offline tests |
+| DBFI | KR / US | Supported | KR, separate session and valuation authorization required | KR | Conversion implementation and offline tests |
+| Toss | KR / US | Entire unfilled remainder | KR, separate session and valuation authorization required | Unsupported | SDK bridge checked with mocks |
+| LS | KR | Locked | Unverified | Unsupported | `LS_SPEC_VERIFIED = False` |
+| Kiwoom | KR | Unimplemented | Unverified | Unsupported | `KIWOOM_SPEC_VERIFIED = False` |
+| NH | KR skeleton | Unimplemented | Unimplemented | Unsupported | `NH_SPEC_VERIFIED = False` |
+| KB | KR skeleton | Unimplemented | Unimplemented | Unsupported | `KB_SPEC_VERIFIED = False` |
+
+KIS provides orders eligible for revision/cancellation; Toss provides open orders. An order disappearing from these lists is not evidence of a fill. DB queries validate and merge continuation pages returned by the SDK. DB remaining quantity of zero alone does not establish a final status.
+
+KIS/DB US orderable cash varies by account type and requires an injected `cash_provider`. US buy/sell orders expose limit orders only. The library does not infer NXT, product, or market capabilities for an account.
+
+TODO: LS/Kiwoom US request mappings lacked verified enum values in the source; only domestic mappings were carried over. Expansion requires official specifications and fixtures. NH/KB require endpoints and TR definitions and cannot run merely by changing the lock. LS/Kiwoom query results are also unverified reference data and are excluded from the registered implementation count.
+
+[한국어](https://stoa-company.github.io/pykbroker/BROKER_MATRIX/)
+
+-----
+
+Source: https://stoa-company.github.io/pykbroker/en/api/brokers/
+
+# Brokers
+
+Import `KIS`, `DBFI`, `Toss`, and `create_broker()` from the top level. Public queries are `get_quote`, `get_balance`, `get_positions`, `list_orders`, and `get_rules`; mutations are `place_order` and `cancel_order`. The `BrokerAdapter` vocabulary also exposes `quote`, `balance`, `positions`, `rules`, `place`, `cancel`, `status`, and `close`.
+
+Clients, accounts, and safety are explicitly bound per instance. Callers coordinate concurrent access per account; MCP serializes adapter access. See the [support matrix](https://stoa-company.github.io/pykbroker/en/BROKER_MATRIX/) and [installation guide](https://stoa-company.github.io/pykbroker/en/getting-started/).
+
+`experimental` adapters are not registered in the top-level `BROKERS` factory. Import their modules directly; order locks are closed by default.
+
+[한국어](https://stoa-company.github.io/pykbroker/api/brokers/)
+
+-----
+
+Source: https://stoa-company.github.io/pykbroker/en/api/models/
+
+# Models
+
+Models are immutable Pydantic v2 objects that reject unknown fields. Amounts remain `Decimal` and serialize to JSON strings. Integer quantities reject booleans, strings, and fractional values.
+
+| Model | Key fields |
+| --- | --- |
+| `Balance` | currency, cash_available, position_value; total property |
+| `Position` | symbol, market, quantity, sellable, average_price, last, market_value |
+| `Quote` | symbol, market, last, bid, ask, prev_close, timestamp |
+| `OrderRequest` | symbol, side, quantity, order_type, price, market, venue, client_key |
+| `CancelRequest` | order_id, symbol, quantity, market, venue, client_key |
+| `Order` | id, symbol, status, quantity, price, filled, remaining |
+| `Rules` | symbol, market, currency, tick, lot, min_notional, regular_open, regular_close, timezone |
+| `Capabilities` | Markets, single-order cancellation, market orders, NXT, and order-history support |
+
+`None` means unverified or unknown. `accepted` means request acceptance, not a fill or final cancellation. Models do not store raw responses, accounts, or keys. `client_key` is hidden from repr but is included if a caller serializes the entire model; do not log that serialization.
+
+[한국어](https://stoa-company.github.io/pykbroker/api/models/)
+
+-----
+
+Source: https://stoa-company.github.io/pykbroker/en/api/rules/
+
+# Korean cash-equity rules
+
+`rules.kr` provides the basic KRX cash-equity tick table and regular trading hours only. Callers supply rules for ETFs, ETNs, other venues, and special opening days. Without product classification, `get_rules()` returns `tick=None`.
+
+| Price (KRW) | Tick (KRW) |
+| --- | --- |
+| Below 2,000 | 1 |
+| 2,000 to below 5,000 | 5 |
+| 5,000 to below 20,000 | 10 |
+| 20,000 to below 50,000 | 50 |
+| 50,000 to below 200,000 | 100 |
+| 200,000 to below 500,000 | 500 |
+| 500,000 and above | 1,000 |
+
+The source documentation records comparison with the [KRX tick-size guide](https://global.krx.co.kr/contents/GLB/06/0602/0602010201/GLB0602010201T3.jsp) on 2026-09-09.
+
+Default regular hours are 09:00–15:30 KST. The source documentation also references the [KRX trading-hours and holidays guide](https://global.krx.co.kr/contents/GLB/06/0602/0602010201/GLB0602010201T1.jsp). `regular_session_open()` does not infer holidays and returns False without a trading-day callback. A weekday check cannot replace a trading calendar.
+
+`normalize_symbol()` handles six-character alphanumeric short codes and DB's A prefix. `round_price()` provides buy rounding down and sell rounding up, but order submission does not silently invoke it. Caller-selected prices are not truncated before transmission.
+
+[한국어](https://stoa-company.github.io/pykbroker/api/rules/)
+
+-----
+
+Source: https://stoa-company.github.io/pykbroker/en/changelog/
+
+# Changelog
+
+## 0.1.0 — Unreleased
+
+- StockBroker/BrokerAdapter and Pydantic v2 models.
+- KIS/DBFI conversions and an optional Toss async SDK bridge.
+- Fail-closed safety primitives, injected policies, and a local SQLite ledger.
+- Read-only-by-default FastMCP server and CLI.
+- Locked LS/Kiwoom mappings and offline NH/KB skeletons.
+- Execution SDK contract documentation and Protocol types without execution logic.
+- Offline fixture/mock tests with network access blocked.
+
+Connecting installable vendor distributions, LS/Kiwoom US expansion, and real API validation remain follow-up work.
+
+[한국어](https://stoa-company.github.io/pykbroker/changelog/)
+
+-----
+
+Source: https://stoa-company.github.io/pykbroker/en/claude-desktop/
+
+# Connect Korean brokerage tools to Claude Desktop
+
+pykbroker provides a read-only-by-default stdio server through `pykbroker-mcp`. This guide uses a source checkout and requires no PyPI publication or MCP registry entry. Configuration locations and restart steps follow the [official MCP local-server guide](https://modelcontextprotocol.io/docs/develop/connect-local-servers).
+
+## 1. Install and prepare authentication
+
+Create a virtual environment with Python 3.11 or later in the checkout:
+
+```bash
+python -m venv .venv
+.venv/bin/python -m pip install -e '.[mcp,kis]'
+```
+
+On Windows use `.venv\Scripts\python.exe`. The `kis` extra installs supporting dependencies only. Obtain compatible `Pykis` source or configure an authenticated client according to [getting started](https://stoa-company.github.io/pykbroker/en/getting-started/) before real queries.
+
+Arrange for an external secret manager to inject `PYKBROKER_ACCOUNT` and the JSON object `PYKBROKER_CLIENT_OPTIONS` into the **server process environment**. GUI applications may not inherit your terminal environment. If necessary, change `command` and `args` to start `pykbroker-mcp` through your secret manager's launcher. pykbroker does not provide that launcher or token management. Never paste actual accounts or keys into example configuration, conversations, or command history.
+
+## 2. Configure claude_desktop_config.json
+
+Open Settings → Developer → Edit Config in Claude Desktop and merge a `pykbroker` entry into the existing `mcpServers` object. Preserve other server entries.
+
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+
+This macOS template uses an **absolute path**. Replace `/absolute/path/to/pykbroker` with the real checkout location. Do not assume that `~` or shell variables expand inside `command`.
+
+```json
+{
+  "mcpServers": {
+    "pykbroker": {
+      "command": "/absolute/path/to/pykbroker/.venv/bin/pykbroker-mcp",
+      "args": [],
+      "env": {
+        "PYKBROKER_BROKER": "kis"
+      }
+    }
+  }
+}
+```
+
+A Windows command example is `C:\\absolute\\path\\to\\pykbroker\\.venv\\Scripts\\pykbroker-mcp.exe`; JSON backslashes must be doubled. Supply the account and authentication options through the process environment prepared above. This JSON alone does not authenticate the server.
+
+## 3. Verify read-only tools
+
+Fully quit and restart Claude Desktop. Check for `get_quote`, `get_balance`, `get_positions`, `list_orders`, and `get_rules`, then request “Get the current Samsung Electronics 005930 quote through KIS.” `get_rules` returns basic rules and does not know tick sizes for every product.
+
+With no `~/.pykbroker/limits.toml`, `place_order` and `cancel_order` should be **absent**. An account with existing order authorization differs from this default; review [MCP safety configuration](https://stoa-company.github.io/pykbroker/en/mcp/) first. This query guide does not create an order authorization file.
+
+## Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| Server missing / ENOENT | Valid JSON, actual absolute executable path, installed virtual environment, full application restart |
+| Tools visible but queries fail | Server environment injection, compatible vendor-source import path, authenticated client settings |
+| Offline or authentication failure | Errors must be returned instead of real quotes; use `python examples/offline_quote.py` for a synthetic offline demonstration |
+| Order tools missing | Expected default behavior; queries do not require order authorization |
+
+Logs are under macOS `~/Library/Logs/Claude/` or Windows `%APPDATA%\Claude\logs`. Inspect account/token content and vendor SDK logging before sharing logs. Actual Claude Desktop connectivity was not validated in this sandbox; offline tool registration/invocation tests are separate evidence.
+
+[한국어](https://stoa-company.github.io/pykbroker/claude-desktop/)
+
+-----
+
+Source: https://stoa-company.github.io/pykbroker/en/cli/
+
+# CLI
+
+```bash
+pykbroker --help
+pykbroker --version
+pykbroker brokers
+pykbroker --broker kis quote 005930
+pykbroker --broker dbfi balance
+pykbroker --broker dbfi positions
+pykbroker --broker kis orders --symbol 005930
+pykbroker --broker kis rules 005930
+```
+
+Follow the [environment-variable guide](https://stoa-company.github.io/pykbroker/en/getting-started/) for authentication. The CLI is read-only. Configuration and vendor errors return exit code 2 with an error message that excludes account and credential values.
+
+[한국어](https://stoa-company.github.io/pykbroker/cli/)
+
+-----
+
+Source: https://stoa-company.github.io/pykbroker/en/contributing/
+
+# Contributing
+
+Bug reports and pull requests are welcome. One designated maintainer has merge authority. Safety-related changes require an additional reviewer other than the author before that maintainer merges them.
+
+```bash
+python -m venv .venv
+. .venv/bin/activate
+pip install -e '.[dev,mcp]'
+pytest
+ruff check src tests examples
+ruff format --check src tests examples
+```
+
+All tests must be offline. Vendor response fixtures must contain no real account or credential values. Order/cancellation changes must verify exact request arguments, dry-run, caps, duplicates, and timeouts. Update documentation, tests, capabilities, and the support matrix together for new adapters. Unlocking an unverified specification requires documentation and independent verification evidence.
+
+Python sources live in `src/`, Pydantic models in `models/`, and JSON fixtures in `tests/fixtures/<broker>/`. Like pycex, the project uses hatchling, ruff, pytest-asyncio, and MkDocs Material. Do not add a request executor, strategy execution, or company-specific storage.
+
+You must have the right to contribute under Apache-2.0. If you refer to existing code, record the source and actual reuse scope in NOTICE.
+
+## Updating documentation and search assets
+
+When editing Korean Markdown, update the matching `docs/en/` translation and both page descriptions. pycex has no multilingual configuration, so this repository uses `docs/en/` with Korean/English navigation. Register new pages in both navigation trees.
+
+```bash
+pip install -e '.[docs]'
+python docs/_hooks/seo.py
+mkdocs build --strict
+```
+
+The generator refreshes `llms.txt`, `llms-full.txt`, `robots.txt`, and an offline fallback `sitemap.xml` from the actual complete Markdown documentation. The pre-build hook runs the same generator; MkDocs core creates the built site's sitemap. The page hook sets the HTML language and translation `hreflang` links. Planned addresses come from `site_url` in `mkdocs.yml`; regenerate and inspect the assets if it changes. These commands do not publish documentation.
+
+A project-path `robots.txt` does not replace the host-root robots policy. Before publication, separately check public availability, actual MkDocs rendering, desktop/mobile navigation, themes, and table overflow.
+
+[한국어](https://stoa-company.github.io/pykbroker/contributing/)
+
+-----
+
+Source: https://stoa-company.github.io/pykbroker/en/execution-sdk-contract/
+
+# Execution SDK contract
+
+This document and `pykbroker.contracts.execution` define **contracts** for an execution engine. This package contains no engine, code execution, intent dispatch, restart recovery, or scheduler. None of these contract functions sends executable code to the trader.
+
+## 1. Execution boundary and fixed context
+
+Each execution is bound to **one account, one symbol, one confirmed quantity, and one session**. After user confirmation, account, symbol, side, target quantity, and selected session cannot change; changes require confirmation of a new execution. The account is a read-only snapshot refreshed once at execution start, enforced through a deep copy or immutable storage.
+
+| Property | Contract type | Meaning |
+| --- | --- | --- |
+| `ctx.account` | `Account` | `account_id`, `broker`, `cash_available`, `holdings` |
+| `ctx.symbol` | `Symbol` | `code`, `name`, `market: KR/US/COIN`, `venue`, `tick`, `lot`, `min_notional` |
+| `ctx.side` | `buy / sell` | One direction |
+| `ctx.target_qty()` | `int` | Confirmed total shares |
+| `ctx.remaining()` | `int` | Target minus fills belonging to this execution |
+| `ctx.filled_qty()` | `int` | Cumulative fills for this execution |
+| `ctx.filled_avg()` | `float` | Weighted average fill price for this execution |
+
+Do not infer state from account-wide fills or changes in holdings. Compute cumulative and remaining quantities from the fill ledger associated with the execution ID. The engine must consistently define and document average-price representation before any fills.
+
+The table's `ctx` quantities are integer shares. Intent transport types permit float COIN quantities, but this does not extend the package's stock brokers or `ctx` calculations to fractional coin quantities.
+
+## 2. Quantity calculation
+
+Pure calculations do not create order intents. This boundary prevents calculations from silently changing the order the user confirmed.
+
+| Function | Return | Engine rule |
+| --- | --- | --- |
+| `qty_for_krw(krw: int, price: float)` | `int` shares | `floor(krw / price)`; zero raises `Clarify("Amount is below the price of one share")` |
+| `split(total: int, n: int, i: int)` | `int` shares | Equal splits, remainder in the final round; `1 ≤ n ≤ 40`; this contract uses `0 ≤ i < n` |
+| `round_price(price: float)` | `int` KRW | Round buys down and sells up to the symbol's tick |
+| `held()` | `int` shares | Holdings used as the sell-quantity ceiling |
+
+Nonpositive prices, invalid split counts, and missing symbol rules must produce `Clarify` during confirmation. Tick and quantity calculations are implemented by the engine. `rules.kr` is a separate market-rule helper, not justification for adding an engine here.
+
+## 3. Reading market data
+
+Query through the trader quote proxy with **at most one second of staleness and two queries per second per execution**. Do not replace stale or missing prices with zero for quantity calculations.
+
+| Function | Return |
+| --- | --- |
+| `last()` | Current price `float` |
+| `best_bid()` / `best_ask()` | Best bid/ask `float` |
+| `prev_close()` | Previous close `float`, the price-band reference |
+| `vwap_today()` | Cumulative intraday VWAP from one-minute bars, `float` |
+| `bars(n: int)` | Most recent n one-minute bars, `list[Bar]`, `n ≤ 390` |
+
+`Bar` contains `t, o, h, l, c, v`. Times and prices must match the symbol's trading date and currency. The engine owns query limits, freshness validation, and calculations. Do not assume the package's `Quote` provides all proxy metrics.
+
+## 4. Time and waiting
+
+| Function | Return or rule |
+| --- | --- |
+| `now()` | Timezone-aware KST `datetime` |
+| `session()` | `Session{open, close, is_open}`; the next trading-day session selected at confirmation stays fixed |
+| `wait(duration: str)` | `"30s"` to `"120m"`, minimum 30 seconds; reaching close raises `ExecutionEnded` |
+| `wait_until(hhmm: str)` | Only a time within the selected session; otherwise build-time `Clarify` |
+| `wait_for(pred, timeout: str)` | Evaluate `pred()` every 30 seconds |
+
+The engine supplies a calendar including holidays and special opening days. Compare against the selected session; do not infer trading dates from server UTC dates or weekdays. Waiting, polling, and resumption belong to the engine; this package supplies signatures only.
+
+## 5. Orders and state
+
+**One order function corresponds to one trader intent.** Track partial fills and cancellations by intent and execution ID; do not automatically turn timeouts into new orders.
+
+| Function | Return | Trader intent / rule |
+| --- | --- | --- |
+| `place_limit(qty, price, ttl="5m")` | `Order` | `kind="limit"`, price, ttl_sec; TTL is 1–60 minutes or `until_close` |
+| `place_market(qty)` | `Order` | `kind="market"`; regular session only |
+| `cancel(order)` | None | Cancel only that intent's unfilled remainder |
+| `cancel_open()` | None | Cancel all open intents in this execution; automatically invoked at execution end |
+| `order.status()` | `Status` | Identify this intent in the execution query result |
+| `order.wait(timeout)` | `Status` | Poll until filled, cancelled, or timed out |
+
+`Status` contains `state`, `filled_qty`, and `avg_price`; state is `open`, `partial`, `filled`, `cancelled`, or `rejected`. This contract's `Order` is a behavioral interface separate from the SDK's Pydantic `models.Order`. The engine implements status and waiting.
+
+Convert `until_close` into the remaining time until the fixed session closes. Do not add a limit price to a market intent or widen single-order cancellation to an account or symbol. A cancellation response does not undo fills.
+
+## 6. Recording and shutdown
+
+| Function | Meaning |
+| --- | --- |
+| `note(text)` | One user-visible execution log line |
+| `done(reason)` | End early; automatically cancel open intents |
+
+The engine must remove account/credential values from records and handle duplicate shutdown safely. It also owns reconciliation of cancellation results against the ledger after shutdown requests. The contract package does not execute logging storage or cancellation loops.
+
+## 7. Exceptions and safety gates
+
+| Exception | Trigger | Engine handling |
+| --- | --- | --- |
+| `Clarify(question)` | Missing values or out-of-session settings at build/dry-run time | Ask the user for clarification |
+| `Rejected(reason)` | Intent rejected by caps, price bands, kill switch, session checks, etc. | User code may catch it; otherwise execution ends |
+| `ExecutionEnded` | Market close, runtime limit, or user cancellation | Cancel open intents, then stop |
+
+The trader must validate quantity, ownership, session, price bands, dry-run, caps, idempotency, and rate limits. Context or SDK prevalidation does not replace server-side authorization and gates. The caller supplies actual limits and approval policy.
+
+## 8. Trader HTTP contract
+
+The following paths are **implementation requirements**, not HTTP endpoints registered by pykbroker.
+
+```text
+POST /orders/intents
+{
+  execution_id, seq, account_id, ticker,
+  market: "KR" | "US" | "COIN", venue?, side: "buy" | "sell",
+  qty, kind: "limit" | "market", price, ttl_sec, client_key
+}
+```
+
+- KR/US `qty` is integer; COIN uses real numbers. The server validates positive, finite prices and quantities.
+- `execution_id` scopes the execution, `seq` is its internal sequence, and `client_key` identifies retransmission of the same intent.
+- Account ID is a caller-supplied opaque contract identifier without assumptions about a repository's column schema.
+- Limit intents require price; market intents do not imply a limit-price constraint.
+
+```text
+200 { intent_id, status: "accepted", broker_order_id }
+409 { status: "rejected", reason:
+      kill_switch | dry_run | not_owner | cap_exceeded |
+      price_band | session_closed | rate_limit | duplicate }
+
+POST /orders/intents/{intent_id}/cancel
+GET  /orders/executions/{execution_id}
+     → { intents[], filled_qty, avg_price, remaining }
+GET  /quotes/{ticker}
+     → { last, bid1, ask1, prev_close, vwap }
+```
+
+The `Trader` Protocol represents these four operations. Intent data carries numbers, strings, and state only, never user code, functions, or serialized executable code. Authentication, ownership checks, dispatch, fill synchronization, resumption, recovery, and gate policy implementation remain outside this package.
+
+## 9. Validation criteria for engine implementers
+
+Verify rejection of fixed-context edits, split totals and final remainders, tick-rounding direction, trading-day boundaries, stale quotes, query limits, out-of-session market orders, duplicate intents, partial-fill cancellation, expiry, shutdown cleanup, and authorization denial in the engine's own repository. This repository uses AST checks to ensure that all Protocol method bodies contain only `raise NotImplementedError`.
+
+Documented function rules do not mean an execution engine exists. The Korean Markdown source and its existing HTML review copy describe the same contract; Markdown is authoritative. This English page translates that source.
+
+[한국어](https://stoa-company.github.io/pykbroker/execution-sdk-contract/)
+
+-----
+
+Source: https://stoa-company.github.io/pykbroker/en/getting-started/
+
+# Getting started
+
+pykbroker requires Python 3.11 or later and Pydantic v2. Importing the package does not authenticate, issue tokens, or open sockets.
+
+## Installation
+
+```bash
+# Current, unpublished source checkout:
+pip install -e '.[mcp,dev]'
+# Only after a distribution is published on PyPI:
+# pip install pykbroker
+# pip install 'pykbroker[mcp]'
+```
+
+| Extra | What it installs |
+| --- | --- |
+| `kis` | Supporting runtime dependencies for Pykis |
+| `dbfi` | Supporting runtime dependencies for Pydb |
+| `toss` | HTTP and settings dependencies for the Toss source SDK |
+| `mcp` | FastMCP 1.x |
+| `dev` | pytest, pytest-asyncio, ruff, build |
+| `docs` | MkDocs Material |
+
+**Vendor source distributions are not included.** The referenced KIS source uses `Pykis._pykis` and `Pykis.base`; DB uses `Pydb.pydbfi`. Installation metadata in those revisions does not match these capitalized import paths, so the extras do not select an arbitrary similarly named PyPI package. The `kis` and `dbfi` extras install supporting dependencies only.
+
+Place reviewed source trees named `Pykis/` and `Pydb/` under a separate parent directory and add that parent to Python's import path, or inject objects as below. See [attribution](https://stoa-company.github.io/pykbroker/en/notice/) for the referenced revisions. Check vendor source licenses and access rights separately. `toss_openapi` also requires a compatible source SDK or injected bridge. Connecting compatible installable distributions remains a TODO.
+
+## Environment variables
+
+| Variable | Meaning |
+| --- | --- |
+| `PYKBROKER_BROKER` | `kis`, `dbfi`, or `toss`; CLI/MCP default to `kis` |
+| `PYKBROKER_ACCOUNT` | Caller-owned account identifier; KIS requires the vendor's actual account format |
+| `PYKBROKER_CLIENT_OPTIONS` | JSON object of authentication constructor arguments |
+| `PYKBROKER_TOSS_ACCOUNT_SEQ` | Toss-issued accountSeq, distinct from the account number |
+
+Do not put real values in source, command history, or documentation. Arrange for an external secret manager to inject the environment. The CLI does not accept account identifiers or keys as arguments. The SDK provides no policy for storing or refreshing authentication options.
+
+## Inject an authenticated client
+
+```python
+from pykbroker import KIS, DBFI
+
+# authenticated_client and vendor_api are supplied by the caller.
+# KIS: client.account(caller account), api.get_price_domestic(...),
+# api.get_quote_domestic(...), etc.
+broker = KIS(account=caller_account, client=authenticated_client, api=vendor_api)
+quote = broker.get_quote("005930")
+broker.close()
+
+# DBFI accepts a Pydb DBFI object directly; no api helper is required.
+broker = DBFI(account=caller_account, client=authenticated_db_client)
+```
+
+The caller owns and closes injected clients. For clients created through `client_factory`, the adapter calls `close()` when supported. KIS selects the account with `client.account(account)`. DB credentials are bound to the account by the vendor; the caller must ensure that the supplied identifier and client refer to the same account.
+
+Toss accepts `sdk_factory`. Construction, use, and shutdown run on an instance-owned event loop. Async applications can call the synchronous API through `await asyncio.to_thread(broker.get_quote, "005930")`; complete `close()` in the same way.
+
+## Trading scope and unsupported features
+
+The broker implementations cover integer-share KR/US cash equities. Derivatives, leverage, portfolio rebalancing, automatic retries, and an execution engine are not included. `get_rules()` returning `tick=None` means the price band or product type is unknown. Unsupported features raise `NotSupportedError`.
+
+Construct KIS/DB US adapters with `market="US"` and `venue="NASDAQ" | "NYSE" | "AMEX"`. US balances require a `cash_provider(client_or_scope) -> Decimal` callback supplying USD cash available for orders. The library does not choose an arbitrary symbol or account type. Inject KRW valuation for US order limits through `OrderSafety.valuation`.
+
+Supply all vendor clients with **order retries disabled**. This package does not retry failed submissions or cancellations; callers must inspect retries inside the vendor SDK separately.
+
+[한국어](https://stoa-company.github.io/pykbroker/getting-started/)
+
+-----
+
+Source: https://stoa-company.github.io/pykbroker/en/
+
+# pykbroker
+
+pykbroker is an Apache-2.0 Python library that unifies Korean brokerage (KIS, DB Securities, and Toss Securities) Open APIs behind a common interface and a read-only-by-default MCP server.
+
+pykbroker는 한국 증권사(한국투자·DB증권·토스증권) Open API를 공통 파이썬 인터페이스와 기본 읽기 전용 MCP 서버로 묶은 Apache-2.0 라이브러리입니다.
+
+| Implemented adapters | Offline tests | Python |
+| --- | --- | --- |
+| **3** — KIS, DBFI, Toss | **141 passed**, 1 environment-related skip | **3.11+** |
+
+Measured on 2026-09-09. The adapter count is the number of entries in `BROKERS`; tests use mocks and synthetic fixtures. **Real APIs, paper accounts, and live trading have not been validated.** The skip concerns sandbox restrictions on local IPC. See the [support matrix](https://stoa-company.github.io/pykbroker/en/BROKER_MATRIX/). This is an alpha, unpublished source checkout.
+
+## 30-second example: KIS stock quote
+
+Install from the checkout:
+
+```bash
+pip install -e '.[mcp]'
+```
+
+Prepare the vendor authentication client and environment as described in [getting started](https://stoa-company.github.io/pykbroker/en/getting-started/), then run:
+
+```python
+from pykbroker import create_broker
+
+with create_broker("kis") as broker:
+    quote = broker.get_quote("005930")
+    print(quote.symbol, quote.last, quote.bid, quote.ask)
+```
+
+Set `PYKBROKER_ACCOUNT` to the caller's account identifier and inject vendor constructor settings as JSON through `PYKBROKER_CLIENT_OPTIONS`. Quote requests may require authentication. Obtain KIS/DB/Toss vendor SDK sources separately; extras install supporting dependencies only. The 30-second example assumes that preparation is complete.
+
+For a key-free demonstration, run `python examples/offline_quote.py`. It returns synthetic responses, not live market data. After a distribution is published, installation can use `pip install pykbroker` or `pip install 'pykbroker[mcp]'`.
+
+## How it works
+
+```text
+Caller → StockBroker / BrokerAdapter contract → Broker adapter → Vendor SDK
+                         ↑                          │
+                     MCP / CLI                      └ Orders: safety gate → vendor submission
+```
+
+Queries return shared models. Orders and cancellations pass through **dry-run → per-order/daily caps → idempotency key → kill switch → optional circuit breaker → adapter submission**. The caller supplies limits, account, credentials, and state providers. Orders are blocked by default.
+
+## Responsibilities
+
+| Component | Responsibility |
+| --- | --- |
+| `base` | Shared query, order, cancellation, and shutdown contracts |
+| `brokers` | KIS/DBFI/Toss conversions; verified with offline contract tests |
+| `experimental` | Unverified LS/Kiwoom mappings and NH/KB skeletons; order locks remain closed |
+| `safety` | Caller-injected limits, idempotency, dry-run, and halt decisions |
+| `mcp` | Default read-only tools; order tools registered only through configuration |
+
+## FAQ
+
+### How do I query Korea Investment Securities quotes and balances in Python?
+
+Prepare compatible Pykis source and authentication settings, then call `get_quote("005930")` or `get_balance()` on `create_broker("kis")`. Alternatively, inject an authenticated client and API helper into `KIS`. See [getting started](https://stoa-company.github.io/pykbroker/en/getting-started/) and the complete [KIS balance example](https://github.com/STOA-company/pykbroker/blob/main/examples/kis_balance_check.py).
+
+### Can I connect Korean brokerage APIs to Claude Desktop through MCP?
+
+Install the `mcp` extra and run `pykbroker-mcp` as a stdio server. Its default tools are `get_quote`, `get_balance`, `get_positions`, `list_orders`, and `get_rules`; queries require vendor SDKs and authentication. The [Claude Desktop guide](https://stoa-company.github.io/pykbroker/en/claude-desktop/) provides paths and JSON configuration, but actual Claude Desktop connectivity has not been validated in this environment.
+
+### Can I test without live orders using a paper account or dry-run?
+
+Default dry-run blocks submission and cancellation with `DryRunError`; it does not simulate fills or return successful orders. Key-free examples and tests use mocks and synthetic fixtures, including synthetic quote data. Paper-account connectivity depends on vendor client configuration; the package provides neither a shared paper-account switch nor validated paper-account integration.
+
+### Does the Python library support DB Securities Open API?
+
+`create_broker("dbfi")` and `DBFI` provide an implemented adapter for a Pydb client. KR/US queries, order conversions, and single-order cancellation have offline contract checks, with no real API validation. US orderable cash requires an injected `cash_provider`; check the [support matrix](https://stoa-company.github.io/pykbroker/en/BROKER_MATRIX/).
+
+### How do I integrate Toss Securities and what do I need?
+
+Obtain compatible `toss_openapi` source or an `sdk_factory` bridge and supply `PYKBROKER_ACCOUNT`, `PYKBROKER_TOSS_ACCOUNT_SEQ`, and `PYKBROKER_CLIENT_OPTIONS` for `create_broker("toss")`. Async SDK creation, calls, and shutdown run on an adapter-owned event loop; verification uses bridge mocks. The `toss` extra does not install vendor source, and the Toss SDK's own dry-run/live flags apply separately.
+
+### What prevents an AI assistant from submitting live orders by default?
+
+SDK dry-run is on by default; MCP registers mutation tools only with a valid `~/.pykbroker/limits.toml` containing `allow_orders = true` and positive `per_order_krw_cap` and `daily_krw_cap`. Omitted `dry_run` defaults to `true`, and live submission requires limits, a usage ledger, an idempotency store, and a kill switch. File deletion or changes block subsequent MCP orders; circuit breakers are optional and failed requests are not automatically retried. Users choose their own caps; read the [MCP configuration](https://stoa-company.github.io/pykbroker/en/mcp/) and [safety primitives](https://stoa-company.github.io/pykbroker/en/safety/).
+
+### Is pykbroker free and can I use it commercially?
+
+The code is provided under [Apache-2.0](https://github.com/STOA-company/pykbroker/blob/main/LICENSE), which allows commercial use, modification, and redistribution subject to its conditions. Brokerage API terms, fees, and separately obtained vendor SDK licenses require separate review. See [NOTICE](https://stoa-company.github.io/pykbroker/en/notice/) for attribution and rewriting scope.
+
+### Are LS, Kiwoom, NH Investment, and KB Securities supported?
+
+All four are **unverified experimental** adapters and are excluded from the three registered adapters. LS/Kiwoom contain domestic request mappings with locked orders and unverified queries; NH/KB are skeletons without network transport. They are absent from the top-level factory, and changing a lock alone does not make them ready for use.
+
+## Related projects
+
+The sibling [pycex](https://github.com/Jaeminyx-Stoa/pycex) informed packaging, fixture, FastMCP, and documentation conventions.
+
+Documentation and contribution:
+
+- [Installation and client injection](https://stoa-company.github.io/pykbroker/en/getting-started/), [한국어 문서 / Korean documentation](https://stoa-company.github.io/pykbroker/)
+- [Broker support](https://stoa-company.github.io/pykbroker/en/BROKER_MATRIX/), [Adding an adapter](https://stoa-company.github.io/pykbroker/en/BROKER_ADAPTER_RECIPE/)
+- [Safety](https://stoa-company.github.io/pykbroker/en/safety/), [Models](https://stoa-company.github.io/pykbroker/en/api/models/), [CLI](https://stoa-company.github.io/pykbroker/en/cli/)
+- [Execution SDK contract](https://stoa-company.github.io/pykbroker/en/execution-sdk-contract/): documentation and types only
+- [Contributing](https://stoa-company.github.io/pykbroker/en/contributing/), [Security](https://stoa-company.github.io/pykbroker/en/security/), [Changelog](https://stoa-company.github.io/pykbroker/en/changelog/)
+
+## Documentation address and AI-readable text
+
+The planned documentation address is `https://stoa-company.github.io/pykbroker/`. This change does not publish it, and its public availability is unverified. [llms.txt](https://stoa-company.github.io/pykbroker/llms.txt) contains a summary and key links; [llms-full.txt](https://stoa-company.github.io/pykbroker/llms-full.txt) combines the complete Korean and English Markdown documentation as plain text. These files do not guarantee crawling or AI citations.
+
+[한국어](https://stoa-company.github.io/pykbroker/)
+
+-----
+
+Source: https://stoa-company.github.io/pykbroker/en/mcp/
+
+# MCP server
+
+`pykbroker-mcp` uses FastMCP's `@app.tool()`, JSON-string results, and stdio transport. Default tools are `get_quote`, `get_balance`, `get_positions`, `list_orders`, and `get_rules`. The package exposes `create_server()` and the module-level `mcp`. See the [Claude Desktop setup guide](https://stoa-company.github.io/pykbroker/en/claude-desktop/) for local configuration.
+
+## Registering order tools
+
+At startup the server reads `~/.pykbroker/limits.toml`. All of the following are required to register `place_order` and `cancel_order`:
+
+1. A readable, valid TOML file.
+2. `allow_orders` is boolean `true`, not a string.
+3. `per_order_krw_cap` and `daily_krw_cap` are finite positive amounts.
+4. `dry_run` is boolean and defaults to `true` if omitted.
+
+Empty files, incorrect types, missing limits, or invalid amounts hide order tools. A dry-run invocation raises `DryRunError` rather than returning a fabricated successful order. No usable cap file is supplied before users choose their own limits.
+
+This is a **template requiring user input**, not directly executable TOML:
+
+```text
+allow_orders = true
+per_order_krw_cap = <user-selected per-order KRW cap>
+daily_krw_cap = <user-selected daily KRW cap>
+dry_run = true
+```
+
+Deleting or editing the file after registration blocks orders and cancellations. Restart the server to update the tool list with reviewed settings. Changing settings does not retroactively cancel an in-flight vendor request.
+
+## Order calls and storage
+
+Sequence: input validation → dry-run → cap reservation → idempotency claim → settings recheck/kill switch → optional circuit breaker → vendor call.
+
+- The default MCP command uses KR orders; it does not automatically configure US trading.
+- `place_order(symbol, side, quantity, client_key, price, order_type="limit")`.
+- `cancel_order(order_id, symbol, quantity, client_key)` targets a single order.
+- Market orders require trusted upper-bound KRW valuation and session authorization. Default MCP does not infer these and blocks market orders.
+- KIS single-order cancellation is explicitly unsupported. Toss cancels only the entire unfilled remainder of one order.
+
+`orders.sqlite3` is created alongside the limits file on the first order invocation. Account identifiers and client_key values are hashed. Cap reservation and key claim are separate atomic transactions. Interruption between them may consume a cap without submitting an order. Duplicate requests, rejections, and timeouts do not refund reservations, so caps are consumed more conservatively than filled amounts.
+
+The daily cap is the **sum of submitted value per account, broker, and KST date**. Buys and sells share that total. Cancellation checks the cap configuration with amount zero and uses a separate cancellation key namespace. KIS/DB do not claim native idempotency-key support. Local SQLite coordinates only processes on one host using the same file; multiple hosts require an injected shared store.
+
+## Configure within an application
+
+```python
+from pykbroker import DBFI
+from pykbroker.mcp.server import create_server
+
+app = create_server(
+    broker_factory=lambda safety: DBFI(
+        account=caller_account, client=caller_client, safety=safety
+    )
+)
+app.run(transport="stdio")
+```
+
+The injected factory must return a `BaseBroker` bound to the exact supplied `OrderSafety`; factories replacing it are rejected. The constructed adapter is closed at shutdown. Logs contain broker, masked account, and action only, without raw requests, responses, or keys.
+
+Toss SDK dry-run and live flags also apply independently. The default factory does not disable those additional guards. Supply Toss live settings only through an explicitly configured caller-owned `broker_factory`.
+
+[한국어](https://stoa-company.github.io/pykbroker/mcp/)
+
+-----
+
+Source: https://stoa-company.github.io/pykbroker/en/notice/
+
+# Notice
+
+pykbroker
+Copyright 2026 STOA Company
+
+Portions of the design and broker-call contracts in this package were extracted
+and rewritten from STOA-company/quantus-trader, revision:
+d14719529541f2c556795f59f2f68c45b6b7715e.
+Company-specific storage, policies, and credentials are not included.
+
+Vendor API shapes were checked against these referenced source revisions:
+
+- STOA-company/quantus-pykis: 65b56b9d1dc292a4d9b67a9e5ca583c7e6eb7efd
+- STOA-company/quantus-dbfi: ac2e92749fa610e7b75f82e8a0dc9c1efca132b8
+
+The Pykis, Pydb and toss_openapi SDK source is not bundled or relicensed here.
+Each separately obtained dependency retains its own license.
+
+Package layout, hatchling configuration, JSON-fixture conventions and FastMCP
+usage were informed by the sibling pycex project (MIT, STOA Company).
+No upstream safety implementation is copied: the supplied interfaces and pure
+safety logic were newly written for this package. This notice does not change
+the Apache-2.0 license of pykbroker.
+
+[한국어](https://stoa-company.github.io/pykbroker/notice/)
+
+-----
+
+Source: https://stoa-company.github.io/pykbroker/en/safety/
+
+# Safety primitives
+
+The package contains no company-specific policy numbers or account repository. Default inputs block operations.
+
+| Primitive | Injection contract | Invalid input |
+| --- | --- | --- |
+| `DryRun` | Only exact boolean `False` permits live operations | Block |
+| `KillSwitch` | `HaltProvider(broker, account) -> bool`; only `False` permits continuation | Block |
+| `RiskLimits` / `RiskLedger` | Per-order/daily KRW caps and atomic reservation storage | Block |
+| `IdempotencyStore` | `claim(scope, key) -> bool`; only the first claim returns True | Block |
+| `evaluate_breaker` | Loss/error rates, observation counts, and thresholds | Trip |
+| `RateLimiter` | Per-TR requests per second, clock, and sleep function | Block unregistered TR |
+
+`OrderSafety` is the shared SDK/MCP submission boundary and defaults to dry-run. Live configuration requires limits, a usage ledger, an idempotency store, and a kill switch. Circuit breakers and rate limiters are separately configurable primitives. Experimental REST adapters refuse calls without a limiter. Existing KIS/DB/Toss rate limiting is the responsibility of the vendor SDK or injected client.
+
+Limits use `Decimal`; KRW limit orders use `quantity × price`. If a separate valuation is injected, the larger amount applies. US, market, and after-hours orders require caller-supplied conservative KRW valuation. Market orders also require a regular-session authorization callback. A single current quote cannot guarantee a ceiling on market-order execution value.
+
+`MemoryRiskLedger` and `MemoryIdempotencyStore` are explicitly selected, single-process test/demo stores whose records vanish on restart. MCP's default `SQLiteLedger` serializes reservations across processes using the same file. Neither approach reverses orders already received by a broker.
+
+There are no automatic retries after errors. Reservations and claims persist on both success and failure. Reconcile ambiguous outcomes against the vendor order ledger before deciding whether there is a new intent. Do not delete the ledger to retry.
+
+`order_key()` incorporates account, broker, symbol, side, quantity, price, order type, and round. Equivalent numeric representations yield the same key. Use a new round or client_key for a new intent, and preserve the existing key when invoking the same intent again.
+
+[한국어](https://stoa-company.github.io/pykbroker/safety/)
+
+-----
+
+Source: https://stoa-company.github.io/pykbroker/en/security/
+
+# Security
+
+Supply credentials, account identifiers, and tokens through environment variables only; never hardcode them in source, fixtures, documentation, or command arguments. When injecting an authenticated client, the caller application must also read its configuration from the environment. Do not commit `.env` or token files.
+
+The package does not copy raw requests, responses, or exception bodies into logs. Accounts are masked, for example as `****1234`, and short identifiers are fully masked. Separately review the injected vendor SDK's logging, token cache, and retry policy.
+
+Restrict access to `limits.toml` and order-ledger files to the caller. Do not delete SQLite ledgers or change client_key to retry an ambiguous order. Setting `dry_run=False` alone does not create mandatory policies, stores, or a kill switch.
+
+Report security issues through the repository's private vulnerability reporting feature or a private channel provided by a maintainer, without placing actual sensitive values in public issues. On exposure, revoke and reissue credentials and inspect commit history, logs, and artifacts.
+
+[한국어](https://stoa-company.github.io/pykbroker/security/)
+
+-----
+
+Source: https://stoa-company.github.io/pykbroker/execution-sdk-contract/
+
+# 실행 SDK 계약
+
+이 문서와 `pykbroker.contracts.execution`은 실행기가 구현해야 할 **계약**을 정의합니다. 실행기, 코드 실행, 의도 디스패치, 재시작 복구, 스케줄러는 이 패키지에 없습니다. 이 계약의 어떤 함수도 실행 코드를 트레이더에 전달하지 않습니다.
+
+## 1. 실행 경계와 고정 컨텍스트
+
+실행 하나는 **계좌 1 · 종목 1 · 확정 수량 1 · 세션 1**에 묶입니다. 사용자가 확인한 뒤 계좌·종목·방향·목표 수량·선택 세션을 바꿀 수 없습니다. 변경은 새 실행으로 확인받아야 합니다. 계좌는 실행 시작 시 한 번 갱신한 읽기 전용 스냅샷이며 깊은 복사나 불변 저장으로 보장해야 합니다.
+
+| 속성 | 계약 타입 | 의미 |
+| --- | --- | --- |
+| `ctx.account` | `Account` | `account_id`, `broker`, `cash_available`, `holdings` |
+| `ctx.symbol` | `Symbol` | `code`, `name`, `market: KR/US/COIN`, `venue`, `tick`, `lot`, `min_notional` |
+| `ctx.side` | `buy / sell` | 한 방향 |
+| `ctx.target_qty()` | `int` | 확인한 총 수량(주) |
+| `ctx.remaining()` | `int` | 목표 수량 − 해당 실행의 체결 누계 |
+| `ctx.filled_qty()` | `int` | 해당 실행의 체결 누계 |
+| `ctx.filled_avg()` | `float` | 해당 실행 체결의 가중 평균가 |
+
+상태는 계좌 전체 체결이나 보유 수량 변화로 추정하면 안 됩니다. 실행 ID에 속한 체결 원장으로 누계와 잔량을 계산해야 합니다. 초기 미체결 상태의 평균가 표현은 실행기가 일관되게 정하고 문서화해야 합니다.
+
+타입 표의 `ctx` 수량은 주식 정수 수량입니다. 의도 전송 타입의 COIN 수량은 float를 허용하지만, 이 패키지의 주식 브로커와 `ctx` 수량 계산을 소수 코인 수량으로 임의 확장하지 않습니다.
+
+## 2. 수량 계산
+
+순수 계산은 주문 의도를 만들지 않습니다. 계산 결과가 사용자 확인과 다른 주문으로 조용히 바뀌지 않도록 하기 위한 구분입니다.
+
+| 함수 | 반환 | 실행기가 지킬 규칙 |
+| --- | --- | --- |
+| `qty_for_krw(krw: int, price: float)` | `int` 주 | `floor(krw / price)`; 0이면 `Clarify("금액이 1주 값보다 작습니다")` |
+| `split(total: int, n: int, i: int)` | `int` 주 | 균등 분할, 나머지는 마지막 라운드; `1 ≤ n ≤ 40`; 인덱스는 이 계약에서 `0 ≤ i < n`으로 정의 |
+| `round_price(price: float)` | `int` 원 | 종목 호가 단위로 매수 내림·매도 올림 |
+| `held()` | `int` 주 | 매도 수량 상한으로 사용하는 보유 수량 |
+
+0 이하 가격·잘못된 분할 개수·누락 종목 규칙은 확인 단계에서 `Clarify`로 처리해야 합니다. 호가·수량 계산 함수는 실행기 쪽에서 구현합니다. `rules.kr`은 별도 시장 규칙 도우미이며 이 파일에 실행기 구현을 추가하는 근거가 아닙니다.
+
+## 3. 시세 읽기
+
+트레이더 시세 프록시를 통해 조회하고 **지연 1초 이하, 실행당 초당 2회 상한**을 지켜야 합니다. 오래되거나 누락된 시세를 0으로 바꿔 주문 수량을 계산하지 않습니다.
+
+| 함수 | 반환 |
+| --- | --- |
+| `last()` | 현재가 `float` |
+| `best_bid()` / `best_ask()` | 매수·매도 1호가 `float` |
+| `prev_close()` | 전일 종가 `float`, 가격 밴드 기준 |
+| `vwap_today()` | 1분봉으로 계산한 당일 누적 VWAP `float` |
+| `bars(n: int)` | 최근 n개 1분봉 `list[Bar]`, `n ≤ 390` |
+
+`Bar`는 `t, o, h, l, c, v` 필드를 갖습니다. 시각과 가격은 종목의 거래일·통화와 일치해야 하며 실행기가 조회 제한·신선도 검증·계산을 책임집니다. 이 패키지의 `Quote`가 모든 프록시 지표를 제공한다고 가정하지 않습니다.
+
+## 4. 시간과 대기
+
+| 함수 | 반환 또는 규칙 |
+| --- | --- |
+| `now()` | KST `datetime`, timezone 포함 |
+| `session()` | `Session{open, close, is_open}`; 확인 시 선택한 다음 거래일 세션 고정 |
+| `wait(duration: str)` | `"30s"`~`"120m"`, 최소 30초; 장 마감에 도달하면 `ExecutionEnded` |
+| `wait_until(hhmm: str)` | 선택 세션 안 시각만 허용; 밖이면 빌드 시 `Clarify` |
+| `wait_for(pred, timeout: str)` | 30초마다 `pred()` 평가 |
+
+실행기는 휴장·특별 개장일을 반영한 달력을 제공해야 합니다. 시간 비교는 선택 세션으로 수행하고 서버의 UTC 날짜나 단순 요일로 거래일을 추측하지 않습니다. 대기·폴링·재개 구현은 실행기 책임이며 이 패키지는 서명만 제공합니다.
+
+## 5. 주문과 상태
+
+**주문 함수 하나는 트레이더 의도 하나**에 대응합니다. 부분체결과 취소는 의도·실행 ID 기준으로 추적하며, 타임아웃을 새 주문으로 자동 변환하지 않습니다.
+
+| 함수 | 반환 | 트레이더 의도 / 규칙 |
+| --- | --- | --- |
+| `place_limit(qty, price, ttl="5m")` | `Order` | `kind="limit"`, price, ttl_sec; TTL은 1~60분 또는 `until_close` |
+| `place_market(qty)` | `Order` | `kind="market"`; 정규장에서만 |
+| `cancel(order)` | 없음 | 해당 의도의 미체결분만 취소 |
+| `cancel_open()` | 없음 | 이 실행의 열린 의도 전부 취소; 실행 종료 시 자동 호출 |
+| `order.status()` | `Status` | 실행 조회 결과에서 해당 의도를 식별 |
+| `order.wait(timeout)` | `Status` | 체결·취소·타임아웃까지 폴링 |
+
+`Status`는 `state`, `filled_qty`, `avg_price`이며 state는 `open`, `partial`, `filled`, `cancelled`, `rejected` 중 하나입니다. 이 실행 계약의 `Order`는 SDK의 Pydantic `models.Order`와 별개인 행동 인터페이스입니다. 상태·대기를 구현하는 책임은 실행기에 있습니다.
+
+TTL `until_close`는 고정 세션 종료까지 남은 시간으로 변환해야 합니다. 시장가 의도에 지정가를 끼워 넣거나, 단일 주문 취소를 계좌·종목 전체 취소로 확대하지 않습니다. 취소 응답을 체결이 사라졌다는 뜻으로 해석하지 않습니다.
+
+## 6. 기록과 종료
+
+| 함수 | 의미 |
+| --- | --- |
+| `note(text)` | 사용자에게 보이는 실행 로그 한 줄 |
+| `done(reason)` | 조기 종료; 열린 의도 자동 취소 |
+
+실행기는 기록에서 계좌·인증값을 제거하고 중복 종료를 안전하게 처리해야 합니다. 종료 요청 후 취소 결과를 원장으로 확인하는 책임도 실행기 소유입니다. 계약 패키지는 기록 저장·취소 루프를 실행하지 않습니다.
+
+## 7. 예외와 안전 게이트
+
+| 예외 | 발생 조건 | 실행기 처리 |
+| --- | --- | --- |
+| `Clarify(question)` | 빌드·드라이런 시 값 누락, 세션 밖 | 사용자에게 확인 요청 |
+| `Rejected(reason)` | 한도·가격 밴드·킬스위치·장외 등 의도 거절 | 사용자 코드가 잡을 수 있음; 미처리면 실행 종료 |
+| `ExecutionEnded` | 장 마감·런타임 상한·사용자 취소 | 열린 의도 자동 취소 후 종료 |
+
+수량·소유권·세션·가격 밴드·드라이런·한도·멱등성·속도 제한을 트레이더가 확인해야 합니다. ctx나 SDK의 사전 검증으로 서버 측 권한·게이트 검증을 생략할 수 없습니다. 실제 한도와 승인 정책은 호출자가 제공합니다.
+
+## 8. 트레이더 HTTP 계약
+
+다음 경로는 **구현 요구사항**이며 pykbroker가 HTTP 서버로 등록하는 엔드포인트가 아닙니다.
+
+```text
+POST /orders/intents
+{
+  execution_id, seq, account_id, ticker,
+  market: "KR" | "US" | "COIN", venue?, side: "buy" | "sell",
+  qty, kind: "limit" | "market", price, ttl_sec, client_key
+}
+```
+
+- KR·US `qty`는 정수, COIN은 실수. 가격·수량의 양수·유한성은 서버에서 검증합니다.
+- `execution_id`는 실행 경계, `seq`는 실행 내 순서, `client_key`는 같은 의도의 재전송 식별입니다.
+- 계좌 ID는 호출자가 전달한 계약상의 불투명 식별자이며 특정 저장소의 컬럼 규칙을 가정하지 않습니다.
+- limit에는 price가 필요하고, market에는 지정가 제한을 암시하지 않습니다.
+
+```text
+200 { intent_id, status: "accepted", broker_order_id }
+409 { status: "rejected", reason:
+      kill_switch | dry_run | not_owner | cap_exceeded |
+      price_band | session_closed | rate_limit | duplicate }
+
+POST /orders/intents/{intent_id}/cancel
+GET  /orders/executions/{execution_id}
+     → { intents[], filled_qty, avg_price, remaining }
+GET  /quotes/{ticker}
+     → { last, bid1, ask1, prev_close, vwap }
+```
+
+`Trader` Protocol은 이 네 동작의 타입을 표현합니다. 의도 데이터는 숫자·문자열·상태만 전달하고 사용자 코드·함수·직렬화된 실행 코드를 보내지 않습니다. 인증, 소유권 확인, 디스패치, 체결 동기화, 재개·복구·게이트 정책 구현은 패키지 범위 밖입니다.
+
+## 9. 실행기 구현자의 검증 기준
+
+고정 컨텍스트 변경 거부, 분할 합계·마지막 잔량, 호가 반올림 방향, 거래일 경계, 오래된 시세, 조회 상한, 장외 시장가, 중복 의도, 부분체결 취소, 만료, 종료 정리, 권한 거절을 실행기 저장소에서 검증해야 합니다. 이 저장소는 Protocol의 모든 함수 본문이 `raise NotImplementedError`만 포함하는지 AST로 검사합니다.
+
+함수 규칙이 문서에 있다고 실행기가 구현된 것은 아닙니다. 이 파일과 HTML 검토본은 같은 계약을 읽는 두 표면이며 Markdown이 정본입니다.
+
+[English](https://stoa-company.github.io/pykbroker/en/execution-sdk-contract/)
+
+-----
+
+Source: https://stoa-company.github.io/pykbroker/getting-started/
+
+# Getting Started
+
+Python 3.11 이상과 Pydantic v2를 사용합니다. 패키지 import는 인증·토큰 발급·소켓 연결을 수행하지 않습니다.
+
+## 설치
+
+```bash
+# 현재: 게시 전 소스 체크아웃에서 설치
+pip install -e '.[mcp,dev]'
+# 향후 PyPI 배포판이 게시된 뒤에만:
+# pip install pykbroker
+# pip install 'pykbroker[mcp]'
+```
+
+| extra | 설치 범위 |
+| --- | --- |
+| `kis` | Pykis 실행에 쓰이는 보조 의존성 |
+| `dbfi` | Pydb 실행에 쓰이는 보조 의존성 |
+| `toss` | Toss 소스 SDK의 HTTP·설정 보조 의존성 |
+| `mcp` | FastMCP 1.x |
+| `dev` | pytest·pytest-asyncio·ruff·build |
+| `docs` | MkDocs Material |
+
+**벤더 코드 배포는 포함하지 않습니다.** 참조된 KIS 소스는 `Pykis._pykis`와 `Pykis.base`를, DB 소스는 `Pydb.pydbfi`를 사용합니다. 참조 버전의 설치 메타데이터는 이 대문자 경로와 일치하지 않아, 임의의 동명 PyPI 패키지를 설치하도록 연결하지 않았습니다. `kis`/`dbfi` extras는 보조 의존성만 설치합니다.
+
+검토한 소스 트리를 별도 부모 디렉터리에 `Pykis/`, `Pydb/` 이름으로 놓고 그 부모를 Python import 경로에 추가하거나, 아래처럼 객체를 주입하세요. 참조 리비전은 [출처](https://stoa-company.github.io/pykbroker/notice/)에 있습니다. 벤더 소스 라이선스와 접근 권한은 별도로 확인해야 합니다. `toss_openapi`도 참조 소스와 같은 모듈 구조의 SDK 또는 주입형 브리지가 필요합니다. 호환 배포판 연결은 TODO입니다.
+
+## 환경변수
+
+| 변수 | 뜻 |
+| --- | --- |
+| `PYKBROKER_BROKER` | `kis`, `dbfi`, `toss`; CLI/MCP 기본 `kis` |
+| `PYKBROKER_ACCOUNT` | 호출자 소유 계좌 식별자; KIS에는 실제 벤더 계좌 형식 |
+| `PYKBROKER_CLIENT_OPTIONS` | JSON 객체; 인증 생성자 인자를 환경에서 주입 |
+| `PYKBROKER_TOSS_ACCOUNT_SEQ` | Toss가 발급한 accountSeq, 계좌번호와 구분 |
+
+실값을 코드·명령 이력·문서에 작성하지 마세요. 외부 비밀 관리 도구가 환경변수를 주입하도록 구성합니다. CLI 인자로 계좌나 키를 받지 않습니다. 인증 옵션을 보관·갱신하는 정책은 SDK에 없습니다.
+
+## 이미 인증된 클라이언트 주입
+
+```python
+from pykbroker import KIS, DBFI
+
+# authenticated_client와 vendor_api는 호출자가 준비한 객체입니다.
+# KIS: client.account(호출자 계좌), api.get_price_domestic(...), api.get_quote_domestic(...) 등.
+broker = KIS(account=caller_account, client=authenticated_client, api=vendor_api)
+quote = broker.get_quote("005930")
+broker.close()
+
+# DBFI는 Pydb DBFI 객체를 직접 사용하며 api helper를 요구하지 않습니다.
+broker = DBFI(account=caller_account, client=authenticated_db_client)
+```
+
+주입한 클라이언트는 호출자가 소유하고 닫습니다. 어댑터가 `client_factory`로 만든 클라이언트는 지원되는 `close()`를 호출합니다. KIS는 `client.account(account)`로 계좌를 선택합니다. DB의 인증정보는 벤더에서 계좌에 결박되므로, 호출자가 전달한 식별자와 클라이언트가 같은 계좌를 가리켜야 합니다.
+
+Toss에는 `sdk_factory`를 주입할 수 있습니다. 생성과 사용, 종료는 인스턴스 전용 이벤트 루프에서 수행됩니다. async 앱은 `await asyncio.to_thread(broker.get_quote, "005930")` 형태로 동기 API를 호출합니다. 호출 후 `close()`도 같은 방식으로 완료하세요.
+
+## 거래 범위와 지원하지 않는 기능
+
+KR·US 현물 정수 수량만 다룹니다. 파생상품·레버리지·포트폴리오 재조정·자동 재시도·실행기는 포함하지 않습니다. `get_rules()`의 `tick=None`은 가격대나 상품 구분이 없어 알 수 없다는 뜻입니다. 미지원 기능은 `NotSupportedError`를 발생시킵니다.
+
+KIS/DB US 생성 시 `market="US"`, `venue="NASDAQ" | "NYSE" | "AMEX"`를 명시합니다. US 잔고에는 `cash_provider(client_or_scope) -> Decimal` 콜백으로 USD 주문 가능 현금을 제공해야 합니다. 특정 종목·계좌 유형을 임의로 선택하지 않습니다. US 주문의 KRW 한도 환산은 `OrderSafety.valuation`으로 주입합니다.
+
+모든 벤더 클라이언트는 **주문 재시도를 끈 상태**로 공급해야 합니다. 이 패키지는 실패한 제출·취소를 재시도하지 않습니다. 벤더 SDK 안의 재시도 동작은 호출자가 확인해야 합니다.
+
+[English](https://stoa-company.github.io/pykbroker/en/getting-started/)
+
+-----
+
+Source: https://stoa-company.github.io/pykbroker/
+
+# pykbroker
+
+pykbroker는 한국 증권사(한국투자·DB증권·토스증권) Open API를 공통 파이썬 인터페이스와 기본 읽기 전용 MCP 서버로 묶은 Apache-2.0 라이브러리입니다.
+
+pykbroker is an Apache-2.0 Python library that unifies Korean brokerage (KIS, DB Securities, and Toss Securities) Open APIs behind a common interface and a read-only-by-default MCP server.
+
+| 구현 어댑터 | 오프라인 테스트 | Python |
+| --- | --- | --- |
+| **3곳** — KIS·DBFI·Toss | **141 통과** · 1건 환경 제약 skip | **3.11 이상** |
+
+2026-09-09 실측입니다. 구현 수는 패키지의 `BROKERS` 등록 수이며, 테스트는 mock·합성 fixture 기반입니다. **실 API·모의계좌·실거래 검증은 수행하지 않았습니다.** skip은 sandbox의 로컬 IPC 제한입니다. [지원 표](https://stoa-company.github.io/pykbroker/BROKER_MATRIX/)에 세부 범위가 있습니다. 초기 알파이며 PyPI 미게시 소스 기준 안내입니다.
+
+## 30초 예제 — 한국투자증권 시세 조회
+
+저장소 체크아웃에서 설치합니다.
+
+```bash
+pip install -e '.[mcp]'
+```
+
+증권사가 제공하는 인증 클라이언트와 환경변수를 [설치 안내](https://stoa-company.github.io/pykbroker/getting-started/)에 따라 준비한 뒤:
+
+```python
+from pykbroker import create_broker
+
+with create_broker("kis") as broker:
+    quote = broker.get_quote("005930")
+    print(quote.symbol, quote.last, quote.bid, quote.ask)
+```
+
+`PYKBROKER_ACCOUNT`에는 호출자의 계좌 식별자, `PYKBROKER_CLIENT_OPTIONS`에는 벤더 생성자 설정을 JSON으로 주입합니다. 시세 조회에도 인증이 필요할 수 있습니다. KIS·DB·Toss 벤더 SDK는 별도로 준비해야 하며, extras는 보조 의존성만 설치합니다. 30초 예제는 이 준비가 끝난 환경을 전제로 합니다.
+
+키 없이 확인하려면 `python examples/offline_quote.py`를 실행하세요. 이 예제는 합성 응답을 사용하며 실제 시세가 아닙니다. 향후 배포판이 게시되면 `pip install pykbroker` 또는 `pip install 'pykbroker[mcp]'`를 사용할 수 있습니다.
+
+## 동작 방식
+
+```text
+호출자 → StockBroker / BrokerAdapter 계약 → 증권사 어댑터 → 벤더 SDK
+                      ↑                     │
+                  MCP / CLI                 └ 주문: 안전 게이트 → 벤더 전송
+```
+
+조회는 공통 모델로 응답합니다. 주문·취소는 **드라이런 → 건당·일일 한도 → 멱등키 → 킬스위치 → 선택적 차단기 → 어댑터 전송**을 통과합니다. 한도·계좌·자격정보·상태 제공자는 호출자가 정합니다. 기본값은 주문 차단입니다.
+
+## 역할
+
+| 위치 | 하는 일 |
+| --- | --- |
+| `base` | 조회·주문·취소·종료를 정의한 공통 계약 |
+| `brokers` | KIS·DBFI·Toss 변환 구현; 검증 범위는 오프라인 계약 테스트 |
+| `experimental` | LS·키움의 미검증 매핑과 NH·KB 스켈레톤; 주문 잠금 유지 |
+| `safety` | 호출자가 주입하는 한도·멱등성·드라이런·중단 판단 |
+| `mcp` | 기본 읽기 전용 도구, 설정으로만 등록되는 주문 도구 |
+
+## FAQ
+
+### 한국투자증권 API로 파이썬에서 시세와 잔고를 어떻게 조회하나요?
+
+호환 Pykis 소스와 인증 설정을 준비한 뒤 `create_broker("kis")`에서 `get_quote("005930")` 또는 `get_balance()`를 호출합니다. 이미 인증한 클라이언트와 API helper를 `KIS` 생성자에 주입할 수도 있습니다. [설치 안내](https://stoa-company.github.io/pykbroker/getting-started/)와 실행 가능한 [한국투자증권 잔고 조회 예제](https://github.com/STOA-company/pykbroker/blob/main/examples/kis_balance_check.py)를 참고하세요.
+
+### 한국 증권사 API를 클로드 데스크톱의 MCP 도구로 연결할 수 있나요?
+
+`mcp` extra를 설치하면 `pykbroker-mcp` 명령으로 stdio MCP 서버를 실행할 수 있습니다. 기본 도구는 `get_quote`, `get_balance`, `get_positions`, `list_orders`, `get_rules`이며, 조회를 위해 벤더 SDK와 인증 설정이 필요합니다. [Claude Desktop 설정 예제](https://stoa-company.github.io/pykbroker/claude-desktop/)에 실행 경로와 JSON 설정이 있으며, 이 환경에서 Claude Desktop 연결 자체는 검증하지 않았습니다.
+
+### 실계좌 주문 없이 모의계좌나 드라이런으로 테스트할 수 있나요?
+
+기본 드라이런은 주문·취소 전송을 `DryRunError`로 차단하며, 모의 체결이나 성공 주문을 만들어 반환하지 않습니다. 키 없는 예제와 테스트는 mock·합성 fixture를 사용하므로 조회 데이터도 실제 시세가 아닙니다. 모의계좌 접속은 벤더 클라이언트 설정에 달려 있으며 공통 모의계좌 전환 기능과 실제 모의계좌 검증은 제공하지 않습니다.
+
+### DB증권 Open API도 파이썬으로 사용할 수 있나요?
+
+`create_broker("dbfi")` 또는 `DBFI`로 Pydb 클라이언트를 연결하는 어댑터가 구현돼 있습니다. KR·US 조회와 주문 변환, 단일 주문 취소를 오프라인 계약 테스트로 확인했으며 실 API 검증은 미실시입니다. US 잔고의 주문 가능 현금은 호출자가 `cash_provider`로 제공해야 하므로 [지원 표](https://stoa-company.github.io/pykbroker/BROKER_MATRIX/)를 먼저 확인하세요.
+
+### 토스증권 API는 어떻게 연동하고 무엇을 준비해야 하나요?
+
+호환 `toss_openapi` 소스 SDK 또는 `sdk_factory` 브리지를 준비하고, `create_broker("toss")`에 필요한 `PYKBROKER_ACCOUNT`, `PYKBROKER_TOSS_ACCOUNT_SEQ`, `PYKBROKER_CLIENT_OPTIONS`를 환경으로 전달합니다. 비동기 SDK의 생성·호출·종료는 어댑터의 전용 이벤트 루프에서 처리하며 검증 범위는 mock 브리지입니다. `toss` extra만으로 벤더 소스가 설치되지는 않고, Toss SDK 자체의 드라이런·live 플래그도 별도로 적용됩니다.
+
+### AI가 실주문을 보내지 못하도록 어떤 안전장치가 있나요?
+
+SDK는 기본 드라이런이고, MCP는 유효한 `~/.pykbroker/limits.toml`에 `allow_orders = true`와 양수 `per_order_krw_cap`, `daily_krw_cap`가 있어야 주문·취소 도구를 등록합니다. `dry_run`을 생략하면 `true`이며 실제 전송에는 한도·사용량 저장소·멱등 저장소·킬스위치가 필요합니다. 설정 삭제·변경은 이후 MCP 주문을 차단하고, 차단기는 선택적으로 구성하며 자동 재시도는 하지 않습니다. 숫자 한도는 사용자가 정해야 하며 자세한 [MCP 설정](https://stoa-company.github.io/pykbroker/mcp/)과 [안전 부품](https://stoa-company.github.io/pykbroker/safety/)을 확인하세요.
+
+### pykbroker는 무료인가요, 상업적으로 사용해도 되나요?
+
+pykbroker 코드는 [Apache-2.0](https://github.com/STOA-company/pykbroker/blob/main/LICENSE)으로 제공되며 라이선스 조건을 지키면 상업적 이용·수정·배포가 가능합니다. 증권사 API 이용 조건·수수료와 별도로 준비하는 벤더 SDK 라이선스는 각각 확인해야 합니다. 출처와 재작성 범위는 [NOTICE](https://stoa-company.github.io/pykbroker/notice/)에 있습니다.
+
+### LS증권·키움증권·NH투자증권·KB증권도 지원하나요?
+
+네 어댑터는 모두 **미검증 experimental**이며 3곳의 등록 어댑터 수에 포함하지 않습니다. LS·키움은 국내 요청 매핑이 있으나 주문 잠금 상태이고 조회 결과도 미검증이며, NH·KB는 네트워크 전송 없는 스켈레톤입니다. 최상위 팩터리에 등록되지 않았고, 잠금만 해제해 실사용할 수 있는 상태가 아닙니다.
+
+## 관련 프로젝트
+
+자매 프로젝트 [pycex](https://github.com/Jaeminyx-Stoa/pycex)의 패키징·fixture·FastMCP·문서 구조를 따릅니다.
+
+문서와 기여:
+
+- [설치·클라이언트 주입](https://stoa-company.github.io/pykbroker/getting-started/), [영어 문서 / English documentation](https://stoa-company.github.io/pykbroker/en/)
+- [어댑터 지원 범위](https://stoa-company.github.io/pykbroker/BROKER_MATRIX/), [새 어댑터 추가](https://stoa-company.github.io/pykbroker/BROKER_ADAPTER_RECIPE/)
+- [안전 원시 부품](https://stoa-company.github.io/pykbroker/safety/), [모델](https://stoa-company.github.io/pykbroker/api/models/), [CLI](https://stoa-company.github.io/pykbroker/cli/)
+- [실행 SDK 계약](https://stoa-company.github.io/pykbroker/execution-sdk-contract/) — 문서와 타입만 제공
+- [기여 안내](https://stoa-company.github.io/pykbroker/contributing/), [보안](https://stoa-company.github.io/pykbroker/security/), [변경 기록](https://stoa-company.github.io/pykbroker/changelog/)
+
+## 문서 주소와 AI용 텍스트
+
+문서의 계획 주소는 `https://stoa-company.github.io/pykbroker/`입니다. 이 변경은 게시를 수행하지 않으며 주소의 공개 가용성은 검증되지 않았습니다. [llms.txt](https://stoa-company.github.io/pykbroker/llms.txt)는 요약과 주요 링크, [llms-full.txt](https://stoa-company.github.io/pykbroker/llms-full.txt)는 한국어·영어 문서 전체를 결합한 평문입니다. 파일 제공이 검색 수집이나 AI 인용을 보장하지는 않습니다.
+
+[English](https://stoa-company.github.io/pykbroker/en/)
+
+-----
+
+Source: https://stoa-company.github.io/pykbroker/mcp/
+
+# MCP Server
+
+`pykbroker-mcp`는 `FastMCP`의 `@app.tool()`과 JSON 문자열 반환, stdio 전송 방식을 사용합니다. 기본 도구는 `get_quote`, `get_balance`, `get_positions`, `list_orders`, `get_rules`입니다. `create_server()`와 모듈 전역 `mcp`가 제공됩니다.
+
+## 주문 도구 등록
+
+서버 시작 시 `~/.pykbroker/limits.toml`을 읽습니다. 다음 조건을 모두 충족해야 `place_order`, `cancel_order`가 추가됩니다.
+
+1. 읽을 수 있는 유효한 TOML 파일.
+2. `allow_orders`가 문자열이 아닌 boolean `true`.
+3. `per_order_krw_cap`, `daily_krw_cap`가 유한한 양수.
+4. `dry_run`은 boolean이며 생략 시 `true`.
+
+빈 파일·잘못된 타입·누락 한도·비정상 금액은 주문 도구를 숨깁니다. 드라이런 도구 호출은 `DryRunError`로 거절하며 가짜 성공 주문을 반환하지 않습니다. 사용자가 실제 한도를 정하기 전에는 사용할 수 있는 한도 파일을 제공하지 않습니다.
+
+다음은 **값을 입력해야 하는 템플릿**이며 그대로 실행 가능한 TOML이 아닙니다.
+
+```text
+allow_orders = true
+per_order_krw_cap = <사용자가 정한 건당 원화 한도>
+daily_krw_cap = <사용자가 정한 일일 원화 한도>
+dry_run = true
+```
+
+등록 이후 파일을 삭제하거나 내용을 변경하면 주문·취소가 차단됩니다. 새 설정으로 도구 목록을 바꾸려면 서버를 재시작합니다. 설정 변경은 실행 중인 벤더 요청을 소급 취소하지 않습니다.
+
+## 주문 호출과 저장
+
+순서: 입력 검증 → 드라이런 → 한도 예약 → 멱등키 claim → 설정 재확인/킬스위치 → 선택적 차단기 → 벤더 호출.
+
+- 기본 CLI MCP는 KR 주문을 사용합니다. US 자동 설정은 제공하지 않습니다.
+- `place_order(symbol, side, quantity, client_key, price, order_type="limit")`.
+- `cancel_order(order_id, symbol, quantity, client_key)`는 한 주문만 대상으로 합니다.
+- 시장가 주문은 신뢰할 KRW 평가 상한과 정규장 판단을 주입해야 합니다. 기본 MCP는 이를 추측하지 않아 시장가를 차단합니다.
+- KIS 단일 취소는 미지원이며 명시적으로 거절합니다. Toss는 한 주문의 전체 미체결분만 취소합니다.
+
+`orders.sqlite3`는 한도 파일과 같은 디렉터리에 첫 주문 호출 시 생성됩니다. 계좌 식별자는 해시로 저장하고 client_key도 해시로 저장합니다. 한도 예약과 키 claim은 각각 원자적 트랜잭션입니다. 두 단계 사이 중단되면 한도만 소비될 수 있으나 제출은 진행되지 않습니다. 중복 요청·거절·타임아웃도 예약액을 돌려주지 않습니다. 따라서 한도는 체결액보다 보수적으로 소진됩니다.
+
+일일 한도는 **계좌·브로커·KST 날짜별 제출 금액 합계**입니다. 매도는 매수와 합산합니다. 취소는 금액 0으로 한도 설정을 확인한 뒤 별도 취소 키 공간에서 중복을 차단합니다. KIS·DB는 네이티브 멱등키 지원을 주장하지 않습니다. 로컬 SQLite는 같은 파일을 사용하는 단일 호스트 프로세스들만 조정하며, 여러 호스트에는 공용 저장소를 주입해야 합니다.
+
+## 앱에서 구성
+
+```python
+from pykbroker import DBFI
+from pykbroker.mcp.server import create_server
+
+app = create_server(
+    broker_factory=lambda safety: DBFI(
+        account=caller_account, client=caller_client, safety=safety
+    )
+)
+app.run(transport="stdio")
+```
+
+주입 팩터리는 받은 `OrderSafety`를 그대로 사용하는 `BaseBroker`를 반환해야 합니다. 이를 바꾸는 팩터리는 거절합니다. 종료 시 생성된 어댑터를 닫습니다. 로그에는 브로커·마스킹한 계좌·동작만 남기며 원시 요청·응답·키를 기록하지 않습니다.
+
+Toss SDK 자체의 드라이런과 live 플래그도 별도로 적용됩니다. 기본 팩터리는 이 추가 차단을 해제하지 않습니다. Toss 실주문 설정은 호출자가 명시적으로 구성한 `broker_factory`로만 주입하세요.
+
+[English](https://stoa-company.github.io/pykbroker/en/mcp/)
+
+-----
+
+Source: https://stoa-company.github.io/pykbroker/notice/
+
+# Notice
+
+pykbroker
+Copyright 2026 STOA Company
+
+Portions of the design and broker-call contracts in this package were extracted
+and rewritten from STOA-company/quantus-trader, revision:
+d14719529541f2c556795f59f2f68c45b6b7715e.
+이 코드 일부의 설계와 브로커 계약은 STOA-company/quantus-trader에서
+추출해 다시 작성되었습니다. 회사별 저장소·정책·자격정보는 포함하지 않습니다.
+
+Vendor API shapes were checked against these referenced source revisions:
+- STOA-company/quantus-pykis: 65b56b9d1dc292a4d9b67a9e5ca583c7e6eb7efd
+- STOA-company/quantus-dbfi: ac2e92749fa610e7b75f82e8a0dc9c1efca132b8
+The Pykis, Pydb and toss_openapi SDK source is not bundled or relicensed here.
+Each separately obtained dependency retains its own license.
+
+Package layout, hatchling configuration, JSON-fixture conventions and FastMCP
+usage were informed by the sibling pycex project (MIT, STOA Company).
+No upstream safety implementation is copied: the supplied interfaces and pure
+safety logic were newly written for this package. This notice does not change
+the Apache-2.0 license of pykbroker.
+
+[English](https://stoa-company.github.io/pykbroker/en/notice/)
+
+-----
+
+Source: https://stoa-company.github.io/pykbroker/safety/
+
+# Safety primitives
+
+패키지에는 회사별 정책 숫자나 계좌 저장소가 없습니다. 각 부품의 기본 입력은 차단 방향입니다.
+
+| 부품 | 주입 계약 | 비정상 입력 |
+| --- | --- | --- |
+| `DryRun` | 정확히 boolean `False`로만 live 허용 | 차단 |
+| `KillSwitch` | `HaltProvider(broker, account) -> bool`, `False`만 허용 | 차단 |
+| `RiskLimits` / `RiskLedger` | 건당·일일 KRW 한도와 원자적 예약 저장소 | 차단 |
+| `IdempotencyStore` | `claim(scope, key) -> bool`, 최초 claim만 True | 차단 |
+| `evaluate_breaker` | 손실률·오류율·횟수 관측과 임계값 | trip |
+| `RateLimiter` | TR별 초당 횟수, 시계·sleep 함수 | 미등록 TR 차단 |
+
+`OrderSafety`는 SDK와 MCP의 공통 제출 경계입니다. 기본 생성자는 드라이런 상태입니다. live 구성은 한도·사용량 저장소·멱등 저장소·킬스위치를 모두 요구합니다. 서킷브레이커와 rate limiter는 별도 구성 가능한 부품입니다. REST 실험 어댑터는 limiter 없이는 호출하지 않습니다. 기존 KIS/DB/Toss 클라이언트의 호출 제한은 벤더 SDK 또는 주입 클라이언트가 책임집니다.
+
+한도는 `Decimal`로 계산하고 원화 지정가는 `수량 × 가격`을 기준으로 합니다. 별도 평가액을 주입하면 두 금액 중 큰 값을 적용합니다. US·시장가·시간외 주문에는 호출자가 보수적인 KRW 평가값을 제공해야 합니다. 시장가는 정규장 허용 콜백도 필요합니다. 실시간 가격 한 개만으로 시장가 체결액 상한을 보장할 수 없습니다.
+
+`MemoryRiskLedger`, `MemoryIdempotencyStore`는 명시적으로 선택하는 단일 프로세스 테스트·데모용입니다. 재시작하면 기록이 사라집니다. MCP 기본 `SQLiteLedger`는 같은 파일을 쓰는 프로세스들에서 예약을 직렬화합니다. 어느 경우도 브로커에 이미 도착한 주문을 되돌리지 않습니다.
+
+오류 후 자동 재시도는 하지 않습니다. 예약과 claim은 성공·실패에 관계없이 남깁니다. 불명확한 결과는 벤더 주문 원장에서 확인한 뒤 사용자가 새 의도 여부를 판단해야 합니다. 원장 파일을 삭제해 재시도하지 마세요.
+
+`order_key()`는 계좌·브로커·종목·방향·수량·가격·주문 종류·회차를 반영합니다. 같은 숫자의 다른 표현은 동일한 키가 됩니다. 새 의도에는 새 회차 또는 client_key를 사용하며, 같은 의도의 재호출에는 기존 키를 보존합니다.
+
+[English](https://stoa-company.github.io/pykbroker/en/safety/)
+
+-----
+
+Source: https://stoa-company.github.io/pykbroker/security/
+
+# Security
+
+API 키·인증정보·계좌 실값은 환경변수로만 전달하고 코드·fixture·문서·명령 인자에 하드코딩하지 마세요. 인증 클라이언트를 주입할 때도 호출자 애플리케이션이 환경에서 읽어 구성합니다. `.env`나 토큰 파일을 커밋하지 않습니다.
+
+패키지는 원시 요청·응답·예외 본문을 로그에 복사하지 않습니다. 계좌는 `****1234`처럼 마스킹하며 짧은 식별자는 전체를 마스킹합니다. 호출자가 주입하는 벤더 SDK의 로그·토큰 캐시·재시도 정책도 별도로 확인하세요.
+
+`limits.toml`과 주문 원장 파일은 호출자만 접근할 수 있도록 관리합니다. SQLite 원장을 지우거나 새 client_key로 바꾸어 불명확한 주문을 재시도하지 마세요. `dry_run=False`만으로 필수 정책·저장소·킬스위치가 생기지 않습니다.
+
+보안 문제는 공개 이슈에 실값을 올리지 말고 저장소의 비공개 취약점 신고 기능 또는 메인테이너가 제공한 비공개 채널로 알립니다. 유출 시 해당 자격정보를 폐기·재발급하고 커밋 이력·로그·산출물도 확인합니다.
+
+[English](https://stoa-company.github.io/pykbroker/en/security/)

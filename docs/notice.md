@@ -1,3 +1,8 @@
+---
+description: "pykbroker의 Apache-2.0 고지, 추출·재작성 출처, 벤더 소스 리비전과 별도 라이선스 범위."
+lang: ko
+---
+
 # Notice
 
 pykbroker
@@ -20,3 +25,5 @@ usage were informed by the sibling pycex project (MIT, STOA Company).
 No upstream safety implementation is copied: the supplied interfaces and pure
 safety logic were newly written for this package. This notice does not change
 the Apache-2.0 license of pykbroker.
+
+[English](en/notice.md)

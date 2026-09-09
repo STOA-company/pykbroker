@@ -1,3 +1,8 @@
+---
+description: "pykbroker-mcp의 기본 조회 도구, limits.toml 주문 도구 등록 조건, 드라이런 차단과 SQLite 원장 동작."
+lang: ko
+---
+
 # MCP Server
 
 `pykbroker-mcp`는 `FastMCP`의 `@app.tool()`과 JSON 문자열 반환, stdio 전송 방식을 사용합니다. 기본 도구는 `get_quote`, `get_balance`, `get_positions`, `list_orders`, `get_rules`입니다. `create_server()`와 모듈 전역 `mcp`가 제공됩니다.
@@ -55,3 +60,5 @@ app.run(transport="stdio")
 주입 팩터리는 받은 `OrderSafety`를 그대로 사용하는 `BaseBroker`를 반환해야 합니다. 이를 바꾸는 팩터리는 거절합니다. 종료 시 생성된 어댑터를 닫습니다. 로그에는 브로커·마스킹한 계좌·동작만 남기며 원시 요청·응답·키를 기록하지 않습니다.
 
 Toss SDK 자체의 드라이런과 live 플래그도 별도로 적용됩니다. 기본 팩터리는 이 추가 차단을 해제하지 않습니다. Toss 실주문 설정은 호출자가 명시적으로 구성한 `broker_factory`로만 주입하세요.
+
+[English](en/mcp.md)
