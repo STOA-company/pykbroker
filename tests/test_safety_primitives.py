@@ -24,6 +24,12 @@ def test_dry_run_fail_closed(value):
         DryRun(value).require_live()
 
 
+def test_dry_run_default_constructor_is_fail_closed():
+    """DryRun() with no explicit argument must still block live operations."""
+    with pytest.raises(DryRunError):
+        DryRun().require_live()
+
+
 def test_explicit_false_is_required():
     assert not should_execute_live()
     assert not should_execute_live({})
