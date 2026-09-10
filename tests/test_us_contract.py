@@ -53,7 +53,9 @@ def test_kis_us_contract(live_safety):
     assert broker.get_balance().total == Decimal("1241")
     assert broker.get_positions()[0].quantity == 2
     assert broker.list_orders()[0].market == "US"
-    order = OrderRequest(symbol="TEST", side="buy", quantity=1, price="120.50", market="US", client_key="us-key")
+    order = OrderRequest(
+        symbol="TEST", side="buy", quantity=1, price="120.50", market="US", venue="NASDAQ", client_key="us-key"
+    )
     with pytest.raises(RiskCapError):
         broker.place_order(order)
     api.post_order_overseas.assert_not_called()
@@ -112,10 +114,14 @@ def test_dbfi_us_contract(live_safety):
     assert broker.list_orders()[0].status == "partial"
     live_safety.valuation = lambda request: Decimal("1000")
     broker.place_order(
-        OrderRequest(symbol="TEST", side="sell", quantity=1, price="120.50", market="US", client_key="us-key")
+        OrderRequest(
+            symbol="TEST", side="sell", quantity=1, price="120.50", market="US", venue="NASDAQ", client_key="us-key"
+        )
     )
     client.sell.assert_called_once_with(region="overseas", stock_code="TEST", quantity=1, price=120.5, price_type="1")
-    broker.cancel_order(CancelRequest(order_id="42", symbol="TEST", quantity=1, market="US", client_key="cancel"))
+    broker.cancel_order(
+        CancelRequest(order_id="42", symbol="TEST", quantity=1, market="US", venue="NASDAQ", client_key="cancel")
+    )
     client.cancel.assert_called_once_with(region="overseas", order_no=42, stock_code="TEST", quantity=1)
     assert not broker.capabilities().supports_nxt
 

@@ -162,6 +162,10 @@ class BaseBroker:
         # capabilities() is the plan the executor makes; validation must agree with it exactly.
         if request.venue == "NXT" and not capabilities.supports_nxt:
             raise NotSupportedError("NXT is not supported")
+        # A market that requires a venue gets one named on the request. Falling back to
+        # whatever this instance was configured for would route an order nobody reviewed.
+        if capabilities.requires_venue and request.venue is None:
+            raise NotSupportedError("This market requires the order to name its venue")
         if request.venue is not None:
             if request.venue not in capabilities.venues:
                 raise NotSupportedError("Unknown venue for this broker and market")
