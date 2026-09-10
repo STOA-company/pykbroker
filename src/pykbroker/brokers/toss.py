@@ -90,8 +90,11 @@ class Toss(BaseBroker):
         market: str = "KR",
         sdk_dry_run: bool = True,
         sdk_live_trading_enabled: bool = False,
+        virtual: bool = False,
+        halt_provider: Callable[[str], bool] | None = None,
     ) -> None:
-        super().__init__(account=account, safety=safety, market=market)
+        # Toss has no separate mock-trading domain, so `virtual=True` is refused upstream.
+        super().__init__(account=account, safety=safety, market=market, virtual=virtual, halt_provider=halt_provider)
         if type(account_seq) is not int or account_seq <= 0:
             raise ConfigurationError("Supply the vendor accountSeq as a positive integer")
         self._factory = sdk_factory or _TossBridge
