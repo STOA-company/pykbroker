@@ -6,8 +6,11 @@ from unittest.mock import Mock
 import pytest
 
 from pykbroker.brokers.kis import KIS
-from pykbroker.exceptions import ConfigurationError, DryRunError
+from pykbroker.exceptions import ConfigurationError, DryRunError, NotSupportedError
 from pykbroker.models import OrderRequest
+
+from .conftest import load_fixture
+from .vendor_chain import VendorClient, VendorDomestic, VendorOverseas
 
 
 def _client(virtual: bool):
@@ -24,16 +27,23 @@ def _api():
     return api
 
 
+def _vendor(virtual: bool):
+    """The real Pykis chain, not a Mock: a mock account meets the vendor's refusals."""
+    data = {name: load_fixture("kis", name) for name in ("amount", "balance", "book", "quote", "submit", "orders")}
+    data["daily_orders"] = load_fixture("kis", "daily_orders")
+    data["open_orders_overseas"] = load_fixture("kis", "open_orders_overseas")
+    return VendorClient(virtual=virtual, fixtures=data), VendorDomestic(data), VendorOverseas(data)
+
+
 def test_virtual_flag_reaches_the_vendor_factory(live_safety):
     seen = {}
+    client, api, _ = _vendor(True)
 
     def factory(**options):
         seen.update(options)
-        client, _ = _client(True)
         return client
 
-    broker = KIS(account="fixture", client_factory=factory, api=_api(), virtual=True, safety=live_safety)
-    broker.get_balance.__self__  # noqa: B018 - broker is constructed
+    broker = KIS(account="fixture", client_factory=factory, api=api, virtual=True, safety=live_safety)
     broker.list_orders()
     assert seen["virtual_account"] is True
 
@@ -92,15 +102,16 @@ def test_virtual_must_be_a_real_boolean(live_safety, value):
 
 
 def test_submitted_order_records_the_mode_it_went_out_in(live_safety, request_order):
-    client, scope = _client(True)
-    api = _api()
+    client, api, _ = _vendor(True)
+    submitted = {}
+    api.post_order_domestic = lambda **kwargs: submitted.update(kwargs) or load_fixture("kis", "submit")
     broker = KIS(account="fixture", client=client, api=api, virtual=True, safety=live_safety)
     order = broker.place_order(request_order)
     assert order.virtual is True and order.id == "43"
     assert broker.list_orders()[0].virtual is True
     assert broker.capabilities().virtual is True
-    api.post_order_domestic.assert_called_once_with(
-        kis_account=scope, stock_code="005930", order_type="buy", order_qty=1, order_price=70000, dvsn="지정가"
+    assert submitted == dict(
+        kis_account=client.scope, stock_code="005930", order_type="buy", order_qty=1, order_price=70000, dvsn="지정가"
     )
 
 
@@ -117,11 +128,13 @@ def test_real_order_is_not_labelled_virtual(live_safety, request_order):
     assert broker.place_order(request_order).virtual is False
 
 
-def test_us_virtual_is_supported_and_verified(live_safety):
-    client, _ = _client(True)
-    api = Mock()
-    api.get_open_orders_overseas_all.return_value = {"json_data": {"rt_cd": "0", "output": []}}
+def test_us_virtual_submits_but_admits_it_cannot_list_orders(live_safety):
+    """The US mock domain has no open-order TR at all, so the claim is withdrawn, not faked."""
+    client, _, api = _vendor(True)
     broker = KIS(account="fixture", market="US", venue="NASDAQ", client=client, api=api, virtual=True)
     assert broker.capabilities().virtual is True
-    assert broker.list_orders() == []
-    OrderRequest(symbol="TEST", side="buy", quantity=1, price="1", market="US", client_key="k")
+    assert broker.capabilities().supports_order_history is False
+    with pytest.raises(NotSupportedError):
+        broker.list_orders()
+    assert api.calls == 0
+    OrderRequest(symbol="TEST", side="buy", quantity=1, price="1", market="US", venue="NASDAQ", client_key="k")

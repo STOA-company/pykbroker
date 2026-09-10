@@ -167,6 +167,8 @@ class BaseBroker:
                 raise NotSupportedError("Unknown venue for this broker and market")
             if capabilities.requires_venue and request.venue != getattr(self, "venue", None):
                 raise NotSupportedError("Order venue must match the configured venue")
+        if isinstance(request, CancelRequest) and not capabilities.supports_single_order_cancel:
+            raise NotSupportedError("Single-order cancellation is not supported")
         if isinstance(request, OrderRequest) and request.price is not None:
             if self.market == "KR" and request.price != request.price.to_integral_value():
                 raise ConfigurationError("KR prices must be whole won; round explicitly before submission")

@@ -5,6 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from importlib import import_module
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from pykbroker.exceptions import ConfigurationError, InvalidResponseError, MissingDependencyError, NotSupportedError
 from pykbroker.models import Balance, Capabilities, Order, OrderRequest, Position, Quote, Rules
@@ -18,6 +19,26 @@ from ._common import BaseBroker, check_response, decimal, field, optional_price,
 KR_HALT_CODES = {"58"}
 
 VENUES = {"NASDAQ": ("NAS", "NASD"), "NYSE": ("NYS", "NYSE"), "AMEX": ("AMS", "AMEX")}
+
+KST = ZoneInfo("Asia/Seoul")
+# A mock account cannot read open orders the way a real one does: the vendor's
+# `revisable_order` refuses it outright (_pykis/scope/account/api/revisable_order.py:16),
+# and `get_open_orders_domestic` is only a call into it (base/domestic.py:114).
+# The daily ledger is the one order TR the vendor does switch to a mock id for
+# (VTTC8001R, daily_order.py:71), so the mock path reads that instead -- and says
+# through `realtime_open_orders` that it is a ledger, not a live snapshot.
+UNFILLED = "미체결"
+# base/overseas.py:377 hardcodes TTTS3018R, a real-account TR with no mock branch,
+# so US open orders have no mock route at all. That is declared, never faked.
+
+
+def _ledger_status(cancelled: Any, filled: int, remaining: int) -> str:
+    """A ledger row states quantities; nothing here is inferred from an absent row."""
+    if cancelled is True or (isinstance(cancelled, str) and cancelled.strip().upper() == "Y"):
+        return "cancelled"
+    if remaining == 0:
+        return "filled" if filled > 0 else "unknown"
+    return "partial" if filled > 0 else "open"
 
 
 class KIS(BaseBroker):
@@ -90,6 +111,9 @@ class KIS(BaseBroker):
             supports_market_order=self.market == "KR",
             supports_virtual_account=True,
             virtual=self.virtual,
+            # A US mock account has no open-order TR; a KR one has the delayed daily ledger.
+            supports_order_history=not (self.market == "US" and self.virtual),
+            realtime_open_orders=not self.virtual,
             requires_venue=self.market == "US",
             venues=tuple(VENUES) if self.market == "US" else ("KRX",),
             markets=(self.market,),
@@ -210,8 +234,12 @@ class KIS(BaseBroker):
         return self._call(read)
 
     def list_orders(self, symbol: str | None = None) -> list[Order]:
+        if not self.capabilities().supports_order_history:
+            raise NotSupportedError("KIS has no mock-account route for US open orders")
         if symbol is not None:
             symbol = self._symbol(symbol, self.market)
+        if self.market == "KR" and self.virtual:
+            return self._call(lambda: self._ledger_orders(symbol))
 
         def read() -> list[Order]:
             scope, api = self._connect()
@@ -245,6 +273,33 @@ class KIS(BaseBroker):
             return result
 
         return self._call(read)
+
+    def _ledger_orders(self, symbol: str | None) -> list[Order]:
+        """Unfilled rows of today's daily ledger — the mock domain's only order TR."""
+        scope, _ = self._connect()
+        today = datetime.now(KST)
+        response = scope.daily_order(start_date=today, end_date=today, code=symbol or "", ccld=UNFILLED)
+        result = []
+        for row in field(response, "orders", ()):
+            code = field(row, "pdno")
+            if symbol is not None and code != symbol:
+                continue
+            order_id = field(row, "odno")
+            if order_id is None or not str(order_id).strip():
+                raise InvalidResponseError("KIS order identifier missing")
+            filled, remaining = whole(field(row, "tot_ccld_qty")), whole(field(row, "rmn_qty"))
+            result.append(
+                Order(
+                    id=str(order_id),
+                    symbol=code,
+                    quantity=whole(field(row, "ord_qty")),
+                    filled=filled,
+                    remaining=remaining,
+                    status=_ledger_status(field(row, "cncl_yn"), filled, remaining),
+                    virtual=True,
+                )
+            )
+        return result
 
     def _place_order(self, request: OrderRequest) -> Order:
         scope, api = self._connect()

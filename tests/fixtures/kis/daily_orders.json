@@ -1,0 +1,30 @@
+{
+  "output1": [
+    {
+      "ord_dt": "20260910",
+      "odno": "42",
+      "pdno": "005930",
+      "prdt_name": "Fixture equity",
+      "sll_buy_dvsn_cd": "02",
+      "ord_qty": "3",
+      "ord_unpr": "70000",
+      "tot_ccld_qty": "1",
+      "rmn_qty": "2",
+      "cncl_yn": "N",
+      "ord_dvsn_cd": "00"
+    },
+    {
+      "ord_dt": "20260910",
+      "odno": "41",
+      "pdno": "000660",
+      "prdt_name": "Fixture equity two",
+      "sll_buy_dvsn_cd": "01",
+      "ord_qty": "1",
+      "ord_unpr": "150000",
+      "tot_ccld_qty": "1",
+      "rmn_qty": "0",
+      "cncl_yn": "N",
+      "ord_dvsn_cd": "00"
+    }
+  ]
+}

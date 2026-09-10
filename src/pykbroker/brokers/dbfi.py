@@ -62,6 +62,7 @@ class DBFI(BaseBroker):
             supports_single_order_cancel=True,
             supports_nxt=self.market == "KR",
             supports_order_history=True,
+            realtime_open_orders=True,
             requires_venue=self.market == "US",
             venues=US_VENUES if self.market == "US" else ("KRX", "NXT"),
             markets=(self.market,),

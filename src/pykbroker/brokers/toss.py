@@ -134,6 +134,8 @@ class Toss(BaseBroker):
             supports_spot=True,
             supports_market_order=self.market == "KR",
             supports_single_order_cancel=True,
+            supports_order_history=True,
+            realtime_open_orders=True,
             markets=(self.market,),
         )
 
