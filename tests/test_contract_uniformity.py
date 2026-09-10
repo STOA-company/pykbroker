@@ -172,3 +172,117 @@ def test_nxt_is_refused_where_it_is_not_declared(broker_type, live_safety):
     """우회 2: NXT 를 지원한다고 선언하지 않은 브로커에 이름으로 밀어 넣어도 나가지 않는다."""
     with pytest.raises(NotSupportedError):
         _built(broker_type, safety=live_safety)._validate_order(_kr_order(venue="NXT"))
+
+
+# --- B′2-3: 거래소 정합을 KR/US 매트릭스와 «취소»까지 넓힌다 -------------------
+#
+# 1라운드는 국내 4종만 쟀다. 회귀가 태어난 자리(US 기본값의 모순쌍)와, 회귀가 실제로
+# 죽였던 두 번째 경로(취소)는 한 번도 재본 적이 없다. 절반만 잼 = 절반은 무방비다.
+
+MATRIX = [
+    (KIS, "KR", {}),
+    (DBFI, "KR", {}),
+    (Toss, "KR", {}),
+    (KIS, "US", {"venue": "NASDAQ"}),
+    (DBFI, "US", {"venue": "NASDAQ"}),
+]
+US_MATRIX = [row for row in MATRIX if row[1] == "US"]
+
+
+def _for_market(broker_type, market, **kwargs):
+    client, api = Mock(), Mock()
+    client.key = SimpleNamespace(virtual_account=False)
+    if broker_type is Toss:
+        return Toss(account="fixture", account_seq=1, sdk_factory=Mock(), market=market, **kwargs)
+    return broker_type(account="fixture", market=market, client=client, api=api, **kwargs)
+
+
+def _request(kind, market, **kwargs):
+    symbol = "005930" if market == "KR" else "AAPL"
+    if kind == "order":
+        return OrderRequest(
+            symbol=symbol, side="buy", quantity=1, price="70000", market=market, client_key="matrix", **kwargs
+        )
+    return CancelRequest(order_id="42", symbol=symbol, quantity=1, market=market, client_key="matrix", **kwargs)
+
+
+@pytest.mark.parametrize("broker_type,market,kwargs", MATRIX)
+def test_every_market_declares_the_venues_it_can_actually_route(broker_type, market, kwargs, live_safety):
+    caps = _for_market(broker_type, market, safety=live_safety, **kwargs).capabilities()
+    assert caps.markets == (market,)
+    assert caps.venues, "선언이 비면 venue 를 채운 주문·취소가 전부 거절된다"
+    assert caps.requires_venue is (market == "US")
+    if caps.requires_venue:
+        assert kwargs["venue"] in caps.venues
+
+
+@pytest.mark.parametrize("broker_type,market,kwargs", MATRIX)
+@pytest.mark.parametrize("kind", ["order", "cancel"])
+def test_the_configured_venue_passes_the_validation_for_orders_and_cancels(
+    broker_type, market, kwargs, kind, live_safety
+):
+    broker = _for_market(broker_type, market, safety=live_safety, **kwargs)
+    caps = broker.capabilities()
+    venue = kwargs.get("venue", KR_DEFAULT_VENUE)
+    request = _request(kind, market, venue=venue)
+    if kind == "cancel" and not caps.supports_single_order_cancel:
+        with pytest.raises(NotSupportedError):
+            broker._validate_order(request)
+        return
+    broker._validate_order(request)
+
+
+@pytest.mark.parametrize("broker_type,market,kwargs", US_MATRIX)
+@pytest.mark.parametrize("kind", ["order", "cancel"])
+def test_a_us_request_that_names_no_venue_is_refused_including_cancels(broker_type, market, kwargs, kind, live_safety):
+    broker = _for_market(broker_type, market, safety=live_safety, **kwargs)
+    with pytest.raises(NotSupportedError, match="venue"):
+        broker._validate_order(_request(kind, market))
+
+
+@pytest.mark.parametrize("broker_type,market,kwargs", MATRIX)
+@pytest.mark.parametrize("kind", ["order", "cancel"])
+@pytest.mark.parametrize("bogus", ["LSE", "nasdaq", "KRX " if True else "", "TSE"])
+def test_an_undeclared_exchange_is_refused_on_both_paths(broker_type, market, kwargs, kind, bogus, live_safety):
+    """우회 1: 취소는 「이미 낸 주문을 거두는 것」이라며 거래소 검사를 건너뛰지 않는다."""
+    broker = _for_market(broker_type, market, safety=live_safety, **kwargs)
+    assert bogus not in broker.capabilities().venues
+    with pytest.raises(NotSupportedError):
+        broker._validate_order(_request(kind, market, venue=bogus))
+
+
+@pytest.mark.parametrize("broker_type,market,kwargs", US_MATRIX)
+def test_a_constructed_cancel_cannot_smuggle_a_missing_venue(broker_type, market, kwargs, live_safety):
+    """우회 2: model_construct 로 검증을 건너뛴 취소도 cancel_order 가 다시 검증한다."""
+    broker = _for_market(broker_type, market, safety=live_safety, **kwargs)
+    smuggled = CancelRequest.model_construct(
+        order_id="42", symbol="AAPL", quantity=1, market="US", venue=None, client_key="matrix"
+    )
+    with pytest.raises(NotSupportedError):
+        broker.cancel_order(smuggled)
+
+
+@pytest.mark.parametrize("broker_type,market,kwargs", US_MATRIX)
+def test_another_declared_us_venue_is_still_refused_on_cancels(broker_type, market, kwargs, live_safety):
+    """우회 3: 선언 목록 안이라도 이 인스턴스가 설정한 거래소가 아니면 취소도 나가지 않는다."""
+    broker = _for_market(broker_type, market, safety=live_safety, **kwargs)
+    other = next(v for v in broker.capabilities().venues if v != kwargs["venue"])
+    with pytest.raises(NotSupportedError):
+        broker._validate_order(_request("cancel", market, venue=other))
+
+
+@pytest.mark.parametrize("broker_type", SHIPPED)
+@pytest.mark.parametrize("market", ["KR", "US"])
+def test_a_broker_either_routes_a_market_or_locks_it(broker_type, market, live_safety):
+    """B′2-3 의 본체: 시장마다 「댈 거래소가 있다」거나 「잠겼다」거나, 둘 중 하나여야 한다.
+
+    회귀는 정확히 그 사이에서 태어났다 — 선언은 US 를 지원한다고 했고, 댈 거래소는
+    비어 있었고, 그래서 주문도 취소도 전부 거절됐다. 그 상태를 여기서 못박는다.
+    """
+    kwargs = {"venue": "NASDAQ"} if market == "US" and "venue" in inspect.signature(broker_type.__init__).parameters else {}
+    try:
+        caps = _for_market(broker_type, market, safety=live_safety, **kwargs).capabilities()
+    except SpecUnverifiedError:
+        return
+    assert caps.markets == (market,)
+    assert caps.venues, "지원한다고 선언한 시장에 댈 거래소가 없다 — 주문·취소가 전부 거절된다"

@@ -102,3 +102,67 @@ def test_a_us_order_routed_to_another_declared_venue_is_refused(broker_type, kwa
     )
     with pytest.raises(NotSupportedError):
         broker.place_order(order)
+
+
+# --- B′2-3: 정직성 검사를 KR/US 매트릭스와 취소까지 --------------------------
+
+from unittest.mock import Mock as _Mock  # noqa: E402
+
+from pykbroker.brokers.toss import Toss  # noqa: E402
+from pykbroker.exceptions import SpecUnverifiedError  # noqa: E402
+from pykbroker.models import CancelRequest  # noqa: E402
+
+SHIPPED = [KIS, DBFI, Toss]
+
+
+def _any_broker(broker_type, market, live_safety, **kwargs):
+    if broker_type is Toss:
+        return Toss(account="fixture", market=market, account_seq=1, sdk_factory=_Mock(), safety=live_safety, **kwargs)
+    return _broker(broker_type, market, live_safety, **kwargs)
+
+
+@pytest.mark.parametrize("broker_type", SHIPPED)
+@pytest.mark.parametrize("market", ["KR", "US"])
+def test_a_market_is_either_declared_with_venues_or_locked(broker_type, market, live_safety):
+    kwargs = {"venue": "NASDAQ"} if market == "US" and broker_type is not Toss else {}
+    try:
+        caps = _any_broker(broker_type, market, live_safety, **kwargs).capabilities()
+    except SpecUnverifiedError:
+        return
+    assert caps.markets == (market,)
+    assert caps.venues
+
+
+@pytest.mark.parametrize("broker_type", SHIPPED)
+@pytest.mark.parametrize("market", ["KR", "US"])
+def test_the_single_cancel_claim_matches_what_actually_happens(broker_type, market, live_safety):
+    """우회 1: 「단일 취소 지원」 선언과 실제 거절이 어긋나면 실행기가 그 거짓말대로 움직인다."""
+    kwargs = {"venue": "NASDAQ"} if market == "US" and broker_type is not Toss else {}
+    try:
+        broker = _any_broker(broker_type, market, live_safety, **kwargs)
+    except SpecUnverifiedError:
+        return
+    caps = broker.capabilities()
+    request = CancelRequest(
+        order_id="42",
+        symbol="005930" if market == "KR" else "AAPL",
+        quantity=1,
+        market=market,
+        venue=kwargs.get("venue", "KRX"),
+        client_key="honesty-cancel",
+    )
+    if caps.supports_single_order_cancel:
+        broker._validate_order(request)
+        return
+    with pytest.raises(NotSupportedError):
+        broker.cancel_order(request)
+
+
+@pytest.mark.parametrize("broker_type", SHIPPED)
+def test_a_locked_market_is_locked_before_any_capability_is_read(broker_type, live_safety):
+    """우회 2: 잠긴 시장은 capabilities() 를 읽어 「부분 지원」으로 해석할 여지도 남기지 않는다."""
+    try:
+        broker = _any_broker(broker_type, "US", live_safety, **({} if broker_type is Toss else {"venue": "NASDAQ"}))
+    except SpecUnverifiedError:
+        return
+    assert broker.capabilities().requires_venue is True

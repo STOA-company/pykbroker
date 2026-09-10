@@ -192,6 +192,20 @@ MUTATIONS = (
         "        if False:",
     ),
     Mutation(
+        "B'2-3",
+        "cancellations skip the venue-required check that orders get",
+        SRC / "brokers/_common.py",
+        "        if capabilities.requires_venue and request.venue is None:",
+        "        if capabilities.requires_venue and request.venue is None and isinstance(request, OrderRequest):",
+    ),
+    Mutation(
+        "B'2-3",
+        "cancellations skip the declared-venue check that orders get",
+        SRC / "brokers/_common.py",
+        "        if request.venue is not None:",
+        "        if request.venue is not None and isinstance(request, OrderRequest):",
+    ),
+    Mutation(
         "A'2-5",
         "the dev extra drops the package the suite imports",
         ROOT / "pyproject.toml",
