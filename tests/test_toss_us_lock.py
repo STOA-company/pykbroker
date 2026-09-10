@@ -18,7 +18,12 @@ from pykbroker.brokers.toss import Toss
 from pykbroker.exceptions import NotSupportedError, SpecUnverifiedError
 from pykbroker.factory import create_broker
 
-DOCS = Path(__file__).resolve().parent.parent / "docs" / "llms-full.txt"
+DOCS_ROOT = Path(__file__).resolve().parent.parent / "docs"
+DOCS = DOCS_ROOT / "llms-full.txt"
+# B′3-1: 가드를 llms-full.txt 하나에만 걸면 docs/en/BROKER_MATRIX.md 같은
+# 개별 문서가 따로 거짓말을 적어도 잡지 못한다(실제로 B′-0 복원 직후에 그러했다).
+# docs/**/*.md 전수 + llms-full.txt 를 함께 스캔한다.
+ALL_DOC_FILES = sorted(DOCS_ROOT.rglob("*.md")) + [DOCS]
 
 
 def _toss(**kwargs):
@@ -42,11 +47,19 @@ def test_toss_never_declares_a_market_it_cannot_route():
 
 
 def test_the_documentation_no_longer_claims_toss_us():
-    text = DOCS.read_text()
-    rows = [line for line in text.splitlines() if re.match(r"\|\s*Toss\s*\|", line)]
-    assert rows, "문서의 브로커 표에서 Toss 행을 찾지 못했다"
-    for row in rows:
-        assert "US" not in row.split("|")[2], row
+    """B′3-1: llms-full.txt 뿐이 아니라 docs/**/*.md 전수를 훑는다.
+
+    가드를 한 문서에만 걸면 다른 문서(docs/en/BROKER_MATRIX.md 등)가
+    거짓말을 적어도 걸리지 않는다.
+    """
+    checked = 0
+    for doc in ALL_DOC_FILES:
+        text = doc.read_text()
+        rows = [line for line in text.splitlines() if re.match(r"\|\s*Toss\s*\|", line)]
+        for row in rows:
+            checked += 1
+            assert "US" not in row.split("|")[2], f"{doc}: {row}"
+    assert checked, "문서 어느 곳에서도 Toss 행을 찾지 못했다"
 
 
 # --- 우회 ---------------------------------------------------------------------

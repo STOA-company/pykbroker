@@ -128,7 +128,7 @@ def test_a_market_is_either_declared_with_venues_or_locked(broker_type, market, 
     try:
         caps = _any_broker(broker_type, market, live_safety, **kwargs).capabilities()
     except SpecUnverifiedError:
-        return
+        pytest.skip(f"{broker_type.__name__}/{market} 은 스펙 미검증으로 잠겨 있다 — 이 정직성 검사 대상이 아니다")
     assert caps.markets == (market,)
     assert caps.venues
 
@@ -141,7 +141,7 @@ def test_the_single_cancel_claim_matches_what_actually_happens(broker_type, mark
     try:
         broker = _any_broker(broker_type, market, live_safety, **kwargs)
     except SpecUnverifiedError:
-        return
+        pytest.skip(f"{broker_type.__name__}/{market} 은 스펙 미검증으로 잠겨 있다 — 취소 정직성 검사 대상이 아니다")
     caps = broker.capabilities()
     request = CancelRequest(
         order_id="42",
@@ -164,5 +164,5 @@ def test_a_locked_market_is_locked_before_any_capability_is_read(broker_type, li
     try:
         broker = _any_broker(broker_type, "US", live_safety, **({} if broker_type is Toss else {"venue": "NASDAQ"}))
     except SpecUnverifiedError:
-        return
+        pytest.skip(f"{broker_type.__name__}/US 는 생성 시점에 잠겨 있다 — 잠금 우선순위 검사 대상이 아니다")
     assert broker.capabilities().requires_venue is True

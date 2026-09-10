@@ -28,4 +28,6 @@ class Capabilities(Model):
         # 전부 거절한다. 모순은 쓰이는 순간이 아니라 만들어지는 순간에 막는다.
         if self.requires_venue and not self.venues:
             raise ValueError("requires_venue=True must declare at least one venue")
+        if any(not v.strip() for v in self.venues):
+            raise ValueError("venues must not contain empty or whitespace-only names")
         return self

@@ -284,6 +284,6 @@ def test_a_broker_either_routes_a_market_or_locks_it(broker_type, market, live_s
     try:
         caps = _for_market(broker_type, market, safety=live_safety, **kwargs).capabilities()
     except SpecUnverifiedError:
-        return
+        pytest.skip(f"{broker_type.__name__}/{market} 은 스펙 미검증으로 잠겨 있다 — 이 매트릭스 검사 대상이 아니다")
     assert caps.markets == (market,)
     assert caps.venues, "지원한다고 선언한 시장에 댈 거래소가 없다 — 주문·취소가 전부 거절된다"

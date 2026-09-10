@@ -106,6 +106,13 @@ def test_venues_cannot_be_emptied_after_construction():
     assert caps.venues == ("NASDAQ",)
 
 
+@pytest.mark.parametrize("venues", [("",), (" ",), ("KRX", ""), ("KRX", "  ")])
+def test_venues_cannot_contain_empty_or_blank_names(venues):
+    """B′3-1: 빈 문자열·공백뿐인 거래소명은 "댈 거래소가 있다"는 거짓 선언이다."""
+    with pytest.raises(ValidationError):
+        Capabilities(requires_venue=False, venues=venues)
+
+
 def test_toss_rebuilds_its_capabilities_through_the_validation(monkeypatch):
     """확장 경로가 검증을 타는지 — base 가 모순쌍을 내놓으면 확장도 거기서 멈춰야 한다."""
     broker = _built(Toss)
