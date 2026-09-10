@@ -139,6 +139,18 @@ class BaseBroker:
             halted=self._halt_from_provider(symbol),
         )
 
+    def available_cash(self) -> Decimal:
+        """Cash the venue will let the next order spend. Re-read every call: fills settle late."""
+        return self.get_balance().cash_available
+
+    def available_qty(self, symbol: str) -> int:
+        """Shares the venue will let the next order sell. Not held means nothing to sell."""
+        code = self._symbol(symbol, self.market)
+        for position in self.get_positions():
+            if position.symbol == code:
+                return position.sellable
+        return 0
+
     def _validate_order(self, request: OrderRequest | CancelRequest) -> None:
         self._symbol(request.symbol, request.market)
         if request.venue == "NXT" and not self.capabilities().supports_nxt:
