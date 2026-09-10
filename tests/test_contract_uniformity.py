@@ -279,7 +279,8 @@ def test_a_broker_either_routes_a_market_or_locks_it(broker_type, market, live_s
     회귀는 정확히 그 사이에서 태어났다 — 선언은 US 를 지원한다고 했고, 댈 거래소는
     비어 있었고, 그래서 주문도 취소도 전부 거절됐다. 그 상태를 여기서 못박는다.
     """
-    kwargs = {"venue": "NASDAQ"} if market == "US" and "venue" in inspect.signature(broker_type.__init__).parameters else {}
+    takes_venue = "venue" in inspect.signature(broker_type.__init__).parameters
+    kwargs = {"venue": "NASDAQ"} if market == "US" and takes_venue else {}
     try:
         caps = _for_market(broker_type, market, safety=live_safety, **kwargs).capabilities()
     except SpecUnverifiedError:
