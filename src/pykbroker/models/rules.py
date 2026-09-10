@@ -1,3 +1,5 @@
+from typing import Literal
+
 from ._base import Model, PositiveMoney, PositiveQuantity
 
 
@@ -23,6 +25,9 @@ class Rules(Model):
     halted: bool | None = None
     limit_up: PositiveMoney | None = None
     limit_down: PositiveMoney | None = None
+    # "venue" the venue stated this band; "derived" it is the KRX cash-equity ±30% rule,
+    # which ETF·ETN, 정리매매 and 신규상장 do not follow; None the band is unknown.
+    limits_source: Literal["venue", "derived"] | None = None
 
     @property
     def tradable(self) -> bool:

@@ -79,6 +79,30 @@ def regular_session_open(now: datetime, trading_day: Callable[[date], bool] | No
     return session_state(now, trading_day) is True
 
 
+def daily_band(
+    limit_up: Decimal | int | str | None,
+    limit_down: Decimal | int | str | None,
+    prev_close: Decimal | int | str | None,
+) -> tuple[Decimal | None, Decimal | None, str | None]:
+    """The venue's own band when it stated one; the ±30% rule only when it did not.
+
+    `price_limits` is a KRX cash-equity default. ETF·ETN, 정리매매 and 신규상장 do not
+    share it, so a stated band always wins and is never re-derived or widened.
+    """
+    stated = (limit_up is not None, limit_down is not None)
+    if any(stated) and not all(stated):
+        raise ConfigurationError("A daily band needs both sides; half a band is not a band")
+    if all(stated):
+        upper, lower = _price(limit_up), _price(limit_down)
+        if lower > upper:
+            raise ConfigurationError("Daily band lower bound is above the upper bound")
+        return upper, lower, "venue"
+    if prev_close is None:
+        return None, None, None
+    upper, lower = price_limits(prev_close)
+    return upper, lower, "derived"
+
+
 def equity_rules(
     symbol: str,
     price: Decimal | None = None,
@@ -87,8 +111,10 @@ def equity_rules(
     halted: bool | None = None,
     now: datetime | None = None,
     trading_day: Callable[[date], bool] | None = None,
+    limit_up: Decimal | None = None,
+    limit_down: Decimal | None = None,
 ) -> Rules:
-    upper, lower = price_limits(prev_close) if prev_close is not None else (None, None)
+    upper, lower, source = daily_band(limit_up, limit_down, prev_close)
     return Rules(
         symbol=normalize_symbol(symbol),
         tick=tick_size(price) if price is not None else None,
@@ -101,4 +127,5 @@ def equity_rules(
         halted=halted if isinstance(halted, bool) else None,
         limit_up=upper,
         limit_down=lower,
+        limits_source=source,
     )

@@ -159,6 +159,10 @@ class KIS(BaseBroker):
                 code,
                 price=decimal(field(output, "stck_prpr")),
                 prev_close=optional_price(field(output, "stck_sdpr")),
+                # 상한가/하한가 sit on this very row (price.py:47,49). They are the venue's
+                # answer for this symbol today; the ±30% rule is only the fallback below.
+                limit_up=optional_price(field(output, "stck_mxpr")),
+                limit_down=optional_price(field(output, "stck_llam")),
                 halted=halted,
                 now=now,
                 trading_day=trading_day,
