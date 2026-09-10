@@ -91,11 +91,16 @@ def test_locked_brokers_still_refuse_every_mutation(module_name, class_name, ope
 
 @pytest.mark.parametrize("module_name,class_name", LOCKED)
 def test_a_mock_flag_does_not_unlock_an_experimental_broker(module_name, class_name, request_order, live_safety):
-    """Bypass 1: the new mock-account argument must not become a side door."""
+    """Bypass 1: the new mock-account argument must not become a side door.
+
+    The two REST-backed mappings refuse it hardest of all — A′ left their constructor
+    alone, so the argument does not exist there. The two skeletons forward **kwargs and
+    are refused by the base contract instead. Either way, no mock domain is claimed.
+    """
     module = import_module("pykbroker.experimental." + module_name)
     broker_type = getattr(module, class_name)
     assert broker_type(account="fixture").capabilities().supports_virtual_account is False
-    with pytest.raises(NotSupportedError):
+    with pytest.raises((NotSupportedError, TypeError)):
         broker_type(account="fixture", virtual=True, safety=live_safety)
     with pytest.raises(SpecUnverifiedError):
         broker_type(account="fixture", safety=live_safety).place_order(request_order)

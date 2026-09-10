@@ -1,6 +1,6 @@
 """Injected REST boundary. No default transport, credentials, or request budgets."""
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import Any, Protocol
 
 from pykbroker.brokers._common import BaseBroker
@@ -24,11 +24,8 @@ class RestBroker(BaseBroker):
         rate_limiter: RateLimiter | None = None,
         safety: OrderSafety | None = None,
         market: str = "KR",
-        virtual: bool = False,
-        halt_provider: Callable[[str], bool] | None = None,
     ) -> None:
-        # An unverified mapping has no mock domain either; the lock is never a side door.
-        super().__init__(account=account, safety=safety, market=market, virtual=virtual, halt_provider=halt_provider)
+        super().__init__(account=account, safety=safety, market=market)
         if market != "KR":
             raise NotSupportedError("This experimental REST mapping is domestic only")
         self._client, self._codes = client, dict(codes or {})
