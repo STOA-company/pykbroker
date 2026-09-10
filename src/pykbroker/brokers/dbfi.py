@@ -1,15 +1,19 @@
 """DB Securities translation with injected account-bound Pydb client/helpers."""
 
 from collections.abc import Callable, Mapping
+from datetime import date, datetime
 from decimal import Decimal
 from importlib import import_module
 from typing import Any
 
 from pykbroker.exceptions import ConfigurationError, InvalidResponseError, MissingDependencyError, NotSupportedError
-from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote
+from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
+from pykbroker.rules.kr import equity_rules
 from pykbroker.safety.gate import OrderSafety
 
 from ._common import BaseBroker, check_response, decimal, optional_price, whole
+
+US_VENUES = ("NYSE", "NASDAQ", "AMEX")
 
 
 class DBFI(BaseBroker):
@@ -27,9 +31,11 @@ class DBFI(BaseBroker):
         market: str = "KR",
         venue: str | None = None,
         cash_provider: Callable[[Any], Decimal] | None = None,
+        virtual: bool = False,
+        halt_provider: Callable[[str], bool] | None = None,
     ) -> None:
-        super().__init__(account=account, safety=safety, market=market)
-        if market == "US" and venue not in {"NYSE", "NASDAQ", "AMEX"}:
+        super().__init__(account=account, safety=safety, market=market, virtual=virtual, halt_provider=halt_provider)
+        if market == "US" and venue not in US_VENUES:
             raise ConfigurationError("US DBFI requires NYSE, NASDAQ, or AMEX venue")
         self.venue, self._cash_provider = venue, cash_provider
         self.region = "domestic" if market == "KR" else "overseas"
@@ -51,12 +57,42 @@ class DBFI(BaseBroker):
     def capabilities(self) -> Capabilities:
         return Capabilities(
             supports_spot=True,
+            # DB overseas has no market order either; US is limit-only on both brokers.
             supports_market_order=self.market == "KR",
             supports_single_order_cancel=True,
             supports_nxt=self.market == "KR",
             supports_order_history=True,
+            realtime_open_orders=True,
+            requires_venue=self.market == "US",
+            venues=US_VENUES if self.market == "US" else ("KRX", "NXT"),
             markets=(self.market,),
         )
+
+    def get_rules(
+        self,
+        symbol: str,
+        *,
+        now: datetime | None = None,
+        trading_day: Callable[[date], bool] | None = None,
+    ) -> Rules:
+        """Same contract as KIS. The DB price payload carries no prev close and no verified
+        halt field, so the band and the halt stay unknown unless a halt_provider answers."""
+        if self.market != "KR":
+            return super().get_rules(symbol, now=now, trading_day=trading_day)
+        code = self._symbol(symbol, "KR")
+
+        def read() -> Rules:
+            client, _ = self._connect()
+            price = check_response(client.get_stock_price(region=self.region, stock_code=code, market_code="J"), "dbfi")
+            return equity_rules(
+                code,
+                price=decimal(price["Out"]["Prpr"]),
+                halted=self._halt_from_provider(code),
+                now=now,
+                trading_day=trading_day,
+            )
+
+        return self._call(read)
 
     def get_quote(self, symbol: str, *, market: str = "KR") -> Quote:
         symbol = self._symbol(symbol, market)

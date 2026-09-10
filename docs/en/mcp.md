@@ -49,11 +49,7 @@ The daily cap is the **sum of submitted value per account, broker, and KST date*
 from pykbroker import DBFI
 from pykbroker.mcp.server import create_server
 
-app = create_server(
-    broker_factory=lambda safety: DBFI(
-        account=caller_account, client=caller_client, safety=safety
-    )
-)
+app = create_server(broker_factory=lambda safety: DBFI(account=caller_account, client=caller_client, safety=safety))
 app.run(transport="stdio")
 ```
 

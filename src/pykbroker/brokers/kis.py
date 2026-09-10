@@ -1,21 +1,69 @@
 """KIS translation over the optional Pykis client and domestic/overseas helpers."""
 
 from collections.abc import Callable, Mapping
+from datetime import date, datetime
 from decimal import Decimal
 from importlib import import_module
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from pykbroker.exceptions import ConfigurationError, InvalidResponseError, MissingDependencyError, NotSupportedError
-from pykbroker.models import Balance, Capabilities, Order, OrderRequest, Position, Quote
+from pykbroker.models import Balance, Capabilities, Order, OrderRequest, Position, Quote, Rules
+from pykbroker.rules.kr import equity_rules
 from pykbroker.safety.gate import OrderSafety
 
 from ._common import BaseBroker, check_response, decimal, field, optional_price, whole
 
+# KIS 국내주식 현재가 시세 output — two independent halt signals, both on the price row
+# (_pykis/scope/stock/api/response/price.py:4 iscd_stat_cls_code, :16 temp_stop_yn).
+# 58 is 거래정지 and 00 is 그외(정상). 51 관리·52 위험·53 경고 and friends are neither:
+# they are restrictions we have not verified, so they read as «unknown», never as «trading».
+KR_HALT_CODES = {"58"}
+KR_TRADING_CODES = {"00"}
+YES_NO = {"Y": True, "N": False}
+
 VENUES = {"NASDAQ": ("NAS", "NASD"), "NYSE": ("NYS", "NYSE"), "AMEX": ("AMS", "AMEX")}
+
+KST = ZoneInfo("Asia/Seoul")
+# A mock account cannot read open orders the way a real one does: the vendor's
+# `revisable_order` refuses it outright (_pykis/scope/account/api/revisable_order.py:16),
+# and `get_open_orders_domestic` is only a call into it (base/domestic.py:114).
+# The daily ledger is the one order TR the vendor does switch to a mock id for
+# (VTTC8001R, daily_order.py:71), so the mock path reads that instead -- and says
+# through `realtime_open_orders` that it is a ledger, not a live snapshot.
+UNFILLED = "미체결"
+# base/overseas.py:377 hardcodes TTTS3018R, a real-account TR with no mock branch,
+# so US open orders have no mock route at all. That is declared, never faked.
+
+
+def _yes_no(value: Any) -> bool | None:
+    """The vendor models temp_stop_yn as a bool; a raw envelope still carries Y/N."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return YES_NO.get(value.strip().upper())
+    return None
+
+
+def _status_state(value: Any) -> bool | None:
+    text = str(value).strip() if value is not None else ""
+    if text in KR_HALT_CODES:
+        return True
+    return False if text in KR_TRADING_CODES else None
+
+
+def _ledger_status(cancelled: Any, filled: int, remaining: int) -> str:
+    """A ledger row states quantities; nothing here is inferred from an absent row."""
+    if cancelled is True or (isinstance(cancelled, str) and cancelled.strip().upper() == "Y"):
+        return "cancelled"
+    if remaining == 0:
+        return "filled" if filled > 0 else "unknown"
+    return "partial" if filled > 0 else "open"
 
 
 class KIS(BaseBroker):
     broker_code = "kis"
+    supports_virtual = True
 
     def __init__(
         self,
@@ -29,14 +77,19 @@ class KIS(BaseBroker):
         market: str = "KR",
         venue: str | None = None,
         cash_provider: Callable[[Any], Decimal] | None = None,
+        virtual: bool = False,
+        halt_provider: Callable[[str], bool] | None = None,
     ) -> None:
-        super().__init__(account=account, safety=safety, market=market)
+        super().__init__(account=account, safety=safety, market=market, virtual=virtual, halt_provider=halt_provider)
         if market == "US" and venue not in VENUES:
             raise ConfigurationError("US KIS requires NASDAQ, NYSE, or AMEX venue")
         self.venue = venue
         self._cash_provider = cash_provider
         self._client, self._api = client, api
         self._factory, self._options = client_factory, dict(client_options or {})
+        # The mode is a contract argument; vendor options must not carry a second answer.
+        if "virtual_account" in self._options:
+            raise ConfigurationError("Set the account mode with virtual=, not client_options")
         self._scope = None
         self._owns_client = client is None
 
@@ -46,8 +99,15 @@ class KIS(BaseBroker):
                 factory = self._factory or import_module("Pykis._pykis").PyKis
                 if not self._options and self._factory is None:
                     raise ConfigurationError("Supply KIS client_options or an authenticated client")
-                options = {**self._options, "realtime": False, "market_auto_sync": False, "late_init": True}
+                options = {
+                    **self._options,
+                    "virtual_account": self.virtual,
+                    "realtime": False,
+                    "market_auto_sync": False,
+                    "late_init": True,
+                }
                 self._client = factory(**options)
+            self._verify_mode(self._client)
             if self._scope is None:
                 self._scope = self._client.account(self._account)
             if self._api is None:
@@ -56,8 +116,82 @@ class KIS(BaseBroker):
             raise MissingDependencyError("Supply Pykis source and pykbroker[kis], or inject client and api") from None
         return self._scope, self._api
 
+    def _verify_mode(self, client: Any) -> None:
+        """An undisclosed or disagreeing mode refuses the call; it is never assumed."""
+        mode = getattr(getattr(client, "key", None), "virtual_account", None)
+        if not isinstance(mode, bool):
+            raise ConfigurationError("KIS client does not disclose its account mode; refusing")
+        if mode is not self.virtual:
+            raise ConfigurationError("KIS client account mode disagrees with the requested mode")
+
     def capabilities(self) -> Capabilities:
-        return Capabilities(supports_spot=True, supports_market_order=self.market == "KR", markets=(self.market,))
+        return Capabilities(
+            supports_spot=True,
+            # KIS overseas has no market order; the executor must plan a limit price itself.
+            supports_market_order=self.market == "KR",
+            supports_virtual_account=True,
+            virtual=self.virtual,
+            # A US mock account has no open-order TR; a KR one has the delayed daily ledger.
+            supports_order_history=not (self.market == "US" and self.virtual),
+            realtime_open_orders=not self.virtual,
+            requires_venue=self.market == "US",
+            venues=tuple(VENUES) if self.market == "US" else ("KRX",),
+            markets=(self.market,),
+        )
+
+    def get_rules(
+        self,
+        symbol: str,
+        *,
+        now: datetime | None = None,
+        trading_day: Callable[[date], bool] | None = None,
+    ) -> Rules:
+        """KR rules come from the live price row: tick, the daily band, and the halt flag."""
+        if self.market != "KR":
+            return super().get_rules(symbol, now=now, trading_day=trading_day)
+        code = self._symbol(symbol, "KR")
+
+        def read() -> Rules:
+            scope, api = self._connect()
+            output = check_response(api.get_price_domestic(kis_account=scope, stock_code=code), "kis")["output"]
+            halted = self._halt_state(output, code)
+            return equity_rules(
+                code,
+                price=decimal(field(output, "stck_prpr")),
+                prev_close=optional_price(field(output, "stck_sdpr")),
+                # 상한가/하한가 sit on this very row (price.py:47,49). They are the venue's
+                # answer for this symbol today; the ±30% rule is only the fallback below.
+                limit_up=optional_price(field(output, "stck_mxpr")),
+                limit_down=optional_price(field(output, "stck_llam")),
+                halted=halted,
+                now=now,
+                trading_day=trading_day,
+            )
+
+        return self._call(read)
+
+    def _halt_state(self, output: Any, code: str) -> bool | None:
+        """Combine the price row's two halt signals with any halt notice the caller holds.
+
+        An affirmed halt wins from whichever side it comes: the venue never talks a notice
+        away, and a notice never talks the venue's halt away. Anything less than an
+        affirmative «trading» on every signal we can read stays unknown.
+        """
+        # A field the vendor did not send is not a signal; a field it sent always is,
+        # even when its value is one we cannot read.
+        temporary, status = field(output, "temp_stop_yn"), field(output, "iscd_stat_cls_code")
+        signals = [_yes_no(temporary)] if temporary is not None else []
+        signals += [_status_state(status)] if status is not None else []
+        if True in signals:
+            venue = True
+        elif not signals or None in signals:
+            venue = None
+        else:
+            venue = False
+        notice = self._halt_from_provider(code)
+        if venue is True or notice is True:
+            return True
+        return venue if venue is False else notice
 
     def get_quote(self, symbol: str, *, market: str = "KR") -> Quote:
         symbol = self._symbol(symbol, market)
@@ -142,8 +276,12 @@ class KIS(BaseBroker):
         return self._call(read)
 
     def list_orders(self, symbol: str | None = None) -> list[Order]:
+        if not self.capabilities().supports_order_history:
+            raise NotSupportedError("KIS has no mock-account route for US open orders")
         if symbol is not None:
             symbol = self._symbol(symbol, self.market)
+        if self.market == "KR" and self.virtual:
+            return self._call(lambda: self._ledger_orders(symbol))
 
         def read() -> list[Order]:
             scope, api = self._connect()
@@ -151,7 +289,7 @@ class KIS(BaseBroker):
                 response = api.get_open_orders_overseas_all(kis_account=scope, market=VENUES[self.venue][1])
                 rows = check_response(response, "kis")["output"]
                 return [
-                    Order(id=str(row["odno"]), symbol=row["pdno"], market="US", status="unknown")
+                    Order(id=str(row["odno"]), symbol=row["pdno"], market="US", status="unknown", virtual=self.virtual)
                     for row in rows
                     if symbol is None or row["pdno"] == symbol
                 ]
@@ -171,11 +309,39 @@ class KIS(BaseBroker):
                         symbol=code,
                         remaining=remaining,
                         status="open" if remaining > 0 else "unknown",
+                        virtual=self.virtual,
                     )
                 )
             return result
 
         return self._call(read)
+
+    def _ledger_orders(self, symbol: str | None) -> list[Order]:
+        """Unfilled rows of today's daily ledger — the mock domain's only order TR."""
+        scope, _ = self._connect()
+        today = datetime.now(KST)
+        response = scope.daily_order(start_date=today, end_date=today, code=symbol or "", ccld=UNFILLED)
+        result = []
+        for row in field(response, "orders", ()):
+            code = field(row, "pdno")
+            if symbol is not None and code != symbol:
+                continue
+            order_id = field(row, "odno")
+            if order_id is None or not str(order_id).strip():
+                raise InvalidResponseError("KIS order identifier missing")
+            filled, remaining = whole(field(row, "tot_ccld_qty")), whole(field(row, "rmn_qty"))
+            result.append(
+                Order(
+                    id=str(order_id),
+                    symbol=code,
+                    quantity=whole(field(row, "ord_qty")),
+                    filled=filled,
+                    remaining=remaining,
+                    status=_ledger_status(field(row, "cncl_yn"), filled, remaining),
+                    virtual=True,
+                )
+            )
+        return result
 
     def _place_order(self, request: OrderRequest) -> Order:
         scope, api = self._connect()
@@ -218,6 +384,7 @@ class KIS(BaseBroker):
             price=request.price,
             status="accepted",
             market=request.market,
+            virtual=self.virtual,
         )
 
     def close(self) -> None:
