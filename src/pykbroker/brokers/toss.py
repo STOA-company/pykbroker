@@ -7,7 +7,14 @@ from dataclasses import asdict, is_dataclass
 from importlib import import_module
 from typing import Any
 
-from pykbroker.exceptions import BrokerRejectedError, ConfigurationError, InvalidResponseError, MissingDependencyError
+from pykbroker.exceptions import (
+    BrokerRejectedError,
+    ConfigurationError,
+    InvalidResponseError,
+    MissingDependencyError,
+    NotSupportedError,
+    SpecUnverifiedError,
+)
 from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote
 from pykbroker.safety.gate import OrderSafety
 from pykbroker.safety.idempotency import order_key
@@ -95,6 +102,11 @@ class Toss(BaseBroker):
     ) -> None:
         # Toss has no separate mock-trading domain, so `virtual=True` is refused upstream.
         super().__init__(account=account, safety=safety, market=market, virtual=virtual, halt_provider=halt_provider)
+        # 🚨 B′2-2: 토스 해외주식은 벤더 명세로 확인된 적이 없다 — 거래소 코드도, 주문 유형도,
+        # 취소 계약도 모른다. 「markets=("US",) 를 선언하고 실제로는 전부 거절」하는 상태는
+        # 결함이 아니라 거짓 선언이다. 확인 전까지는 생성 시점에 명시적으로 잠근다.
+        if self.market != "KR":
+            raise SpecUnverifiedError("Toss overseas venues are not verified; only KR is supported")
         if type(account_seq) is not int or account_seq <= 0:
             raise ConfigurationError("Supply the vendor accountSeq as a positive integer")
         self._factory = sdk_factory or _TossBridge
@@ -130,7 +142,15 @@ class Toss(BaseBroker):
             return self._call(lambda: self._loop.run_until_complete(invoke()))
 
     def capabilities(self) -> Capabilities:
-        return Capabilities(
+        # 🚨 B′-0/B′2-1: 거래소 선언(`venues`)은 손으로 다시 적지 않고 base 에서 받아 확장한다.
+        # 이 메서드가 base 를 통째로 대체하면서 `venues` 를 빠뜨렸고, A′ 2라운드가
+        # `requires_venue` 를 강제로 올린 뒤부터 venue 를 채운 국내 주문이 전부
+        # NotSupportedError("Unknown venue…") 로 죽었다(_common.py:_validate_order).
+        # 확장은 `model_copy(update=)` 로 하지 않는다 — 그 경로는 검증을 건너뛰므로
+        # 모순쌍(requires_venue=True·venues=())이 조용히 살아남는다. 값을 다시 만들어
+        # Capabilities 자신의 검증을 반드시 통과시킨다.
+        base = super().capabilities()
+        update = dict(
             supports_spot=True,
             supports_market_order=self.market == "KR",
             supports_single_order_cancel=True,
@@ -138,6 +158,7 @@ class Toss(BaseBroker):
             realtime_open_orders=True,
             markets=(self.market,),
         )
+        return Capabilities(**{**base.model_dump(), **update})
 
     def get_quote(self, symbol: str, *, market: str = "KR") -> Quote:
         symbol = self._symbol(symbol, market)
@@ -226,8 +247,9 @@ class Toss(BaseBroker):
         return self._call(read)
 
     def _place_order(self, request: OrderRequest) -> Order:
-        if request.order_type == "close" and self.market == "KR":
-            raise ConfigurationError("Toss close orders require the US market")
+        # 종가(CLS) 주문은 벤더 해외 세션 전용이고, 그 해외 경로는 B′2-2 로 잠겨 있다.
+        if request.order_type == "close":
+            raise NotSupportedError("Toss close orders need the unverified overseas session")
         symbol = self._symbol(request.symbol, request.market)
         client_id = order_key(
             account=self._account,

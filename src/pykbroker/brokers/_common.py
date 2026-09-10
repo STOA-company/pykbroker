@@ -13,6 +13,7 @@ from pykbroker.exceptions import (
     ConfigurationError,
     InvalidResponseError,
     NotSupportedError,
+    SpecUnverifiedError,
     TransportError,
 )
 from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
@@ -63,6 +64,10 @@ class BaseBroker:
     broker_code = "base"
     # Mock (virtual) trading exists only where the vendor offers a separate domain.
     supports_virtual = False
+    # US routing needs a named venue, so a broker that has not verified its overseas venue
+    # list has nothing to name. Declaring the requirement with an empty list is a contradiction:
+    # every order and every cancellation is refused whether or not the caller names a venue.
+    us_venues: tuple[str, ...] = ()
 
     def __init__(
         self,
@@ -109,11 +114,13 @@ class BaseBroker:
         return normalize_symbol(symbol) if market == "KR" else symbol
 
     def capabilities(self) -> Capabilities:
+        if self.market == "US" and not self.us_venues:
+            raise SpecUnverifiedError("This broker has not verified its US venues; overseas routing is locked")
         return Capabilities(
             supports_virtual_account=self.supports_virtual,
             virtual=self.virtual,
             requires_venue=self.market == "US",
-            venues=("KRX",) if self.market == "KR" else (),
+            venues=("KRX",) if self.market == "KR" else self.us_venues,
         )
 
     def _halt_from_provider(self, symbol: str) -> bool | None:

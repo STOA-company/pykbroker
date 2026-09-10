@@ -1,3 +1,5 @@
+from pydantic import model_validator
+
 from ._base import Model
 
 
@@ -19,3 +21,13 @@ class Capabilities(Model):
     supports_virtual_account: bool = False
     virtual: bool = False
     markets: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _venue_requirement_names_its_venues(self) -> "Capabilities":
+        # 「거래소를 대라」와 「댈 거래소가 없다」가 동시에 참이면 그 브로커는 주문도 취소도
+        # 전부 거절한다. 모순은 쓰이는 순간이 아니라 만들어지는 순간에 막는다.
+        if self.requires_venue and not self.venues:
+            raise ValueError("requires_venue=True must declare at least one venue")
+        if any(not v.strip() for v in self.venues):
+            raise ValueError("venues must not contain empty or whitespace-only names")
+        return self
