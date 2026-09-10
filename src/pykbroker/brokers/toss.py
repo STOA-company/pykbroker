@@ -130,21 +130,23 @@ class Toss(BaseBroker):
             return self._call(lambda: self._loop.run_until_complete(invoke()))
 
     def capabilities(self) -> Capabilities:
-        # 🚨 B′-0: 거래소 선언(`venues`)은 손으로 다시 적지 않고 base 에서 받아 확장한다.
+        # 🚨 B′-0/B′2-1: 거래소 선언(`venues`)은 손으로 다시 적지 않고 base 에서 받아 확장한다.
         # 이 메서드가 base 를 통째로 대체하면서 `venues` 를 빠뜨렸고, A′ 2라운드가
         # `requires_venue` 를 강제로 올린 뒤부터 venue 를 채운 국내 주문이 전부
         # NotSupportedError("Unknown venue…") 로 죽었다(_common.py:_validate_order).
-        # 선언은 검증이 읽는 값이다 — 두 벌로 적으면 반드시 한 벌이 낡는다.
-        return super().capabilities().model_copy(
-            update=dict(
-                supports_spot=True,
-                supports_market_order=self.market == "KR",
-                supports_single_order_cancel=True,
-                supports_order_history=True,
-                realtime_open_orders=True,
-                markets=(self.market,),
-            )
+        # 확장은 `model_copy(update=)` 로 하지 않는다 — 그 경로는 검증을 건너뛰므로
+        # 모순쌍(requires_venue=True·venues=())이 조용히 살아남는다. 값을 다시 만들어
+        # Capabilities 자신의 검증을 반드시 통과시킨다.
+        base = super().capabilities()
+        update = dict(
+            supports_spot=True,
+            supports_market_order=self.market == "KR",
+            supports_single_order_cancel=True,
+            supports_order_history=True,
+            realtime_open_orders=True,
+            markets=(self.market,),
         )
+        return Capabilities(**{**base.model_dump(), **update})
 
     def get_quote(self, symbol: str, *, market: str = "KR") -> Quote:
         symbol = self._symbol(symbol, market)

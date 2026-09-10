@@ -155,6 +155,28 @@ MUTATIONS = (
         '        market: str = "KR",\n    ) -> None:',
         '        market: str = "KR",\n        virtual: bool = False,\n    ) -> None:',
     ),
+    # --- B′2: the second-round conditions on the Toss venue regression
+    Mutation(
+        "B'2-1",
+        "the contradictory pair (requires a venue, declares none) is constructible again",
+        SRC / "models/capabilities.py",
+        "        if self.requires_venue and not self.venues:",
+        "        if False:",
+    ),
+    Mutation(
+        "B'2-1",
+        "Toss extends its capabilities through model_copy again, skipping validation",
+        SRC / "brokers/toss.py",
+        "        return Capabilities(**{**base.model_dump(), **update})",
+        "        return base.model_copy(update=update)",
+    ),
+    Mutation(
+        "B'2-1",
+        "the base default hands US the empty venue list instead of locking",
+        SRC / "brokers/_common.py",
+        '        if self.market == "US" and not self.us_venues:',
+        "        if False:",
+    ),
     Mutation(
         "A'2-5",
         "the dev extra drops the package the suite imports",
