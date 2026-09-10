@@ -14,9 +14,13 @@ from pykbroker.safety.gate import OrderSafety
 
 from ._common import BaseBroker, check_response, decimal, field, optional_price, whole
 
-# KIS 국내주식 현재가 시세 output.iscd_stat_cls_code — 58 is a trading halt.
-# A response without the field says nothing, so the halt stays unknown rather than false.
+# KIS 국내주식 현재가 시세 output — two independent halt signals, both on the price row
+# (_pykis/scope/stock/api/response/price.py:4 iscd_stat_cls_code, :16 temp_stop_yn).
+# 58 is 거래정지 and 00 is 그외(정상). 51 관리·52 위험·53 경고 and friends are neither:
+# they are restrictions we have not verified, so they read as «unknown», never as «trading».
 KR_HALT_CODES = {"58"}
+KR_TRADING_CODES = {"00"}
+YES_NO = {"Y": True, "N": False}
 
 VENUES = {"NASDAQ": ("NAS", "NASD"), "NYSE": ("NYS", "NYSE"), "AMEX": ("AMS", "AMEX")}
 
@@ -30,6 +34,22 @@ KST = ZoneInfo("Asia/Seoul")
 UNFILLED = "미체결"
 # base/overseas.py:377 hardcodes TTTS3018R, a real-account TR with no mock branch,
 # so US open orders have no mock route at all. That is declared, never faked.
+
+
+def _yes_no(value: Any) -> bool | None:
+    """The vendor models temp_stop_yn as a bool; a raw envelope still carries Y/N."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return YES_NO.get(value.strip().upper())
+    return None
+
+
+def _status_state(value: Any) -> bool | None:
+    text = str(value).strip() if value is not None else ""
+    if text in KR_HALT_CODES:
+        return True
+    return False if text in KR_TRADING_CODES else None
 
 
 def _ledger_status(cancelled: Any, filled: int, remaining: int) -> str:
@@ -134,12 +154,7 @@ class KIS(BaseBroker):
         def read() -> Rules:
             scope, api = self._connect()
             output = check_response(api.get_price_domestic(kis_account=scope, stock_code=code), "kis")["output"]
-            status = field(output, "iscd_stat_cls_code")
-            halted = (
-                str(status).strip() in KR_HALT_CODES
-                if status is not None and str(status).strip()
-                else self._halt_from_provider(code)
-            )
+            halted = self._halt_state(output, code)
             return equity_rules(
                 code,
                 price=decimal(field(output, "stck_prpr")),
@@ -150,6 +165,29 @@ class KIS(BaseBroker):
             )
 
         return self._call(read)
+
+    def _halt_state(self, output: Any, code: str) -> bool | None:
+        """Combine the price row's two halt signals with any halt notice the caller holds.
+
+        An affirmed halt wins from whichever side it comes: the venue never talks a notice
+        away, and a notice never talks the venue's halt away. Anything less than an
+        affirmative «trading» on every signal we can read stays unknown.
+        """
+        # A field the vendor did not send is not a signal; a field it sent always is,
+        # even when its value is one we cannot read.
+        temporary, status = field(output, "temp_stop_yn"), field(output, "iscd_stat_cls_code")
+        signals = [_yes_no(temporary)] if temporary is not None else []
+        signals += [_status_state(status)] if status is not None else []
+        if True in signals:
+            venue = True
+        elif not signals or None in signals:
+            venue = None
+        else:
+            venue = False
+        notice = self._halt_from_provider(code)
+        if venue is True or notice is True:
+            return True
+        return venue if venue is False else notice
 
     def get_quote(self, symbol: str, *, market: str = "KR") -> Quote:
         symbol = self._symbol(symbol, market)
