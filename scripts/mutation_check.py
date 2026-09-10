@@ -22,6 +22,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src" / "pykbroker"
+EXPERIMENTAL = SRC / "experimental"
 
 
 @dataclass(frozen=True)
@@ -103,6 +104,63 @@ MUTATIONS = (
         SRC / "brokers/_common.py",
         "        if virtual and not self.supports_virtual:",
         "        if False:",
+    ),
+    # --- second round: the four bypasses the first-round review actually walked through
+    Mutation(
+        "A'2-1",
+        "a US mock account claims an open-order route the vendor does not have",
+        SRC / "brokers/kis.py",
+        '            supports_order_history=not (self.market == "US" and self.virtual),',
+        "            supports_order_history=True,",
+    ),
+    Mutation(
+        "A'2-1",
+        "a KR mock account is sent down the revisable-order path the vendor refuses",
+        SRC / "brokers/kis.py",
+        '        if self.market == "KR" and self.virtual:',
+        "        if False:",
+    ),
+    Mutation(
+        "A'2-2",
+        "a halt notice is overwritten by a price row that says 'trading'",
+        SRC / "brokers/kis.py",
+        "        if venue is True or notice is True:",
+        "        if venue is True:",
+    ),
+    Mutation(
+        "A'2-2",
+        "a status code we have not verified is read as 'trading' instead of 'unknown'",
+        SRC / "brokers/kis.py",
+        "    return False if text in KR_TRADING_CODES else None",
+        "    return False",
+    ),
+    Mutation(
+        "A'2-3",
+        "the venue's own daily band is thrown away and recomputed as plus or minus 30 percent",
+        SRC / "rules/kr.py",
+        '        return upper, lower, "venue"',
+        "        pass",
+    ),
+    Mutation(
+        "A'2-4",
+        "a market that requires a venue accepts an order that names none",
+        SRC / "brokers/_common.py",
+        "        if capabilities.requires_venue and request.venue is None:",
+        "        if False:",
+    ),
+    Mutation(
+        "A'2-5",
+        "the locked REST mapping grows a mock-account argument again",
+        EXPERIMENTAL / "_rest.py",
+        '        market: str = "KR",\n    ) -> None:',
+        '        market: str = "KR",\n        virtual: bool = False,\n    ) -> None:',
+    ),
+    Mutation(
+        "A'2-5",
+        "the dev extra drops the package the suite imports",
+        ROOT / "pyproject.toml",
+        '"build>=1", "mcp[cli]>=1.0,<2"]',
+        '"build>=1"]',
     ),
 )
 
