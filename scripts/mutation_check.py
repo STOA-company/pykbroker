@@ -178,6 +178,20 @@ MUTATIONS = (
         "        if False:",
     ),
     Mutation(
+        "B'2-2",
+        "Toss opens the unverified overseas market again",
+        SRC / "brokers/toss.py",
+        '        if self.market != "KR":',
+        "        if False:",
+    ),
+    Mutation(
+        "B'2-2",
+        "Toss claims the close-order type its locked overseas session would need",
+        SRC / "brokers/toss.py",
+        '        if request.order_type == "close":',
+        "        if False:",
+    ),
+    Mutation(
         "A'2-5",
         "the dev extra drops the package the suite imports",
         ROOT / "pyproject.toml",
