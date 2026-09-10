@@ -212,6 +212,24 @@ MUTATIONS = (
         '"build>=1", "mcp[cli]>=1.0,<2"]',
         '"build>=1"]',
     ),
+    Mutation(
+        "B'3-1",
+        "the published matrix claims Toss covers US again",
+        ROOT / "docs" / "en" / "BROKER_MATRIX.md",
+        "| Toss | KR | Entire unfilled remainder |",
+        "| Toss | KR / US | Entire unfilled remainder |",
+    ),
+    Mutation(
+        "B'3-1",
+        "Capabilities accepts a blank venue name as if a route existed",
+        SRC / "models/capabilities.py",
+        (
+            "        if any(not v.strip() for v in self.venues):\n"
+            "            raise ValueError(\"venues must not contain empty or whitespace-only names\")\n"
+            "        return self"
+        ),
+        "        return self",
+    ),
 )
 
 
