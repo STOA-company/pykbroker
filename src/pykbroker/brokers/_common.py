@@ -109,7 +109,12 @@ class BaseBroker:
         return normalize_symbol(symbol) if market == "KR" else symbol
 
     def capabilities(self) -> Capabilities:
-        return Capabilities(supports_virtual_account=self.supports_virtual, virtual=self.virtual)
+        return Capabilities(
+            supports_virtual_account=self.supports_virtual,
+            virtual=self.virtual,
+            requires_venue=self.market == "US",
+            venues=("KRX",) if self.market == "KR" else (),
+        )
 
     def _halt_from_provider(self, symbol: str) -> bool | None:
         """A caller-supplied halt answer fills a venue silence; anything but a bool stays unknown."""
@@ -153,16 +158,24 @@ class BaseBroker:
 
     def _validate_order(self, request: OrderRequest | CancelRequest) -> None:
         self._symbol(request.symbol, request.market)
-        if request.venue == "NXT" and not self.capabilities().supports_nxt:
+        capabilities = self.capabilities()
+        # capabilities() is the plan the executor makes; validation must agree with it exactly.
+        if request.venue == "NXT" and not capabilities.supports_nxt:
             raise NotSupportedError("NXT is not supported")
-        if request.venue not in (None, "KRX", "NXT") and self.market == "KR":
-            raise NotSupportedError("Unknown KR venue")
+        if request.venue is not None:
+            if request.venue not in capabilities.venues:
+                raise NotSupportedError("Unknown venue for this broker and market")
+            if capabilities.requires_venue and request.venue != getattr(self, "venue", None):
+                raise NotSupportedError("Order venue must match the configured venue")
         if isinstance(request, OrderRequest) and request.price is not None:
             if self.market == "KR" and request.price != request.price.to_integral_value():
                 raise ConfigurationError("KR prices must be whole won; round explicitly before submission")
         if isinstance(request, OrderRequest) and request.order_type == "market":
-            if not self.capabilities().supports_market_order:
+            if not capabilities.supports_market_order:
                 raise NotSupportedError("Market orders are not supported")
+        if isinstance(request, OrderRequest) and request.order_type == "limit":
+            if not capabilities.supports_limit_order:
+                raise NotSupportedError("Limit orders are not supported")
 
     def place_order(self, request: OrderRequest) -> Order:
         # Revalidate even models constructed with model_construct/model_copy.

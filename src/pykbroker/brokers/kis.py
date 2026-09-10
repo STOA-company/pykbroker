@@ -86,9 +86,12 @@ class KIS(BaseBroker):
     def capabilities(self) -> Capabilities:
         return Capabilities(
             supports_spot=True,
+            # KIS overseas has no market order; the executor must plan a limit price itself.
             supports_market_order=self.market == "KR",
             supports_virtual_account=True,
             virtual=self.virtual,
+            requires_venue=self.market == "US",
+            venues=tuple(VENUES) if self.market == "US" else ("KRX",),
             markets=(self.market,),
         )
 

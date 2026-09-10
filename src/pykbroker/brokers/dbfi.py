@@ -13,6 +13,8 @@ from pykbroker.safety.gate import OrderSafety
 
 from ._common import BaseBroker, check_response, decimal, optional_price, whole
 
+US_VENUES = ("NYSE", "NASDAQ", "AMEX")
+
 
 class DBFI(BaseBroker):
     broker_code = "dbfi"
@@ -33,7 +35,7 @@ class DBFI(BaseBroker):
         halt_provider: Callable[[str], bool] | None = None,
     ) -> None:
         super().__init__(account=account, safety=safety, market=market, virtual=virtual, halt_provider=halt_provider)
-        if market == "US" and venue not in {"NYSE", "NASDAQ", "AMEX"}:
+        if market == "US" and venue not in US_VENUES:
             raise ConfigurationError("US DBFI requires NYSE, NASDAQ, or AMEX venue")
         self.venue, self._cash_provider = venue, cash_provider
         self.region = "domestic" if market == "KR" else "overseas"
@@ -55,10 +57,13 @@ class DBFI(BaseBroker):
     def capabilities(self) -> Capabilities:
         return Capabilities(
             supports_spot=True,
+            # DB overseas has no market order either; US is limit-only on both brokers.
             supports_market_order=self.market == "KR",
             supports_single_order_cancel=True,
             supports_nxt=self.market == "KR",
             supports_order_history=True,
+            requires_venue=self.market == "US",
+            venues=US_VENUES if self.market == "US" else ("KRX", "NXT"),
             markets=(self.market,),
         )
 
