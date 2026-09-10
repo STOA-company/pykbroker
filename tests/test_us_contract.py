@@ -1,4 +1,5 @@
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -11,6 +12,7 @@ from pykbroker.models import CancelRequest, OrderRequest
 
 def test_kis_us_contract(live_safety):
     client, api, scope = Mock(), Mock(), Mock()
+    client.key = SimpleNamespace(virtual_account=False)
     client.account.return_value = scope
     api.get_price_overseas_detail.return_value = {"json_data": {"rt_cd": "0", "output": {"last": "120.50"}}}
     api.get_quote_overseas.return_value = {
@@ -121,6 +123,7 @@ def test_dbfi_us_contract(live_safety):
 @pytest.mark.parametrize("broker_type", [KIS, DBFI])
 def test_us_requires_caller_cash_mapping(broker_type):
     client, api = Mock(), Mock()
+    client.key = SimpleNamespace(virtual_account=False)
     with pytest.raises(ConfigurationError, match="venue"):
         broker_type(account="fixture", market="US", client=client)
     broker = broker_type(account="fixture", market="US", venue="NASDAQ", client=client, api=api)

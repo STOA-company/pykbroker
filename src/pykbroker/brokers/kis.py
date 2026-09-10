@@ -16,6 +16,7 @@ VENUES = {"NASDAQ": ("NAS", "NASD"), "NYSE": ("NYS", "NYSE"), "AMEX": ("AMS", "A
 
 class KIS(BaseBroker):
     broker_code = "kis"
+    supports_virtual = True
 
     def __init__(
         self,
@@ -29,14 +30,18 @@ class KIS(BaseBroker):
         market: str = "KR",
         venue: str | None = None,
         cash_provider: Callable[[Any], Decimal] | None = None,
+        virtual: bool = False,
     ) -> None:
-        super().__init__(account=account, safety=safety, market=market)
+        super().__init__(account=account, safety=safety, market=market, virtual=virtual)
         if market == "US" and venue not in VENUES:
             raise ConfigurationError("US KIS requires NASDAQ, NYSE, or AMEX venue")
         self.venue = venue
         self._cash_provider = cash_provider
         self._client, self._api = client, api
         self._factory, self._options = client_factory, dict(client_options or {})
+        # The mode is a contract argument; vendor options must not carry a second answer.
+        if "virtual_account" in self._options:
+            raise ConfigurationError("Set the account mode with virtual=, not client_options")
         self._scope = None
         self._owns_client = client is None
 
@@ -46,8 +51,15 @@ class KIS(BaseBroker):
                 factory = self._factory or import_module("Pykis._pykis").PyKis
                 if not self._options and self._factory is None:
                     raise ConfigurationError("Supply KIS client_options or an authenticated client")
-                options = {**self._options, "realtime": False, "market_auto_sync": False, "late_init": True}
+                options = {
+                    **self._options,
+                    "virtual_account": self.virtual,
+                    "realtime": False,
+                    "market_auto_sync": False,
+                    "late_init": True,
+                }
                 self._client = factory(**options)
+            self._verify_mode(self._client)
             if self._scope is None:
                 self._scope = self._client.account(self._account)
             if self._api is None:
@@ -56,8 +68,22 @@ class KIS(BaseBroker):
             raise MissingDependencyError("Supply Pykis source and pykbroker[kis], or inject client and api") from None
         return self._scope, self._api
 
+    def _verify_mode(self, client: Any) -> None:
+        """An undisclosed or disagreeing mode refuses the call; it is never assumed."""
+        mode = getattr(getattr(client, "key", None), "virtual_account", None)
+        if not isinstance(mode, bool):
+            raise ConfigurationError("KIS client does not disclose its account mode; refusing")
+        if mode is not self.virtual:
+            raise ConfigurationError("KIS client account mode disagrees with the requested mode")
+
     def capabilities(self) -> Capabilities:
-        return Capabilities(supports_spot=True, supports_market_order=self.market == "KR", markets=(self.market,))
+        return Capabilities(
+            supports_spot=True,
+            supports_market_order=self.market == "KR",
+            supports_virtual_account=True,
+            virtual=self.virtual,
+            markets=(self.market,),
+        )
 
     def get_quote(self, symbol: str, *, market: str = "KR") -> Quote:
         symbol = self._symbol(symbol, market)
@@ -151,7 +177,7 @@ class KIS(BaseBroker):
                 response = api.get_open_orders_overseas_all(kis_account=scope, market=VENUES[self.venue][1])
                 rows = check_response(response, "kis")["output"]
                 return [
-                    Order(id=str(row["odno"]), symbol=row["pdno"], market="US", status="unknown")
+                    Order(id=str(row["odno"]), symbol=row["pdno"], market="US", status="unknown", virtual=self.virtual)
                     for row in rows
                     if symbol is None or row["pdno"] == symbol
                 ]
@@ -171,6 +197,7 @@ class KIS(BaseBroker):
                         symbol=code,
                         remaining=remaining,
                         status="open" if remaining > 0 else "unknown",
+                        virtual=self.virtual,
                     )
                 )
             return result
@@ -218,6 +245,7 @@ class KIS(BaseBroker):
             price=request.price,
             status="accepted",
             market=request.market,
+            virtual=self.virtual,
         )
 
     def close(self) -> None:

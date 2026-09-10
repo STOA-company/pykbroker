@@ -60,14 +60,24 @@ def check_response(value: Any, broker: str) -> Any:
 
 class BaseBroker:
     broker_code = "base"
+    # Mock (virtual) trading exists only where the vendor offers a separate domain.
+    supports_virtual = False
 
-    def __init__(self, *, account: str, safety: OrderSafety | None = None, market: str = "KR") -> None:
+    def __init__(
+        self, *, account: str, safety: OrderSafety | None = None, market: str = "KR", virtual: bool = False
+    ) -> None:
         if not isinstance(account, str) or not account.strip():
             raise ConfigurationError("Supply an account identifier")
         if market not in {"KR", "US"}:
             raise NotSupportedError("Supported stock markets: KR, US")
+        # Truthy values never promote or demote an account mode.
+        if not isinstance(virtual, bool):
+            raise ConfigurationError("virtual must be a boolean; the account mode is never inferred")
+        if virtual and not self.supports_virtual:
+            raise NotSupportedError("This broker has no mock (virtual) trading domain")
         self._account = account
         self.market = market
+        self.virtual = virtual
         self.safety = safety if safety is not None else OrderSafety()
         self._closed = False
 
@@ -89,7 +99,7 @@ class BaseBroker:
         return normalize_symbol(symbol) if market == "KR" else symbol
 
     def capabilities(self) -> Capabilities:
-        return Capabilities()
+        return Capabilities(supports_virtual_account=self.supports_virtual, virtual=self.virtual)
 
     def get_rules(self, symbol: str) -> Rules:
         if self.market == "KR":

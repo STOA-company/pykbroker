@@ -41,6 +41,8 @@ class Order(Model):
     remaining: Quantity | None = None
     status: OrderStatus = "unknown"
     market: str = "KR"
+    # True only when the submission went to a broker mock (virtual) account.
+    virtual: bool = False
 
 
 class CancelRequest(Model):

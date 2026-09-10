@@ -3,6 +3,7 @@
 import json
 import socket
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -52,6 +53,8 @@ def request_order():
 @pytest.fixture
 def kis(live_safety):
     client, api, scope = Mock(), Mock(), Mock()
+    # Recorded fixtures declare their account mode; pykbroker refuses an undisclosed one.
+    client.key = SimpleNamespace(virtual_account=False)
     client.account.return_value = scope
     scope.balance_all.return_value = load_fixture("kis", "balance")
     scope.amount.return_value = load_fixture("kis", "amount")
