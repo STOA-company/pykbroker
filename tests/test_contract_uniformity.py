@@ -14,7 +14,7 @@ from pykbroker.brokers.kis import KIS
 from pykbroker.brokers.toss import Toss
 from pykbroker.exceptions import ConfigurationError, NotSupportedError, SpecUnverifiedError
 from pykbroker.factory import BROKERS, create_broker
-from pykbroker.models import CancelRequest
+from pykbroker.models import CancelRequest, OrderRequest
 
 SHIPPED = [KIS, DBFI, Toss]
 LOCKED = [("ls", "LS"), ("kiwoom", "Kiwoom"), ("nh", "NH"), ("kb", "KB")]
@@ -118,3 +118,57 @@ def test_locked_brokers_are_not_reachable_through_the_factory(module_name, class
 
 def test_the_factory_ships_exactly_the_verified_three():
     assert set(BROKERS) == {"kis", "dbfi", "toss"}
+
+
+# --- B′-0: 거래소 선언 정합 --------------------------------------------------
+#
+# A′ 2라운드는 `requires_venue` 를 «선언만»에서 «강제»로 올렸다(tests/test_venue_required.py).
+# 그 순간, capabilities() 를 손으로 다시 적으면서 venues 를 빠뜨린 브로커는 venue 를 채운
+# 주문이 **전부** NotSupportedError 가 된다 — Toss 가 정확히 그랬다(국내 주문 전멸).
+# 선언과 검증은 어긋나면 안 된다: 선언한 거래소는 반드시 통과하고, 선언하지 않은 이름은
+# 반드시 막힌다. 정합을 재는 쪽은 브로커별 하드코딩이 아니라 capabilities() 자신이다.
+
+KR_DEFAULT_VENUE = "KRX"
+
+
+def _kr_order(**kwargs):
+    return OrderRequest(
+        symbol="005930", side="buy", quantity=1, price="70000", client_key="venue-uniformity", **kwargs
+    )
+
+
+@pytest.mark.parametrize("broker_type", SHIPPED)
+def test_a_kr_broker_declares_the_exchange_its_orders_name(broker_type, live_safety):
+    caps = _built(broker_type, safety=live_safety).capabilities()
+    assert caps.markets == ("KR",)
+    assert KR_DEFAULT_VENUE in caps.venues
+
+
+@pytest.mark.parametrize("broker_type", SHIPPED)
+def test_every_declared_venue_passes_the_validation_that_reads_it(broker_type, live_safety):
+    broker = _built(broker_type, safety=live_safety)
+    caps = broker.capabilities()
+    assert caps.venues, "거래소 선언이 비면 venue 를 채운 주문이 전부 거절된다"
+    for venue in caps.venues:
+        broker._validate_order(_kr_order(venue=venue))
+
+
+@pytest.mark.parametrize("broker_type", SHIPPED)
+def test_the_nxt_claim_and_the_nxt_declaration_agree(broker_type, live_safety):
+    caps = _built(broker_type, safety=live_safety).capabilities()
+    assert caps.supports_nxt == ("NXT" in caps.venues)
+
+
+@pytest.mark.parametrize("broker_type", SHIPPED)
+@pytest.mark.parametrize("bogus", ["KOSPI", "krx", "KRX ", " "])
+def test_an_undeclared_exchange_is_still_refused(broker_type, bogus, live_safety):
+    """우회 1: «국내니까 괜찮다»로 선언 밖의 이름을 통과시키지 않는다."""
+    with pytest.raises(NotSupportedError):
+        _built(broker_type, safety=live_safety)._validate_order(_kr_order(venue=bogus))
+
+
+@pytest.mark.parametrize("broker_type", [KIS, Toss])
+def test_nxt_is_refused_where_it_is_not_declared(broker_type, live_safety):
+    """우회 2: NXT 를 지원한다고 선언하지 않은 브로커에 이름으로 밀어 넣어도 나가지 않는다."""
+    with pytest.raises(NotSupportedError):
+        _built(broker_type, safety=live_safety)._validate_order(_kr_order(venue="NXT"))

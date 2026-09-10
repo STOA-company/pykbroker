@@ -130,13 +130,20 @@ class Toss(BaseBroker):
             return self._call(lambda: self._loop.run_until_complete(invoke()))
 
     def capabilities(self) -> Capabilities:
-        return Capabilities(
-            supports_spot=True,
-            supports_market_order=self.market == "KR",
-            supports_single_order_cancel=True,
-            supports_order_history=True,
-            realtime_open_orders=True,
-            markets=(self.market,),
+        # 🚨 B′-0: 거래소 선언(`venues`)은 손으로 다시 적지 않고 base 에서 받아 확장한다.
+        # 이 메서드가 base 를 통째로 대체하면서 `venues` 를 빠뜨렸고, A′ 2라운드가
+        # `requires_venue` 를 강제로 올린 뒤부터 venue 를 채운 국내 주문이 전부
+        # NotSupportedError("Unknown venue…") 로 죽었다(_common.py:_validate_order).
+        # 선언은 검증이 읽는 값이다 — 두 벌로 적으면 반드시 한 벌이 낡는다.
+        return super().capabilities().model_copy(
+            update=dict(
+                supports_spot=True,
+                supports_market_order=self.market == "KR",
+                supports_single_order_cancel=True,
+                supports_order_history=True,
+                realtime_open_orders=True,
+                markets=(self.market,),
+            )
         )
 
     def get_quote(self, symbol: str, *, market: str = "KR") -> Quote:
