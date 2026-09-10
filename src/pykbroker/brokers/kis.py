@@ -1,15 +1,21 @@
 """KIS translation over the optional Pykis client and domestic/overseas helpers."""
 
 from collections.abc import Callable, Mapping
+from datetime import date, datetime
 from decimal import Decimal
 from importlib import import_module
 from typing import Any
 
 from pykbroker.exceptions import ConfigurationError, InvalidResponseError, MissingDependencyError, NotSupportedError
-from pykbroker.models import Balance, Capabilities, Order, OrderRequest, Position, Quote
+from pykbroker.models import Balance, Capabilities, Order, OrderRequest, Position, Quote, Rules
+from pykbroker.rules.kr import equity_rules
 from pykbroker.safety.gate import OrderSafety
 
 from ._common import BaseBroker, check_response, decimal, field, optional_price, whole
+
+# KIS 국내주식 현재가 시세 output.iscd_stat_cls_code — 58 is a trading halt.
+# A response without the field says nothing, so the halt stays unknown rather than false.
+KR_HALT_CODES = {"58"}
 
 VENUES = {"NASDAQ": ("NAS", "NASD"), "NYSE": ("NYS", "NYSE"), "AMEX": ("AMS", "AMEX")}
 
@@ -31,8 +37,9 @@ class KIS(BaseBroker):
         venue: str | None = None,
         cash_provider: Callable[[Any], Decimal] | None = None,
         virtual: bool = False,
+        halt_provider: Callable[[str], bool] | None = None,
     ) -> None:
-        super().__init__(account=account, safety=safety, market=market, virtual=virtual)
+        super().__init__(account=account, safety=safety, market=market, virtual=virtual, halt_provider=halt_provider)
         if market == "US" and venue not in VENUES:
             raise ConfigurationError("US KIS requires NASDAQ, NYSE, or AMEX venue")
         self.venue = venue
@@ -84,6 +91,38 @@ class KIS(BaseBroker):
             virtual=self.virtual,
             markets=(self.market,),
         )
+
+    def get_rules(
+        self,
+        symbol: str,
+        *,
+        now: datetime | None = None,
+        trading_day: Callable[[date], bool] | None = None,
+    ) -> Rules:
+        """KR rules come from the live price row: tick, the daily band, and the halt flag."""
+        if self.market != "KR":
+            return super().get_rules(symbol, now=now, trading_day=trading_day)
+        code = self._symbol(symbol, "KR")
+
+        def read() -> Rules:
+            scope, api = self._connect()
+            output = check_response(api.get_price_domestic(kis_account=scope, stock_code=code), "kis")["output"]
+            status = field(output, "iscd_stat_cls_code")
+            halted = (
+                str(status).strip() in KR_HALT_CODES
+                if status is not None and str(status).strip()
+                else self._halt_from_provider(code)
+            )
+            return equity_rules(
+                code,
+                price=decimal(field(output, "stck_prpr")),
+                prev_close=optional_price(field(output, "stck_sdpr")),
+                halted=halted,
+                now=now,
+                trading_day=trading_day,
+            )
+
+        return self._call(read)
 
     def get_quote(self, symbol: str, *, market: str = "KR") -> Quote:
         symbol = self._symbol(symbol, market)

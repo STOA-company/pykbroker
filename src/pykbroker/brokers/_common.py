@@ -1,6 +1,7 @@
 """Shared lifecycle and safety boundary; adapters only translate vendor calls."""
 
 from collections.abc import Callable, Mapping
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, TypeVar
 
@@ -15,7 +16,7 @@ from pykbroker.exceptions import (
     TransportError,
 )
 from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
-from pykbroker.rules.kr import equity_rules, normalize_symbol
+from pykbroker.rules.kr import LOT, equity_rules, normalize_symbol
 from pykbroker.safety.gate import OrderSafety
 
 T = TypeVar("T")
@@ -64,7 +65,13 @@ class BaseBroker:
     supports_virtual = False
 
     def __init__(
-        self, *, account: str, safety: OrderSafety | None = None, market: str = "KR", virtual: bool = False
+        self,
+        *,
+        account: str,
+        safety: OrderSafety | None = None,
+        market: str = "KR",
+        virtual: bool = False,
+        halt_provider: Callable[[str], bool] | None = None,
     ) -> None:
         if not isinstance(account, str) or not account.strip():
             raise ConfigurationError("Supply an account identifier")
@@ -75,9 +82,12 @@ class BaseBroker:
             raise ConfigurationError("virtual must be a boolean; the account mode is never inferred")
         if virtual and not self.supports_virtual:
             raise NotSupportedError("This broker has no mock (virtual) trading domain")
+        if halt_provider is not None and not callable(halt_provider):
+            raise ConfigurationError("halt_provider must be callable")
         self._account = account
         self.market = market
         self.virtual = virtual
+        self._halt_provider = halt_provider
         self.safety = safety if safety is not None else OrderSafety()
         self._closed = False
 
@@ -101,10 +111,33 @@ class BaseBroker:
     def capabilities(self) -> Capabilities:
         return Capabilities(supports_virtual_account=self.supports_virtual, virtual=self.virtual)
 
-    def get_rules(self, symbol: str) -> Rules:
+    def _halt_from_provider(self, symbol: str) -> bool | None:
+        """A caller-supplied halt answer fills a venue silence; anything but a bool stays unknown."""
+        if self._halt_provider is None:
+            return None
+        answer = self._halt_provider(symbol)
+        return answer if isinstance(answer, bool) else None
+
+    def get_rules(
+        self,
+        symbol: str,
+        *,
+        now: datetime | None = None,
+        trading_day: Callable[[date], bool] | None = None,
+    ) -> Rules:
         if self.market == "KR":
-            return equity_rules(symbol)
-        return Rules(symbol=symbol, market="US", currency="USD", timezone="America/New_York")
+            return equity_rules(symbol, halted=self._halt_from_provider(symbol), now=now, trading_day=trading_day)
+        # US ticks are venue- and price-dependent and the daily band is intraday (LULD): unknown, not absent.
+        return Rules(
+            symbol=symbol,
+            market="US",
+            currency="USD",
+            timezone="America/New_York",
+            lot=LOT,
+            regular_open="09:30",
+            regular_close="16:00",
+            halted=self._halt_from_provider(symbol),
+        )
 
     def _validate_order(self, request: OrderRequest | CancelRequest) -> None:
         self._symbol(request.symbol, request.market)
@@ -168,8 +201,14 @@ class BaseBroker:
     def positions(self) -> list[Position]:
         return self.get_positions()
 
-    def rules(self, symbol: str) -> Rules:
-        return self.get_rules(symbol)
+    def rules(
+        self,
+        symbol: str,
+        *,
+        now: datetime | None = None,
+        trading_day: Callable[[date], bool] | None = None,
+    ) -> Rules:
+        return self.get_rules(symbol, now=now, trading_day=trading_day)
 
     def place(self, request: OrderRequest) -> Order:
         return self.place_order(request)
