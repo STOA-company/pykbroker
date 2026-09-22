@@ -106,15 +106,15 @@ class _TossBridge:
         self._dry_run = dry_run
         settings = settings_type(dry_run=dry_run, live_trading_enabled=live_trading_enabled)
         credentials = credentials_type(**credentials_options)
-        transport = transport_type(settings)
+        self._transport = transport_type(settings)
         # store 가 None 이면 SDK 기본 메모리(TokenCache).
-        manager = token_manager_type(credentials, transport, store=token_store)
+        manager = token_manager_type(credentials, self._transport, store=token_store)
         # account_seq 를 클라이언트에 묶으면 계좌 API 에 X-Tossinvest-Account 가 붙는다.
         self._client = client_type(
             credentials,
             settings,
             account_seq=account_seq,
-            transport=transport,
+            transport=self._transport,
             token_manager=manager,
         )
         self._context = context_type(account_seq=account_seq, dry_run=dry_run)
@@ -159,6 +159,7 @@ class _TossBridge:
 
     async def aclose(self):
         await self._client.aclose()
+        await self._transport.aclose()
 
 
 class Toss(BaseBroker):

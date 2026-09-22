@@ -173,6 +173,7 @@ def test_recorded_fixture_attaches_account_header_and_reuses_token_store():
 
     posts = []
     seen = []
+    clients = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
@@ -200,7 +201,9 @@ def test_recorded_fixture_attaches_account_header_and_reuses_token_store():
     def client_factory(*args, **kwargs):
         kwargs = dict(kwargs)
         kwargs["transport"] = transport
-        return real_client(*args, **kwargs)
+        client = real_client(*args, **kwargs)
+        clients.append(client)
+        return client
 
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(http_mod.httpx, "AsyncClient", client_factory)
@@ -220,6 +223,8 @@ def test_recorded_fixture_attaches_account_header_and_reuses_token_store():
         monkeypatch.undo()
         if broker is not None:
             broker.close()
+    assert clients
+    assert all(client.is_closed for client in clients)
     assert posts == ["/oauth2/token"]
     assert store.sets == 1
     assert store.get()[0] == "fixture-token"
