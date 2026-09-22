@@ -22,7 +22,7 @@ class LoopSDK:
         return {"asks": [{"price": "70100"}], "bids": [{"price": "69900"}]}
 
     async def get_buying_power(self, currency):
-        return {"cashBuyingPower": "100000"}
+        return {"currency": currency, "cashBuyingPower": "100000"}
 
     async def get_positions(self):
         return {
@@ -71,7 +71,10 @@ class LoopSDK:
 
 
 def test_toss_same_loop_reads_orders_and_close(live_safety, request_order):
-    broker = Toss(account="fixture", account_seq=1, sdk_factory=LoopSDK, safety=live_safety)
+    # 기본 sdk_dry_run 은 벤더 제출을 막는다. 이 테스트는 제출 번역만 본다.
+    broker = Toss(
+        account="fixture", account_seq=1, sdk_factory=LoopSDK, safety=live_safety, sdk_dry_run=False
+    )
     for _ in range(3):
         assert broker.get_quote("005930").last == Decimal("70000")
     assert broker.get_balance().cash_available == Decimal("100000")
