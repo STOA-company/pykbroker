@@ -3,13 +3,15 @@
 import asyncio
 import threading
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, is_dataclass
+from datetime import datetime
 from importlib import import_module
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from pykbroker.exceptions import (
     BrokerRejectedError,
     ConfigurationError,
+    DryRunError,
     InvalidResponseError,
     MissingDependencyError,
     NotSupportedError,
@@ -18,11 +20,67 @@ from pykbroker.exceptions import (
 from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote
 from pykbroker.safety.gate import OrderSafety
 from pykbroker.safety.idempotency import order_key
+from pykbroker.safety.rate_limit import RateLimiter, credential_rate_limiter
 
 from ._common import BaseBroker, decimal, optional_price, whole
 
+# SDK 호출 이름 → TOKEN_BUCKETS 그룹. 값은 toss_call_rates() 가 SDK 에서 읽는다.
+_METHOD_GROUPS = {
+    "get_prices": "MARKET_DATA",
+    "get_orderbook": "MARKET_DATA",
+    "get_positions": "ASSET",
+    "get_buying_power": "ORDER_INFO",
+    "get_sellable_quantity": "ORDER_INFO",
+    "list_open_orders": "ORDER_HISTORY",
+    "submit_order": "ORDER",
+    "cancel_order": "ORDER",
+}
+
+# toss-openapi 가 없을 때의 표. 설치돼 있으면 TOKEN_BUCKETS 가 이 값을 덮는다.
+_FALLBACK_TPS = {
+    "AUTH": 5.0,
+    "ACCOUNT": 1.0,
+    "ASSET": 5.0,
+    "ORDER": 10.0,
+    "ORDER_INFO": 6.0,
+    "ORDER_HISTORY": 5.0,
+    "MARKET_DATA": 15.0,
+}
+_KST = ZoneInfo("Asia/Seoul")
+
+
+def toss_call_rates() -> dict[str, float]:
+    """SDK TOKEN_BUCKETS 의 평시 tps. 패키지가 없으면 같은 표의 사본."""
+    try:
+        buckets = import_module("toss_openapi.transport.retry").TOKEN_BUCKETS
+    except ImportError:
+        return dict(_FALLBACK_TPS)
+    return {name: float(limit.tps) for name, limit in buckets.items()}
+
+
+def _order_info_peak_tps() -> float:
+    try:
+        limit = import_module("toss_openapi.transport.retry").TOKEN_BUCKETS["ORDER_INFO"]
+    except ImportError:
+        return 3.0
+    return float(limit.peak_tps if limit.peak_tps is not None else limit.tps)
+
+
+def _in_order_info_peak(now: datetime) -> bool:
+    """ORDER_INFO 피크 창 09:00–09:10 KST. 끝 시각은 포함하지 않는다."""
+    local = now.astimezone(_KST)
+    start = local.replace(hour=9, minute=0, second=0, microsecond=0)
+    end = local.replace(hour=9, minute=10, second=0, microsecond=0)
+    return start <= local < end
+
 
 class _TossBridge:
+    """v1.2.17 클라이언트. 계좌 헤더와 TokenStore 는 여기서 SDK 로 넘긴다.
+
+    TokenStore.get/set 은 동기다. TokenManager 가 이 브리지의 이벤트 루프 안에서
+    그 메서드를 그대로 호출한다(프로세스 간 락은 store 구현이 잡는다).
+    """
+
     def __init__(
         self,
         *,
@@ -30,57 +88,77 @@ class _TossBridge:
         credentials_options: Mapping[str, Any],
         dry_run: bool = True,
         live_trading_enabled: bool = False,
+        token_store: Any | None = None,
     ) -> None:
         try:
             context_type = import_module("toss_openapi.broker.account_context").AccountContext
-            broker_type = import_module("toss_openapi.broker.multi_account").MultiAccountTossBroker
+            guard_type = import_module("toss_openapi.broker.order_guard").OrderGuard
             settings_type = import_module("toss_openapi.config").TossSettings
             credentials_type = import_module("toss_openapi.credentials").TossCredentials
+            client_type = import_module("toss_openapi.client").TossOpenApiClient
+            token_manager_type = import_module("toss_openapi.auth.token_manager").TokenManager
+            transport_type = import_module("toss_openapi.transport.http").HttpTransport
             self._models = import_module("toss_openapi.models.order")
         except ImportError:
             raise MissingDependencyError(
                 "Supply toss_openapi source and pykbroker[toss], or inject sdk_factory"
             ) from None
-        self._seq, self._dry_run = account_seq, dry_run
-        self._broker = broker_type(
-            credentials_type(**credentials_options),
-            settings_type(dry_run=dry_run, live_trading_enabled=live_trading_enabled),
-            accounts=[context_type(account_seq=account_seq, dry_run=dry_run)],
+        self._dry_run = dry_run
+        settings = settings_type(dry_run=dry_run, live_trading_enabled=live_trading_enabled)
+        credentials = credentials_type(**credentials_options)
+        transport = transport_type(settings)
+        # store 가 None 이면 SDK 기본 메모리(TokenCache).
+        manager = token_manager_type(credentials, transport, store=token_store)
+        # account_seq 를 클라이언트에 묶으면 계좌 API 에 X-Tossinvest-Account 가 붙는다.
+        self._client = client_type(
+            credentials,
+            settings,
+            account_seq=account_seq,
+            transport=transport,
+            token_manager=manager,
         )
+        self._context = context_type(account_seq=account_seq, dry_run=dry_run)
+        self._guard = guard_type(settings)
 
     async def get_positions(self):
-        return await self._broker.get_positions(account_seq=self._seq)
+        return await self._client.account.get_holdings()
 
     async def get_buying_power(self, currency):
-        return await self._broker.get_buying_power(currency, account_seq=self._seq)
+        return await self._client.order.get_buying_power(currency)
 
     async def get_sellable_quantity(self, symbol):
-        return await self._broker.client_for(account_seq=self._seq).order.get_sellable_quantity(symbol)
+        return await self._client.order.get_sellable_quantity(symbol)
 
     async def get_prices(self, symbols):
-        return await self._broker.market_data.get_prices(symbols)
+        return await self._client.market_data.get_prices(symbols)
 
     async def get_orderbook(self, symbol):
-        return await self._broker.market_data.get_orderbook(symbol)
+        return await self._client.market_data.get_orderbook(symbol)
 
     async def list_open_orders(self, symbol=None):
-        return await self._broker.list_orders(self._models.OrderStatusFilter.OPEN, account_seq=self._seq, symbol=symbol)
+        return await self._client.order.list_orders(self._models.OrderStatusFilter.OPEN, symbol=symbol)
 
     async def submit_order(self, **kwargs):
+        # 드라이런은 HTTP 로 내려가지 않는다. 가드를 지우면 기록 픽스처 테스트가 빨강.
+        if self._dry_run:
+            return {"submitted": False, "status": "DRY_RUN"}
         kwargs["side"] = self._models.OrderSide(kwargs["side"])
         kwargs["order_type"] = self._models.OrderType(kwargs["order_type"])
         kwargs["time_in_force"] = self._models.TimeInForce(kwargs["time_in_force"])
-        result = await self._broker.submit_order(
-            self._models.OrderCreateRequest(**kwargs), account_seq=self._seq, dry_run=self._dry_run
-        )
-        return asdict(result) if is_dataclass(result) else result if isinstance(result, dict) else vars(result)
+        order = self._models.OrderCreateRequest(**kwargs)
+        self._guard.check_create(order, account=self._context)
+        response = await self._client.order.create_order(order)
+        return {"submitted": True, "order_id": response.order_id, "status": "SUBMITTED"}
 
     async def cancel_order(self, order_id):
-        result = await self._broker.cancel_order(order_id, account_seq=self._seq, dry_run=self._dry_run)
-        return asdict(result) if is_dataclass(result) else result if isinstance(result, dict) else vars(result)
+        if self._dry_run:
+            return {"submitted": False, "status": "DRY_RUN", "order_id": order_id}
+        self._guard.check_live_allowed(self._context)
+        result = await self._client.order.cancel_order(order_id)
+        return {"submitted": True, "status": "CANCELLED", "order_id": result.order_id}
 
     async def aclose(self):
-        await self._broker.aclose()
+        await self._client.aclose()
 
 
 class Toss(BaseBroker):
@@ -99,6 +177,8 @@ class Toss(BaseBroker):
         sdk_live_trading_enabled: bool = False,
         virtual: bool = False,
         halt_provider: Callable[[str], bool] | None = None,
+        token_store: Any | None = None,
+        rate_limiter: RateLimiter | None = None,
     ) -> None:
         # Toss has no separate mock-trading domain, so `virtual=True` is refused upstream.
         super().__init__(account=account, safety=safety, market=market, virtual=virtual, halt_provider=halt_provider)
@@ -115,7 +195,14 @@ class Toss(BaseBroker):
             credentials_options=dict(credentials_options or {}),
             dry_run=sdk_dry_run,
             live_trading_enabled=sdk_live_trading_enabled,
+            token_store=token_store,
         )
+        credential = str((credentials_options or {}).get("api_key") or account)
+        if rate_limiter is None:
+            rates = {name: toss_call_rates()[name] for name in set(_METHOD_GROUPS.values())}
+            rates["ORDER_INFO_PEAK"] = _order_info_peak_tps()
+            rate_limiter = credential_rate_limiter("toss", credential, rates)
+        self._limiter = rate_limiter
         self._sdk = None
         self._loop = None
         self._lock = threading.RLock()
@@ -128,6 +215,12 @@ class Toss(BaseBroker):
             pass
         else:
             raise ConfigurationError("Use asyncio.to_thread for synchronous Toss methods from an event loop")
+
+        group = _METHOD_GROUPS.get(method)
+        if group is not None:
+            if group == "ORDER_INFO" and _in_order_info_peak(datetime.now(_KST)):
+                group = "ORDER_INFO_PEAK"
+            self._limiter.wait(group)
 
         async def invoke():
             if self._sdk is None:
@@ -180,13 +273,15 @@ class Toss(BaseBroker):
 
     def get_balance(self) -> Balance:
         def read():
-            currency = "KRW" if self.market == "KR" else "USD"
+            # US 는 생성 시점에 잠겨 있다. 매수가능은 항상 buying-power KRW.
             positions = self._run("get_positions")
-            cash = self._run("get_buying_power", currency)
+            cash = self._run("get_buying_power", "KRW")
+            if cash.get("currency") != "KRW":
+                raise InvalidResponseError("Toss buying power must be quoted in KRW")
             return Balance(
-                currency=currency,
+                currency="KRW",
                 cash_available=decimal(cash["cashBuyingPower"]),
-                position_value=decimal(positions["marketValue"]["amount"][currency.lower()]),
+                position_value=decimal(positions["marketValue"]["amount"]["krw"]),
             )
 
         return self._call(read)
@@ -225,6 +320,7 @@ class Toss(BaseBroker):
             states = {
                 "PENDING": "open",
                 "OPEN": "open",
+                "PARTIAL_FILLED": "partial",
                 "PARTIALLY_FILLED": "partial",
                 "FILLED": "filled",
                 "CANCELED": "cancelled",
@@ -250,6 +346,9 @@ class Toss(BaseBroker):
         # 종가(CLS) 주문은 벤더 해외 세션 전용이고, 그 해외 경로는 B′2-2 로 잠겨 있다.
         if request.order_type == "close":
             raise NotSupportedError("Toss close orders need the unverified overseas session")
+        # 기본 드라이런. 이 가드를 지우면 안전 게이트가 열려 있어도 벤더 제출 테스트가 빨강.
+        if self._options["dry_run"]:
+            raise DryRunError("dry_run: Toss live submission is disabled")
         symbol = self._symbol(request.symbol, request.market)
         client_id = order_key(
             account=self._account,
