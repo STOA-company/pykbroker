@@ -27,14 +27,14 @@
 - Time in force is DAY; client order ID is derived from the intent key.
 - The bridge uses SDK transport for one POST with `retryable=False`.
 - It bypasses `OrderClient._call` because that wrapper replays 401 token-revoked.
-- HTTP 408 and 409 request-in-progress remain uncertain, not rejected.
+- HTTP 408, 409 request-in-progress and any idempotency-key-conflict remain uncertain.
 - A 4xx Toss API response becomes `TossRejectedError` with sanitized `code`.
 - A 5xx or transport error remains uncertain and requires reconciliation.
 - Open order lookup uses SDK `list_orders`, checks pagination, maps status.
 - Cancellation requires the exact full remaining quantity from that lookup.
 - Cancel also uses SDK transport for one POST with `retryable=False`.
 - Cancel response only acknowledges a new order ID; final cancel stays unconfirmed.
-- SDK dry run blocks both submission and cancellation before HTTP.
+- SDK dry run blocks submission and cancellation before any SDK call.
 - The SDK also requires `TOSS_LIVE_TRADING_ENABLED=true` at runtime.
 - No credential, token, raw vendor error body or account number is logged.
 - All tests use injected clients or SDK objects; no network call is made.

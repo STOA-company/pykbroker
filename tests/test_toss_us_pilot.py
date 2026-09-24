@@ -182,14 +182,15 @@ def test_us_dry_run_blocks_submit_and_cancel():
     with pytest.raises(DryRunError):
         broker._cancel_order(CancelRequest(order_id="o-1", symbol="F", quantity=1,
                                                    market="US", client_key="cancel-1"))
-    assert not any(call[0] in {"submit_order", "cancel_order"} for call in made["sdk"].calls)
+    assert "sdk" not in made
 
 
 @pytest.mark.parametrize(
     ("status", "code", "error_type"),
     [(400, "E123", TossRejectedError), (408, "request-timeout", TransportError),
      (409, "request-in-progress", TransportError),
-     (409, "idempotency-key-conflict", TossRejectedError),
+     (409, "idempotency-key-conflict", TransportError),
+     (422, "idempotency-key-conflict", TransportError),
      (401, "token-revoked", TossRejectedError), (500, "internal-error", TransportError)],
 )
 def test_one_post_and_correct_outcome_for_vendor_error(status, code, error_type):

@@ -96,7 +96,8 @@ def test_toss_same_loop_reads_orders_and_close(live_safety, request_order):
 
 
 def test_toss_partial_cancel_not_silently_expanded(live_safety):
-    broker = Toss(account="fixture", account_seq=1, sdk_factory=LoopSDK, safety=live_safety)
+    broker = Toss(account="fixture", account_seq=1, sdk_factory=LoopSDK, safety=live_safety,
+                  sdk_dry_run=False)
     with broker, pytest.raises(ConfigurationError, match="full remaining"):
         broker.cancel_order(CancelRequest(order_id="42", symbol="005930", quantity=2, client_key="cancel"))
     assert broker._sdk.calls == []

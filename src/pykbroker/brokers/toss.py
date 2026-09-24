@@ -160,7 +160,8 @@ class _TossBridge:
         )
 
     def _raise_write_error(self, exc):
-        if exc.status_code == 408 or (exc.status_code == 409 and exc.code == "request-in-progress"):
+        if (exc.status_code == 408 or (exc.status_code == 409 and exc.code == "request-in-progress")
+                or exc.code == "idempotency-key-conflict"):
             raise TransportError("Toss write outcome is uncertain; reconcile before another order") from None
         if 400 <= exc.status_code < 500:
             raw_code = exc.code
@@ -487,6 +488,8 @@ class Toss(BaseBroker):
         )
 
     def _cancel_order(self, request: CancelRequest) -> Order:
+        if self._options["dry_run"]:
+            raise DryRunError("dry_run: Toss live cancellation is disabled")
         # Vendor endpoint cancels all remaining quantity of one order.
         orders = self.list_orders(request.symbol)
         matching = [order for order in orders if order.id == request.order_id]
@@ -494,8 +497,6 @@ class Toss(BaseBroker):
             raise InvalidResponseError("Cannot establish the requested Toss order's remaining quantity")
         if request.quantity != matching[0].quantity - matching[0].filled:
             raise ConfigurationError("Toss cancellation requires the full remaining quantity")
-        if self._options["dry_run"]:
-            raise DryRunError("dry_run: Toss live cancellation is disabled")
         response = self._run("cancel_order", request.order_id)
         if response.get("status") not in {"CANCELLED", "CANCELED", "CANCEL_SUBMITTED"}:
             raise BrokerRejectedError("Toss cancellation was not acknowledged")
