@@ -29,6 +29,14 @@ class BrokerRejectedError(BrokerError):
     """The vendor explicitly rejected the request."""
 
 
+class TossRejectedError(BrokerRejectedError):
+    """Toss 4xx rejection with a sanitized vendor code only."""
+
+    def __init__(self, code: str | None = None) -> None:
+        self.code = code
+        super().__init__("Toss rejected the request")
+
+
 class TransportError(BrokerError):
     """Outcome may be unknown; reconcile before any new submission."""
 
