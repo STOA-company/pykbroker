@@ -13,6 +13,7 @@ from pykbroker.exceptions import (
     NotSupportedError,
     SpecUnverifiedError,
     TossRejectedError,
+    TransportError,
 )
 from pykbroker.models import CancelRequest, OrderRequest
 
@@ -181,34 +182,96 @@ def test_us_dry_run_blocks_submit_and_cancel():
     with pytest.raises(DryRunError):
         broker._cancel_order(CancelRequest(order_id="o-1", symbol="F", quantity=1,
                                                    market="US", client_key="cancel-1"))
-    assert "sdk" not in made
+    assert not any(call[0] in {"submit_order", "cancel_order"} for call in made["sdk"].calls)
 
 
-def test_vendor_4xx_code_is_preserved_without_exposing_message():
+@pytest.mark.parametrize(
+    ("status", "code", "error_type"),
+    [(400, "E123", TossRejectedError), (408, "request-timeout", TransportError),
+     (409, "request-in-progress", TransportError),
+     (409, "idempotency-key-conflict", TossRejectedError),
+     (401, "token-revoked", TossRejectedError), (500, "internal-error", TransportError)],
+)
+def test_one_post_and_correct_outcome_for_vendor_error(status, code, error_type):
     pytest.importorskip("toss_openapi")
     from toss_openapi.errors import TossApiError
     from toss_openapi.models import order as order_models
 
     from pykbroker.brokers.toss import _TossBridge
 
-    class RejectingOrder:
+    class RejectingTransport:
         calls = 0
 
-        async def create_order(self, request):
+        async def request(self, method, path, **kwargs):
             self.calls += 1
-            raise TossApiError("private vendor detail", status_code=400, code="E123")
+            assert (method, path, kwargs["retryable"]) == ("POST", "/api/v1/orders", False)
+            assert kwargs["json_body"]["timeInForce"] == "DAY"
+            raise TossApiError("private vendor detail", status_code=status, code=code)
 
-    order_client = RejectingOrder()
+    class TokenManager:
+        calls = 0
+
+        async def get_access_token(self):
+            self.calls += 1
+            return "fixture-token"
+
+    transport = RejectingTransport()
+    manager = TokenManager()
     bridge = object.__new__(_TossBridge)
     bridge._dry_run = False
     bridge._models = order_models
     bridge._api_error_type = TossApiError
     bridge._guard = SimpleNamespace(check_create=lambda request, account: None)
     bridge._context = object()
-    bridge._client = SimpleNamespace(order=order_client)
-    with pytest.raises(TossRejectedError) as captured:
+    bridge._manager = manager
+    bridge._transport = transport
+    bridge._account_seq = 7
+    with pytest.raises(error_type) as captured:
         asyncio.run(bridge.submit_order(symbol="F", side="BUY", order_type="LIMIT", quantity="1",
                                         price="13.12", time_in_force="DAY", client_order_id="pilot-1"))
-    assert captured.value.code == "E123"
+    if error_type is TossRejectedError:
+        assert captured.value.code == code
     assert "private vendor detail" not in str(captured.value)
-    assert order_client.calls == 1
+    assert transport.calls == 1
+    assert manager.calls == 1
+
+
+def test_sdk_bridge_success_posts_once_and_cancel_is_only_acknowledged():
+    pytest.importorskip("toss_openapi")
+    from toss_openapi.errors import TossApiError
+    from toss_openapi.models import order as order_models
+
+    from pykbroker.brokers.toss import _TossBridge
+
+    class Transport:
+        def __init__(self):
+            self.calls = []
+
+        async def request(self, method, path, **kwargs):
+            self.calls.append((method, path, kwargs))
+            return {"orderId": "cancel-new" if path.endswith("/cancel") else "buy-1"}
+
+    class Manager:
+        async def get_access_token(self):
+            return "fixture-token"
+
+    transport = Transport()
+    bridge = object.__new__(_TossBridge)
+    bridge._dry_run = False
+    bridge._models = order_models
+    bridge._api_error_type = TossApiError
+    bridge._guard = SimpleNamespace(check_create=lambda request, account: None,
+                                    check_live_allowed=lambda account: None)
+    bridge._context = object()
+    bridge._manager = Manager()
+    bridge._transport = transport
+    bridge._account_seq = 7
+    submitted = asyncio.run(bridge.submit_order(symbol="F", side="BUY", order_type="LIMIT",
+                                                quantity="1", price="13.12", time_in_force="DAY",
+                                                client_order_id="pilot-1"))
+    acknowledged = asyncio.run(bridge.cancel_order("buy-1"))
+    assert submitted["order_id"] == "buy-1"
+    assert acknowledged == {"submitted": True, "status": "CANCEL_SUBMITTED", "order_id": "cancel-new"}
+    assert [path for method, path, _ in transport.calls] == ["/api/v1/orders", "/api/v1/orders/buy-1/cancel"]
+    assert all(kwargs["retryable"] is False and kwargs["account_seq"] == 7
+               for _, _, kwargs in transport.calls)

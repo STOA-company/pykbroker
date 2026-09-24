@@ -19,6 +19,7 @@ from pykbroker.exceptions import (
     NotSupportedError,
     SpecUnverifiedError,
     TossRejectedError,
+    TransportError,
 )
 from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote
 from pykbroker.safety.gate import OrderSafety
@@ -115,6 +116,8 @@ class _TossBridge:
         self._transport = transport_type(settings)
         # store 가 None 이면 SDK 기본 메모리(TokenCache).
         manager = token_manager_type(credentials, self._transport, store=token_store)
+        self._manager = manager
+        self._account_seq = account_seq
         # account_seq 를 클라이언트에 묶으면 계좌 API 에 X-Tossinvest-Account 가 붙는다.
         self._client = client_type(
             credentials,
@@ -147,6 +150,28 @@ class _TossBridge:
     async def list_open_orders(self, symbol=None):
         return await self._client.order.list_orders(self._models.OrderStatusFilter.OPEN, symbol=symbol)
 
+    async def _post_once(self, path: str, *, json_body=None):
+        # OrderClient._call refreshes a revoked token and replays even when
+        # retryable=False. Use the SDK transport directly for one-shot writes.
+        token = await self._manager.get_access_token()
+        return await self._transport.request(
+            "POST", path, json_body=json_body, token=token,
+            account_seq=self._account_seq, retryable=False,
+        )
+
+    def _raise_write_error(self, exc):
+        if exc.status_code == 408 or (exc.status_code == 409 and exc.code == "request-in-progress"):
+            raise TransportError("Toss write outcome is uncertain; reconcile before another order") from None
+        if 400 <= exc.status_code < 500:
+            raw_code = exc.code
+            code = (
+                raw_code
+                if isinstance(raw_code, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,40}", raw_code)
+                else None
+            )
+            raise TossRejectedError(code) from None
+        raise TransportError("Toss write outcome is uncertain; reconcile before another order") from None
+
     async def submit_order(self, **kwargs):
         # 드라이런은 HTTP 로 내려가지 않는다. 가드를 지우면 기록 픽스처 테스트가 빨강.
         if self._dry_run:
@@ -157,17 +182,10 @@ class _TossBridge:
         order = self._models.OrderCreateRequest(**kwargs)
         self._guard.check_create(order, account=self._context)
         try:
-            response = await self._client.order.create_order(order)
+            payload = await self._post_once("/api/v1/orders", json_body=order.to_payload())
         except self._api_error_type as exc:
-            if 400 <= exc.status_code < 500:
-                raw_code = exc.code
-                code = (
-                    raw_code
-                    if isinstance(raw_code, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,40}", raw_code)
-                    else None
-                )
-                raise TossRejectedError(code) from None
-            raise
+            self._raise_write_error(exc)
+        response = self._models.OrderResponse.from_payload(payload)
         return {"submitted": True, "order_id": response.order_id, "status": "SUBMITTED"}
 
     async def cancel_order(self, order_id):
@@ -175,18 +193,11 @@ class _TossBridge:
             return {"submitted": False, "status": "DRY_RUN", "order_id": order_id}
         self._guard.check_live_allowed(self._context)
         try:
-            result = await self._client.order.cancel_order(order_id)
+            payload = await self._post_once(f"/api/v1/orders/{order_id}/cancel")
         except self._api_error_type as exc:
-            if 400 <= exc.status_code < 500:
-                raw_code = exc.code
-                code = (
-                    raw_code
-                    if isinstance(raw_code, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,40}", raw_code)
-                    else None
-                )
-                raise TossRejectedError(code) from None
-            raise
-        return {"submitted": True, "status": "CANCELLED", "order_id": result.order_id}
+            self._raise_write_error(exc)
+        result = self._models.OrderOperationResponse.from_payload(payload)
+        return {"submitted": True, "status": "CANCEL_SUBMITTED", "order_id": result.order_id}
 
     async def aclose(self):
         await self._client.aclose()
@@ -476,8 +487,6 @@ class Toss(BaseBroker):
         )
 
     def _cancel_order(self, request: CancelRequest) -> Order:
-        if self._options["dry_run"]:
-            raise DryRunError("dry_run: Toss live cancellation is disabled")
         # Vendor endpoint cancels all remaining quantity of one order.
         orders = self.list_orders(request.symbol)
         matching = [order for order in orders if order.id == request.order_id]
@@ -485,6 +494,8 @@ class Toss(BaseBroker):
             raise InvalidResponseError("Cannot establish the requested Toss order's remaining quantity")
         if request.quantity != matching[0].quantity - matching[0].filled:
             raise ConfigurationError("Toss cancellation requires the full remaining quantity")
+        if self._options["dry_run"]:
+            raise DryRunError("dry_run: Toss live cancellation is disabled")
         response = self._run("cancel_order", request.order_id)
         if response.get("status") not in {"CANCELLED", "CANCELED", "CANCEL_SUBMITTED"}:
             raise BrokerRejectedError("Toss cancellation was not acknowledged")
