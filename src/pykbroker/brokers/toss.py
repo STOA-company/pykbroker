@@ -1,9 +1,11 @@
 """Toss asynchronous client, owned by one persistent loop per adapter."""
 
 import asyncio
+import re
 import threading
 from collections.abc import Callable, Mapping
 from datetime import datetime
+from decimal import Decimal
 from importlib import import_module
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -16,6 +18,8 @@ from pykbroker.exceptions import (
     MissingDependencyError,
     NotSupportedError,
     SpecUnverifiedError,
+    TossRejectedError,
+    TransportError,
 )
 from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote
 from pykbroker.safety.gate import OrderSafety
@@ -30,6 +34,7 @@ _METHOD_GROUPS = {
     "get_orderbook": "MARKET_DATA",
     "get_positions": "ASSET",
     "get_buying_power": "ORDER_INFO",
+    "get_exchange_rate": "MARKET_INFO",
     "get_sellable_quantity": "ORDER_INFO",
     "list_open_orders": "ORDER_HISTORY",
     "submit_order": "ORDER",
@@ -45,6 +50,7 @@ _FALLBACK_TPS = {
     "ORDER_INFO": 6.0,
     "ORDER_HISTORY": 5.0,
     "MARKET_DATA": 15.0,
+    "MARKET_INFO": 3.0,
 }
 _KST = ZoneInfo("Asia/Seoul")
 
@@ -99,6 +105,7 @@ class _TossBridge:
             token_manager_type = import_module("toss_openapi.auth.token_manager").TokenManager
             transport_type = import_module("toss_openapi.transport.http").HttpTransport
             self._models = import_module("toss_openapi.models.order")
+            self._api_error_type = import_module("toss_openapi.errors").TossApiError
         except ImportError:
             raise MissingDependencyError(
                 "Supply toss_openapi source and pykbroker[toss], or inject sdk_factory"
@@ -109,6 +116,8 @@ class _TossBridge:
         self._transport = transport_type(settings)
         # store 가 None 이면 SDK 기본 메모리(TokenCache).
         manager = token_manager_type(credentials, self._transport, store=token_store)
+        self._manager = manager
+        self._account_seq = account_seq
         # account_seq 를 클라이언트에 묶으면 계좌 API 에 X-Tossinvest-Account 가 붙는다.
         self._client = client_type(
             credentials,
@@ -126,6 +135,9 @@ class _TossBridge:
     async def get_buying_power(self, currency):
         return await self._client.order.get_buying_power(currency)
 
+    async def get_exchange_rate(self, base_currency, quote_currency):
+        return await self._client.market_info.get_exchange_rate(base_currency, quote_currency)
+
     async def get_sellable_quantity(self, symbol):
         return await self._client.order.get_sellable_quantity(symbol)
 
@@ -138,6 +150,29 @@ class _TossBridge:
     async def list_open_orders(self, symbol=None):
         return await self._client.order.list_orders(self._models.OrderStatusFilter.OPEN, symbol=symbol)
 
+    async def _post_once(self, path: str, *, json_body=None):
+        # OrderClient._call refreshes a revoked token and replays even when
+        # retryable=False. Use the SDK transport directly for one-shot writes.
+        token = await self._manager.get_access_token()
+        return await self._transport.request(
+            "POST", path, json_body=json_body, token=token,
+            account_seq=self._account_seq, retryable=False,
+        )
+
+    def _raise_write_error(self, exc):
+        if (exc.status_code == 408 or (exc.status_code == 409 and exc.code == "request-in-progress")
+                or exc.code == "idempotency-key-conflict"):
+            raise TransportError("Toss write outcome is uncertain; reconcile before another order") from None
+        if 400 <= exc.status_code < 500:
+            raw_code = exc.code
+            code = (
+                raw_code
+                if isinstance(raw_code, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,40}", raw_code)
+                else None
+            )
+            raise TossRejectedError(code) from None
+        raise TransportError("Toss write outcome is uncertain; reconcile before another order") from None
+
     async def submit_order(self, **kwargs):
         # 드라이런은 HTTP 로 내려가지 않는다. 가드를 지우면 기록 픽스처 테스트가 빨강.
         if self._dry_run:
@@ -147,15 +182,23 @@ class _TossBridge:
         kwargs["time_in_force"] = self._models.TimeInForce(kwargs["time_in_force"])
         order = self._models.OrderCreateRequest(**kwargs)
         self._guard.check_create(order, account=self._context)
-        response = await self._client.order.create_order(order)
+        try:
+            payload = await self._post_once("/api/v1/orders", json_body=order.to_payload())
+        except self._api_error_type as exc:
+            self._raise_write_error(exc)
+        response = self._models.OrderResponse.from_payload(payload)
         return {"submitted": True, "order_id": response.order_id, "status": "SUBMITTED"}
 
     async def cancel_order(self, order_id):
         if self._dry_run:
             return {"submitted": False, "status": "DRY_RUN", "order_id": order_id}
         self._guard.check_live_allowed(self._context)
-        result = await self._client.order.cancel_order(order_id)
-        return {"submitted": True, "status": "CANCELLED", "order_id": result.order_id}
+        try:
+            payload = await self._post_once(f"/api/v1/orders/{order_id}/cancel")
+        except self._api_error_type as exc:
+            self._raise_write_error(exc)
+        result = self._models.OrderOperationResponse.from_payload(payload)
+        return {"submitted": True, "status": "CANCEL_SUBMITTED", "order_id": result.order_id}
 
     async def aclose(self):
         await self._client.aclose()
@@ -164,6 +207,12 @@ class _TossBridge:
 
 class Toss(BaseBroker):
     broker_code = "toss"
+
+    def _symbol(self, symbol: str, market: str) -> str:
+        code = super()._symbol(symbol, market)
+        if market == "US" and re.fullmatch(r"[A-Z][A-Z0-9.]{0,9}", code) is None:
+            raise NotSupportedError("Toss US pilot requires a US equity ticker")
+        return code
 
     def __init__(
         self,
@@ -174,6 +223,7 @@ class Toss(BaseBroker):
         credentials_options: Mapping[str, Any] | None = None,
         safety: OrderSafety | None = None,
         market: str = "KR",
+        allow_us_pilot: bool = False,
         sdk_dry_run: bool = True,
         sdk_live_trading_enabled: bool = False,
         virtual: bool = False,
@@ -183,11 +233,13 @@ class Toss(BaseBroker):
     ) -> None:
         # Toss has no separate mock-trading domain, so `virtual=True` is refused upstream.
         super().__init__(account=account, safety=safety, market=market, virtual=virtual, halt_provider=halt_provider)
-        # 🚨 B′2-2: 토스 해외주식은 벤더 명세로 확인된 적이 없다 — 거래소 코드도, 주문 유형도,
-        # 취소 계약도 모른다. 「markets=("US",) 를 선언하고 실제로는 전부 거절」하는 상태는
-        # 결함이 아니라 거짓 선언이다. 확인 전까지는 생성 시점에 명시적으로 잠근다.
-        if self.market != "KR":
-            raise SpecUnverifiedError("Toss overseas venues are not verified; only KR is supported")
+        # SDK v1.2.17 routes US symbols without a venue field. Keep the older
+        # construction lock unless the caller explicitly opts into the pilot.
+        if type(allow_us_pilot) is not bool:
+            raise ConfigurationError("allow_us_pilot must be a boolean")
+        self._allow_us_pilot = allow_us_pilot and self.market == "US"
+        if self.market == "US" and not self._allow_us_pilot:
+            raise SpecUnverifiedError("Toss US is unverified without explicit pilot opt-in")
         if type(account_seq) is not int or account_seq <= 0:
             raise ConfigurationError("Supply the vendor accountSeq as a positive integer")
         self._factory = sdk_factory or _TossBridge
@@ -236,6 +288,19 @@ class Toss(BaseBroker):
             return self._call(lambda: self._loop.run_until_complete(invoke()))
 
     def capabilities(self) -> Capabilities:
+        if self.market == "US":
+            if not self._allow_us_pilot:
+                raise SpecUnverifiedError("Toss US is unverified without explicit pilot opt-in")
+            # Toss order requests identify a US equity by symbol only. Requiring
+            # a venue here would reject every valid SDK request before submission.
+            return Capabilities(
+                supports_spot=True,
+                supports_limit_order=True,
+                supports_single_order_cancel=True,
+                supports_order_history=True,
+                realtime_open_orders=True,
+                markets=("US",),
+            )
         # 🚨 B′-0/B′2-1: 거래소 선언(`venues`)은 손으로 다시 적지 않고 base 에서 받아 확장한다.
         # 이 메서드가 base 를 통째로 대체하면서 `venues` 를 빠뜨렸고, A′ 2라운드가
         # `requires_venue` 를 강제로 올린 뒤부터 venue 를 채운 국내 주문이 전부
@@ -261,7 +326,12 @@ class Toss(BaseBroker):
             prices = self._run("get_prices", [symbol])
             if len(prices) != 1 or prices[0]["symbol"] != symbol:
                 raise InvalidResponseError("Toss quote symbol missing or mismatched")
+            if self.market == "US":
+                if prices[0].get("currency") != "USD":
+                    raise InvalidResponseError("Toss US quote must be quoted in USD")
             book = self._run("get_orderbook", symbol)
+            if self.market == "US" and book.get("currency") != "USD":
+                raise InvalidResponseError("Toss US orderbook must be quoted in USD")
             return Quote(
                 symbol=symbol,
                 market=market,
@@ -274,16 +344,45 @@ class Toss(BaseBroker):
 
     def get_balance(self) -> Balance:
         def read():
-            # US 는 생성 시점에 잠겨 있다. 매수가능은 항상 buying-power KRW.
+            currency = "USD" if self.market == "US" else "KRW"
             positions = self._run("get_positions")
-            cash = self._run("get_buying_power", "KRW")
-            if cash.get("currency") != "KRW":
-                raise InvalidResponseError("Toss buying power must be quoted in KRW")
+            cash = self._run("get_buying_power", currency)
+            if cash.get("currency") != currency:
+                raise InvalidResponseError(f"Toss buying power must be quoted in {currency}")
+            value = positions["marketValue"]["amount"][currency.lower()]
+            if self.market == "US" and value is None and not any(
+                row.get("marketCountry") == "US" for row in positions["items"]
+            ):
+                value = "0"
             return Balance(
-                currency="KRW",
+                currency=currency,
                 cash_available=decimal(cash["cashBuyingPower"]),
-                position_value=decimal(positions["marketValue"]["amount"]["krw"]),
+                position_value=decimal(value),
             )
+
+        return self._call(read)
+
+    def funding_snapshot(self) -> dict[str, Decimal]:
+        """Read US and KRW buying power plus the vendor's USD/KRW rate."""
+        if self.market != "US" or not self._allow_us_pilot:
+            raise NotSupportedError("Toss US funding requires pilot opt-in")
+
+        def read():
+            usd = self._run("get_buying_power", "USD")
+            krw = self._run("get_buying_power", "KRW")
+            rate = self._run("get_exchange_rate", "USD", "KRW")
+            if usd.get("currency") != "USD" or krw.get("currency") != "KRW":
+                raise InvalidResponseError("Toss buying-power currency mismatch")
+            if rate.get("baseCurrency") != "USD" or rate.get("quoteCurrency") != "KRW":
+                raise InvalidResponseError("Toss exchange-rate currency mismatch")
+            fx = decimal(rate["rate"])
+            if fx <= 0:
+                raise InvalidResponseError("Toss USD/KRW rate must be positive")
+            return {
+                "usd_buying_power": decimal(usd["cashBuyingPower"]),
+                "krw_buying_power": decimal(krw["cashBuyingPower"]),
+                "usd_krw_rate": fx,
+            }
 
         return self._call(read)
 
@@ -344,6 +443,8 @@ class Toss(BaseBroker):
         return self._call(read)
 
     def _place_order(self, request: OrderRequest) -> Order:
+        if self.market == "US" and (request.side != "buy" or request.order_type != "limit"):
+            raise NotSupportedError("Toss US pilot accepts LIMIT BUY orders only")
         # 종가(CLS) 주문은 벤더 해외 세션 전용이고, 그 해외 경로는 B′2-2 로 잠겨 있다.
         if request.order_type == "close":
             raise NotSupportedError("Toss close orders need the unverified overseas session")
@@ -387,6 +488,8 @@ class Toss(BaseBroker):
         )
 
     def _cancel_order(self, request: CancelRequest) -> Order:
+        if self._options["dry_run"]:
+            raise DryRunError("dry_run: Toss live cancellation is disabled")
         # Vendor endpoint cancels all remaining quantity of one order.
         orders = self.list_orders(request.symbol)
         matching = [order for order in orders if order.id == request.order_id]

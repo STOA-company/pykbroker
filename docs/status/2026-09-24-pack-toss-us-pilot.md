@@ -1,0 +1,44 @@
+# Toss US one-account pilot path — 2026-09-24
+
+- Scope: SDK adapter only; the trader owns account, environment, ARM, session and $20 gates.
+- Source: `src/pykbroker/brokers/toss.py`.
+- Vendor source: `toss-openapi` v1.2.17, `clients/order.py` and `models/order.py`.
+- Existing default: `Toss(market="US")` raises `SpecUnverifiedError` at construction.
+- Pilot opt-in: `Toss(market="US", allow_us_pilot=True)`.
+- The option is a strict boolean; a truthy string cannot enable it.
+- `market="KR"` continues through the existing KR adapter path.
+- US symbols are uppercase equity tickers; KR-style codes are refused.
+- The SDK order request has no exchange/venue field; it routes by symbol.
+- US capabilities therefore name market US and do not require a venue.
+- US capability is only reported by an opted-in instance.
+- Mutating a KR instance's `market` to US still fails the capability check.
+- US quote reads `/api/v1/prices` and `/api/v1/orderbook`.
+- Quote must match symbol and `currency=USD`.
+- SDK v1.2.17 OpenAPI has a US orderbook example with USD bid and ask.
+- An empty bid or ask stays absent so the trader halt guard refuses the order.
+- US balance uses USD `cashBuyingPower` and USD position `marketValue`.
+- SDK null USD market value with no US holdings maps to zero; other nulls fail.
+- `funding_snapshot()` reads USD and KRW buying power plus USD/KRW rate.
+- The snapshot validates both currency labels and positive finite rate.
+- Trader applies the KRW 1.10 funding guard using this snapshot.
+- US order translation accepts only LIMIT BUY.
+- `OrderRequest` enforces a positive integer quantity and positive limit price.
+- SDK `OrderCreateRequest` validates the same quantity and order fields again.
+- Time in force is DAY; client order ID is derived from the intent key.
+- The bridge uses SDK transport for one POST with `retryable=False`.
+- It bypasses `OrderClient._call` because that wrapper replays 401 token-revoked.
+- HTTP 408, 409 request-in-progress and any idempotency-key-conflict remain uncertain.
+- A 4xx Toss API response becomes `TossRejectedError` with sanitized `code`.
+- A 5xx or transport error remains uncertain and requires reconciliation.
+- Open order lookup uses SDK `list_orders`, checks pagination, maps status.
+- Cancellation requires the exact full remaining quantity from that lookup.
+- Cancel also uses SDK transport for one POST with `retryable=False`.
+- Cancel response only acknowledges a new order ID; final cancel stays unconfirmed.
+- SDK dry run blocks submission and cancellation before any SDK call.
+- The SDK also requires `TOSS_LIVE_TRADING_ENABLED=true` at runtime.
+- No credential, token, raw vendor error body or account number is logged.
+- All tests use injected clients or SDK objects; no network call is made.
+- Test: `tests/test_toss_us_pilot.py` covers opt-in, quote, funding and orders.
+- Regression: `tests/test_toss_us_lock.py`, `tests/test_toss_v1217.py`.
+- Reversal check: remove the constructor opt-in; US construction relocks.
+- Release is outside this PR: trader and platform gates must also pass.
