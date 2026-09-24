@@ -29,6 +29,10 @@ class _SDK:
         self.calls.append(("get_prices", tuple(symbols)))
         return [{"symbol": symbols[0], "currency": "USD", "lastPrice": "13.06"}]
 
+    async def get_orderbook(self, symbol):
+        self.calls.append(("get_orderbook", symbol))
+        return {"currency": "USD", "asks": [{"price": "13.07"}], "bids": [{"price": "13.05"}]}
+
     async def get_buying_power(self, currency):
         self.calls.append(("buying_power", currency))
         return {"currency": currency, "cashBuyingPower": "0" if currency == "USD" else "30000"}
@@ -88,14 +92,15 @@ def test_us_read_contract_and_currency_guards():
     assert broker.capabilities().markets == ("US",)
     assert broker.capabilities().requires_venue is False
     assert broker.get_balance().currency == "USD"
-    assert broker.get_quote("F", market="US").last == Decimal("13.06")
+    quote = broker.get_quote("F", market="US")
+    assert (quote.last, quote.bid, quote.ask) == (Decimal("13.06"), Decimal("13.05"), Decimal("13.07"))
     assert broker.funding_snapshot() == {
         "usd_buying_power": Decimal("0"), "krw_buying_power": Decimal("30000"),
         "usd_krw_rate": Decimal("1350"),
     }
     assert ("buying_power", "USD") in made["sdk"].calls
     assert ("exchange_rate", "USD", "KRW") in made["sdk"].calls
-    assert not any(call[0] == "get_orderbook" for call in made["sdk"].calls)
+    assert ("get_orderbook", "F") in made["sdk"].calls
     assert broker.list_orders("F")[0].status == "open"
 
 
@@ -107,6 +112,38 @@ def test_us_funding_rejects_wrong_fx_pair():
     broker._factory = Wrong
     with pytest.raises(InvalidResponseError):
         broker.funding_snapshot()
+
+
+def test_us_quote_rejects_wrong_book_currency_and_keeps_empty_side_missing():
+    broker, _ = _broker()
+
+    class Wrong(_SDK):
+        async def get_orderbook(self, symbol):
+            return {"currency": "KRW", "asks": [{"price": "13.07"}], "bids": [{"price": "13.05"}]}
+
+    broker._factory = Wrong
+    with pytest.raises(InvalidResponseError):
+        broker.get_quote("F", market="US")
+
+    empty, _ = _broker()
+
+    class Empty(_SDK):
+        async def get_orderbook(self, symbol):
+            return {"currency": "USD", "asks": [], "bids": [{"price": "13.05"}]}
+
+    empty._factory = Empty
+    assert empty.get_quote("F", market="US").ask is None
+
+
+def test_us_empty_holdings_null_value_is_zero():
+    broker, _ = _broker()
+
+    class Empty(_SDK):
+        async def get_positions(self):
+            return {"marketValue": {"amount": {"usd": None, "krw": None}}, "items": []}
+
+    broker._factory = Empty
+    assert broker.get_balance().position_value == Decimal("0")
 
 
 def test_us_limit_buy_day_order_and_cancel_once_each():

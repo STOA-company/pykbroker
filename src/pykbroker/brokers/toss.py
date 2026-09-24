@@ -317,10 +317,9 @@ class Toss(BaseBroker):
             if self.market == "US":
                 if prices[0].get("currency") != "USD":
                     raise InvalidResponseError("Toss US quote must be quoted in USD")
-                # The pilot needs the last trade only; the US orderbook response
-                # is not part of its verified path.
-                return Quote(symbol=symbol, market=market, last=decimal(prices[0]["lastPrice"]))
             book = self._run("get_orderbook", symbol)
+            if self.market == "US" and book.get("currency") != "USD":
+                raise InvalidResponseError("Toss US orderbook must be quoted in USD")
             return Quote(
                 symbol=symbol,
                 market=market,
@@ -338,10 +337,15 @@ class Toss(BaseBroker):
             cash = self._run("get_buying_power", currency)
             if cash.get("currency") != currency:
                 raise InvalidResponseError(f"Toss buying power must be quoted in {currency}")
+            value = positions["marketValue"]["amount"][currency.lower()]
+            if self.market == "US" and value is None and not any(
+                row.get("marketCountry") == "US" for row in positions["items"]
+            ):
+                value = "0"
             return Balance(
                 currency=currency,
                 cash_available=decimal(cash["cashBuyingPower"]),
-                position_value=decimal(positions["marketValue"]["amount"][currency.lower()]),
+                position_value=decimal(value),
             )
 
         return self._call(read)

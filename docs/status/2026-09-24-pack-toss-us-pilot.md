@@ -12,10 +12,12 @@
 - US capabilities therefore name market US and do not require a venue.
 - US capability is only reported by an opted-in instance.
 - Mutating a KR instance's `market` to US still fails the capability check.
-- US quote reads `/api/v1/prices` through `get_prices` only.
+- US quote reads `/api/v1/prices` and `/api/v1/orderbook`.
 - Quote must match symbol and `currency=USD`.
-- The US pilot does not require the unverified orderbook response.
+- SDK v1.2.17 OpenAPI has a US orderbook example with USD bid and ask.
+- An empty bid or ask stays absent so the trader halt guard refuses the order.
 - US balance uses USD `cashBuyingPower` and USD position `marketValue`.
+- SDK null USD market value with no US holdings maps to zero; other nulls fail.
 - `funding_snapshot()` reads USD and KRW buying power plus USD/KRW rate.
 - The snapshot validates both currency labels and positive finite rate.
 - Trader applies the KRW 1.10 funding guard using this snapshot.
