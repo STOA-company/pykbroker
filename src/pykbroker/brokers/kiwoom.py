@@ -1,33 +1,55 @@
-"""Kiwoom domestic read half over a stored token. Orders, cancels and token issuance are not here."""
+"""Kiwoom domestic read half over a stored token, with explicit au10001 issuance. No orders or cancels here.
+
+Spec: the official portal pages of 2026-09-26 12:44 KST (openapi.kiwoom.com/guide/apiGuideContents/...), as
+extracted in q-gateway plans/kiwoom_rest_spec.md. What those pages do not say is refused, never guessed.
+"""
 
 import json
+import re
 import urllib.request
 from collections.abc import Callable, Mapping
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 from pykbroker.exceptions import (
+    BrokerError,
     BrokerRejectedError,
     ConfigurationError,
     InvalidResponseError,
     NotSupportedError,
     SpecUnverifiedError,
+    TransportError,
 )
 from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
-from pykbroker.rules.kr import equity_rules
+from pykbroker.rules.kr import KST, equity_rules
 from pykbroker.safety.gate import OrderSafety
 from pykbroker.safety.rate_limit import RateLimiter, credential_rate_limiter
 
 from ._common import BaseBroker, decimal, whole
 
-# Copied from trader quantus_backend/traders/kiwoom_order.py (KIWOOM_API_BASE_URL, KIWOOM_TR_RATE_LIMITS);
-# the trader marks the limits unverified (account TRs 1, market data 5). The mock host is spelled here
-# once so that `virtual` alone picks it.
+# Hosts are copied from trader quantus_backend/traders/kiwoom_order.py and match the spec. The mock host is
+# spelled here once so that `virtual` alone picks it.
 KIWOOM_API_BASE_URL = "https://api.kiwoom.com"
 KIWOOM_MOCK_BASE_URL = "https://mockapi.kiwoom.com"
-KIWOOM_TR_RATE_LIMITS: dict[str, int] = {"kt00018": 1, "ka10001": 5}
-# A stored token is the only credential this half holds; nothing else may ride in client_options.
-CLIENT_OPTION_KEYS = {"token", "token_type", "app_key"}
+# Spec: real 5 read calls/s, mock «TR 1개당 1초 1회», but whether a bucket is per TR or per account is unstated.
+# Four read TRs at 1/s each stay within 5/s under either reading of the real limit.
+KIWOOM_TR_RATE_LIMITS: dict[str, int] = {"ka10001": 1, "ka10004": 1, "kt00001": 1, "kt00018": 1}
+# A stored token is the only credential the broker holds; the secret key is used once by `issue_token` and dropped.
+CLIENT_OPTION_KEYS = {"token", "token_type", "expires_dt", "app_key"}
+# kt00001 qry_tp is 3 (estimated) or 2 (ordinary). The official sample asks for 3, but neither is described and an
+# estimate may count money that is not settled; the ordinary query is the one that cannot overstate what is spendable.
+KIWOOM_CASH_QUERY_TYPE = "2"
+# kt00018: dmst_stex_tp is KRX|NXT (this adapter declares KRX only); qry_tp is 1 (합산) or 2 (개별), rows unstated.
+KIWOOM_POSITION_EXCHANGES = frozenset({"KRX"})
+KIWOOM_POSITION_QUERY_TYPES = frozenset({"1", "2"})
+# Page size and page count are unstated: a list that does not end within this many pages is refused, not cut short.
+KIWOOM_MAX_PAGES = 20
+# expires_dt is 14 digits (YYYYMMDDHHMMSS) in the sample; its zone and the token lifetime are not stated. It is read as
+# KST, the earlier of the plausible readings, and a margin is kept: expiry is judged early, never late.
+TOKEN_EXPIRY_MARGIN = timedelta(minutes=5)
+_EXPIRES_DT = re.compile(r"\d{14}")
+_JSON_HEADERS = {"content-type": "application/json; charset=utf-8"}
 
 
 class _KiwoomRestClient:
@@ -37,10 +59,11 @@ class _KiwoomRestClient:
         self.base_url = base_url.rstrip("/")
         self._timeout = timeout
 
-    def post(self, path: str, *, headers: dict, json: dict) -> dict:
+    def post(self, path: str, *, headers: dict, json: dict) -> tuple[dict, dict[str, str]]:
+        """The body and the lower-cased response headers: `cont-yn` and `next-key` are the only truncation signal."""
         request = urllib.request.Request(f"{self.base_url}{path}", data=_dumps(json), headers=headers, method="POST")
         with urllib.request.urlopen(request, timeout=self._timeout) as response:
-            return _loads(response.read())
+            return _loads(response.read()), {key.lower(): value for key, value in response.headers.items()}
 
 
 def _dumps(value: dict) -> bytes:
@@ -52,6 +75,44 @@ def _loads(value: bytes) -> dict:
     if not isinstance(decoded, dict):
         raise ValueError("Kiwoom response must be a JSON object")
     return decoded
+
+
+def _parse_expires_dt(value: Any) -> datetime:
+    if not isinstance(value, str) or not _EXPIRES_DT.fullmatch(value):
+        raise ValueError("expires_dt must be 14 digits")
+    return datetime.strptime(value, "%Y%m%d%H%M%S").replace(tzinfo=KST)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
+def _unpack(reply: Any) -> tuple[Mapping[str, Any], Mapping[str, str]]:
+    if not (isinstance(reply, tuple) and len(reply) == 2 and all(isinstance(part, Mapping) for part in reply)):
+        raise InvalidResponseError("Kiwoom client must return a JSON object and its headers")
+    body, headers = reply
+    # Spec: success carries an integer return_code 0. The spec does not say whether failures arrive as HTTP status or
+    # as a body code, so an HTTP error surfaces as a transport failure and any body code but 0 is a refusal.
+    if "return_code" not in body:
+        raise InvalidResponseError("Kiwoom response has no return_code")
+    if type(body["return_code"]) is not int or body["return_code"] != 0:
+        raise BrokerRejectedError("Kiwoom rejected the request")
+    return body, {str(key).lower(): value for key, value in headers.items()}
+
+
+def _price(value: Any) -> Decimal:
+    """Spec: prices are «부호가 포함된 숫자» and the sign's meaning (direction or value) is unstated, with "-" on
+    fields that cannot be negative. "+" cannot change the magnitude; "-" is refused rather than read either way."""
+    if isinstance(value, str) and value.strip().startswith("-"):
+        raise SpecUnverifiedError("A signed price is unverified; the meaning of its sign is not in the spec")
+    return decimal(value)
+
+
+def _optional_price(value: Any) -> Decimal | None:
+    """Absent, empty or zero is «the venue did not state it» (the after-hours ka10004 sample is all "0")."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    return _price(value) or None
 
 
 class Kiwoom(BaseBroker):
@@ -70,44 +131,100 @@ class Kiwoom(BaseBroker):
         market: str = "KR",
         virtual: bool = False,
         halt_provider: Callable[[str], bool] | None = None,
+        clock: Callable[[], datetime] = _utcnow,
     ) -> None:
         super().__init__(account=account, safety=safety, market=market, virtual=virtual, halt_provider=halt_provider)
         if market != "KR":
             raise NotSupportedError("Kiwoom US is not implemented")
         options = dict(client_options)
         if not set(options) <= CLIENT_OPTION_KEYS:
-            raise ConfigurationError("client_options accepts only token, token_type and app_key")
+            raise ConfigurationError("client_options accepts only token, token_type, expires_dt and app_key")
         token, app_key = options.get("token"), options.get("app_key")
         if not (isinstance(token, str) and token.strip() and isinstance(app_key, str) and app_key.strip()):
-            raise ConfigurationError("Supply a stored Kiwoom token and app_key; issuing one is not implemented")
-        token_type = options.get("token_type", "Bearer")
-        self._authorization = token if token.lower().startswith(f"{token_type.lower()} ") else f"{token_type} {token}"
+            raise ConfigurationError("Supply a stored Kiwoom token and app_key; Kiwoom.issue_token obtains one")
+        # The header spells the type «Bearer»; the issuance sample spells it lowercase. Any other type is unverified.
+        if str(options.get("token_type", "Bearer")).lower() != "bearer":
+            raise ConfigurationError("Only Bearer tokens are verified")
+        self._authorization = token if token.lower().startswith("bearer ") else f"Bearer {token}"
+        # Without expires_dt the server is the arbiter (it refuses a stale token); with it, a stale token is not sent.
+        try:
+            self._expires_at = _parse_expires_dt(options["expires_dt"]) if "expires_dt" in options else None
+        except ValueError:
+            raise ConfigurationError("expires_dt must be the 14-digit value returned at issuance") from None
+        self._clock = clock
         self._codes = dict(codes or {})
         self._limiter = rate_limiter or credential_rate_limiter("kiwoom", app_key, KIWOOM_TR_RATE_LIMITS)
         # The host follows `virtual` alone; the factory cannot choose it.
         host = KIWOOM_MOCK_BASE_URL if virtual else KIWOOM_API_BASE_URL
         self._client = (client_factory or _KiwoomRestClient)(base_url=host)
 
-    def _code(self, name: str) -> str:
-        value = self._codes.get(name)
-        if not isinstance(value, str) or not value:
-            raise ConfigurationError("Unverified vendor code; supply a reviewed codes mapping")
-        return value
+    @classmethod
+    def issue_token(
+        cls,
+        *,
+        app_key: str,
+        secret_key: str,
+        virtual: bool = False,
+        client_factory: Callable[..., Any] | None = None,
+    ) -> dict[str, str]:
+        """au10001. Returns token, token_type and expires_dt exactly as issued, for the caller to store.
 
-    def _response(self, path: str, tr: str, body: dict[str, Any]) -> dict[str, Any]:
-        headers = {
-            "content-type": "application/json; charset=utf-8",
-            "authorization": self._authorization,
-            "api-id": tr,
-        }
+        Only an explicit call issues: reissuing may invalidate a token another process holds (unstated), so no
+        request ever reissues on its own. The secret key is neither kept nor echoed. The spec's au10001 page has no
+        header table, so no `api-id` is sent.
+        """
+        if not isinstance(virtual, bool):
+            raise ConfigurationError("virtual must be a boolean; the account mode is never inferred")
+        if not all(isinstance(value, str) and value.strip() for value in (app_key, secret_key)):
+            raise ConfigurationError("Supply app_key and secret_key")
+        client = (client_factory or _KiwoomRestClient)(
+            base_url=KIWOOM_MOCK_BASE_URL if virtual else KIWOOM_API_BASE_URL
+        )
+        body = {"grant_type": "client_credentials", "appkey": app_key, "secretkey": secret_key}
+        try:
+            response, _ = _unpack(client.post("/oauth2/token", headers=dict(_JSON_HEADERS), json=body))
+            issued = {name: response[name] for name in ("token", "token_type", "expires_dt")}
+            if not all(isinstance(value, str) and value for value in issued.values()):
+                raise ValueError("token fields must be non-empty strings")
+            _parse_expires_dt(issued["expires_dt"])
+            return issued
+        except BrokerError:
+            raise
+        except (KeyError, TypeError, ValueError, AttributeError):
+            raise InvalidResponseError("Vendor token response is invalid") from None
+        except Exception:
+            raise TransportError("Token issuance failed; an earlier token may or may not still be valid") from None
+
+    def _post(
+        self, path: str, tr: str, body: dict[str, Any], continuation: str | None = None
+    ) -> tuple[Mapping[str, Any], Mapping[str, str]]:
+        if self._expires_at is not None and self._clock() >= self._expires_at - TOKEN_EXPIRY_MARGIN:
+            raise ConfigurationError("The stored Kiwoom token is expired or about to expire; issue a new one")
+        headers = {**_JSON_HEADERS, "authorization": self._authorization, "api-id": tr}
+        if continuation is not None:
+            headers.update({"cont-yn": "Y", "next-key": continuation})
         self._limiter.wait(tr)
-        response = self._client.post(path, headers=headers, json=body)
-        if not isinstance(response, Mapping):
-            raise InvalidResponseError("Kiwoom response must be a JSON object")
-        # None/0/"0" is the acceptance set of experimental/kiwoom.py; other codes are not classified further.
-        if response.get("return_code") not in (None, 0, "0"):
-            raise BrokerRejectedError("Kiwoom rejected the request")
-        return response
+        return _unpack(self._client.post(path, headers=headers, json=body))
+
+    def _rows(self, path: str, tr: str, body: dict[str, Any], key: str) -> list[Mapping[str, Any]]:
+        """Every page of a list TR. Spec: the response headers `cont-yn`=Y and `next-key` are set on the next request
+        as they came. A list whose end cannot be shown is refused: a truncated holdings list reads as a smaller one."""
+        rows: list[Mapping[str, Any]] = []
+        seen: set[str] = set()
+        continuation: str | None = None
+        for _ in range(KIWOOM_MAX_PAGES):
+            response, headers = self._post(path, tr, body, continuation)
+            page = response[key]
+            if not isinstance(page, list):
+                raise InvalidResponseError("Kiwoom list field must be a list")
+            rows.extend(page)
+            if headers.get("cont-yn") == "N":
+                return rows
+            continuation = headers.get("next-key")
+            if headers.get("cont-yn") != "Y" or not continuation or continuation in seen:
+                raise InvalidResponseError("Kiwoom continuation headers do not show where the list ends")
+            seen.add(continuation)
+        raise InvalidResponseError("Kiwoom list exceeded the page limit; refusing a truncated result")
 
     def capabilities(self) -> Capabilities:
         return Capabilities(
@@ -119,13 +236,21 @@ class Kiwoom(BaseBroker):
             markets=("KR",),
         )
 
+    def _basic(self, code: str) -> Mapping[str, Any]:
+        return self._post("/api/dostk/stkinfo", "ka10001", {"stk_cd": code})[0]
+
     def get_quote(self, symbol: str, *, market: str = "KR") -> Quote:
         code = self._symbol(symbol, market)
 
-        # Bid/ask (ka10004) and the venue's band are not read: no evidence for their fields yet.
         def read() -> Quote:
-            row = self._response("/api/dostk/stkinfo", "ka10001", {"stk_cd": code})
-            return Quote(symbol=code, last=decimal(row["cur_prc"]))
+            last = _price(self._basic(code)["cur_prc"])
+            book = self._post("/api/dostk/mrkcond", "ka10004", {"stk_cd": code})[0]
+            # 매수 최우선호가 is the bid, 매도 최우선호가 the ask. A crossed pair (a call auction, or a swapped
+            # mapping) is not a spread anyone can trade on, so it is reported as unknown.
+            bid, ask = _optional_price(book.get("buy_fpr_bid")), _optional_price(book.get("sel_fpr_bid"))
+            if bid is not None and ask is not None and bid > ask:
+                bid = ask = None
+            return Quote(symbol=code, last=last, bid=bid, ask=ask)
 
         return self._call(read)
 
@@ -133,31 +258,69 @@ class Kiwoom(BaseBroker):
         self, symbol: str, *, now: datetime | None = None, trading_day: Callable[[date], bool] | None = None
     ) -> Rules:
         code = self._symbol(symbol, "KR")
+
+        def read() -> tuple[Decimal, Decimal | None, Decimal | None]:
+            row = self._basic(code)
+            last = _price(row["cur_prc"])
+            upper, lower = _optional_price(row.get("upl_pric")), _optional_price(row.get("lst_pric"))
+            base = _optional_price(row.get("base_pric"))
+            if upper is None or lower is None:
+                return last, None, None  # half a band is not a band; nothing is derived from 기준가 either
+            # The official ka10001 sample is field-misaligned (a date in upl_pric, a percent in lst_pric), so a band
+            # that does not contain the last and reference price is a mapping fault, not a band.
+            if not lower <= last <= upper or (base is not None and not lower <= base <= upper):
+                raise InvalidResponseError("Kiwoom daily band does not contain the reference and last prices")
+            return last, upper, lower
+
+        last, upper, lower = self._call(read)
         return equity_rules(
-            code, self.get_quote(code).last, halted=self._halt_from_provider(code), now=now, trading_day=trading_day
+            code,
+            last,
+            halted=self._halt_from_provider(code),
+            now=now,
+            trading_day=trading_day,
+            limit_up=upper,
+            limit_down=lower,
         )
 
-    def get_balance(self) -> Balance:
-        raise SpecUnverifiedError("Order-available cash (kt00001) is unverified; kt00018 holds no such field")
+    def _cash(self) -> Decimal:
+        row = self._post("/api/dostk/acnt", "kt00001", {"qry_tp": KIWOOM_CASH_QUERY_TYPE})[0]
+        # `ord_alow_amt` (주문가능금액) is not documented as cash-only and the official sample shows it above the
+        # deposit `entr` (85,341 vs 17,534), so it is capped by the deposit. `prsm_dpst_aset_amt` is never used.
+        return min(decimal(row["ord_alow_amt"]), decimal(row["entr"]))
 
-    def get_positions(self) -> list[Position]:
-        def read() -> list[Position]:
-            body = {"dmst_stex_tp": self._code("exchange"), "qry_tp": self._code("query_type")}
-            rows = self._response("/api/dostk/acnt", "kt00018", body)["acnt_evlt_remn_indv_tot"]
-            return [
-                Position(
-                    symbol=self._symbol(row["stk_cd"], "KR"),
-                    name=row["stk_nm"],
-                    quantity=whole(row["rmnd_qty"]),
-                    sellable=whole(row["trde_able_qty"]),
-                    average_price=decimal(row["pur_pric"]),
-                    last=decimal(row["cur_prc"]),
-                    market_value=decimal(row["evlt_amt"]),
-                )
-                for row in rows
-            ]
+    def available_cash(self) -> Decimal:
+        return self._call(self._cash)
+
+    def get_balance(self) -> Balance:
+        def read() -> Balance:
+            value = sum((position.market_value for position in self._positions()), Decimal(0))
+            return Balance(cash_available=self._cash(), position_value=value)
 
         return self._call(read)
+
+    def _positions(self) -> list[Position]:
+        exchange, query = self._codes.get("exchange", "KRX"), self._codes.get("query_type")
+        if exchange not in KIWOOM_POSITION_EXCHANGES or query not in KIWOOM_POSITION_QUERY_TYPES:
+            raise ConfigurationError("Supply codes exchange (KRX) and query_type (1 or 2, see the kt00018 spec)")
+        rows = self._rows(
+            "/api/dostk/acnt", "kt00018", {"dmst_stex_tp": exchange, "qry_tp": query}, "acnt_evlt_remn_indv_tot"
+        )
+        return [
+            Position(
+                symbol=self._symbol(row["stk_cd"], "KR"),
+                name=row["stk_nm"],
+                quantity=whole(row["rmnd_qty"]),
+                sellable=whole(row["trde_able_qty"]),
+                average_price=_price(row["pur_pric"]),
+                last=_price(row["cur_prc"]),
+                market_value=decimal(row["evlt_amt"]),
+            )
+            for row in rows
+        ]
+
+    def get_positions(self) -> list[Position]:
+        return self._call(self._positions)
 
     def place_order(self, request: OrderRequest) -> Order:
         raise NotSupportedError("Kiwoom orders are not implemented in the read half")
