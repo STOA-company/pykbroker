@@ -1,0 +1,37 @@
+{
+ "oso": [
+  {
+   "acnt_no": "1234567890",
+   "ord_no": "0000069",
+   "mang_empno": "",
+   "stk_cd": "005930",
+   "tsk_tp": "",
+   "ord_stt": "접수",
+   "stk_nm": "삼성전자",
+   "ord_qty": "1",
+   "ord_pric": "0",
+   "oso_qty": "1",
+   "cntr_tot_amt": "0",
+   "orig_ord_no": "0000000",
+   "io_tp_nm": "+매수",
+   "trde_tp": "시장가",
+   "tm": "154113",
+   "cntr_no": "",
+   "cntr_pric": "0",
+   "cntr_qty": "0",
+   "cur_prc": "+74100",
+   "sel_bid": "0",
+   "buy_bid": "+74100",
+   "unit_cntr_pric": "",
+   "unit_cntr_qty": "",
+   "tdy_trde_cmsn": "0",
+   "tdy_trde_tax": "0",
+   "ind_invsr": "",
+   "stex_tp": "1",
+   "stex_tp_txt": "KRX",
+   "sor_yn": "N"
+  }
+ ],
+ "return_code": 0,
+ "return_msg": " 조회가 완료되었습니다."
+}

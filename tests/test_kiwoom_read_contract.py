@@ -1,4 +1,4 @@
-"""Kiwoom read half, offline.
+"""Kiwoom read half, offline (the order half is in test_kiwoom_order_contract.py).
 
 `tests/fixtures/kiwoom/*.json` are the sample responses printed on the official portal pages (openapi.kiwoom.com,
 read 2026-09-26 12:44 KST): au10001 has one comma restored, everything else is verbatim. They pin field names and
@@ -27,7 +27,7 @@ from pykbroker.exceptions import (
     TransportError,
 )
 from pykbroker.factory import BROKERS
-from pykbroker.models import CancelRequest, OrderRequest
+from pykbroker.models import OrderRequest
 from pykbroker.safety.rate_limit import RateLimiter
 
 OFFICIAL = {
@@ -536,8 +536,12 @@ def test_stored_token_and_app_key_are_required(options):
 
 
 def test_limiter_covers_every_read_tr_within_the_documented_budget():
-    assert module.KIWOOM_TR_RATE_LIMITS == {"ka10001": 1, "ka10004": 1, "kt00001": 1, "kt00018": 1}
-    assert sum(module.KIWOOM_TR_RATE_LIMITS.values()) <= 5  # real: 5 read calls/s, even if shared by the account
+    read_trs = ("ka10001", "ka10004", "kt00001", "kt00018", "ka10075", "kt00007")
+    assert set(module.KIWOOM_TR_RATE_LIMITS) == {*read_trs, "kt10000", "kt10001", "kt10003"}
+    assert max(module.KIWOOM_TR_RATE_LIMITS.values()) <= 1  # mock: one call per TR per second
+    # real: 5 read calls/s and 5 order calls/s, even if each is shared by the account
+    assert sum(module.KIWOOM_TR_RATE_LIMITS[tr] for tr in read_trs) <= 5
+    assert sum(module.KIWOOM_TR_RATE_LIMITS[tr] for tr in ("kt10000", "kt10001", "kt10003")) <= 5
     broker = Kiwoom(account="fixture-account", client_options=OPTIONS, codes=CODES)
     for tr in module.KIWOOM_TR_RATE_LIMITS:
         broker._limiter.wait(tr)
@@ -560,21 +564,20 @@ def test_limiter_is_awaited_before_each_post():
 # --- boundaries ---
 
 
-def test_orders_and_cancels_are_refused_before_any_request():
+def test_market_and_after_hours_orders_are_refused_before_any_request():
     broker, made = make()
-    with pytest.raises(NotSupportedError):
-        broker.place_order(OrderRequest(symbol="005930", side="buy", quantity=1, price="2500", client_key="k"))
-    with pytest.raises(NotSupportedError):
-        broker.cancel_order(CancelRequest(symbol="005930", order_id="1", quantity=1, client_key="k2"))
-    with pytest.raises(NotSupportedError):
-        broker.list_orders()
+    for order_type in ("market", "close"):
+        request = OrderRequest(symbol="005930", side="buy", quantity=1, order_type=order_type, client_key="k")
+        with pytest.raises(NotSupportedError):
+            broker.place_order(request)
     assert made[0].calls == []
 
 
-def test_capabilities_admit_read_only_kr():
+def test_capabilities_admit_kr_limit_orders_and_single_cancel_only():
     caps = make()[0].capabilities()
     assert caps.venues == ("KRX",) and caps.markets == ("KR",) and caps.supports_virtual_account is True
-    assert not (caps.supports_limit_order or caps.supports_market_order or caps.supports_single_order_cancel)
+    assert caps.supports_limit_order and caps.supports_single_order_cancel and caps.supports_order_history
+    assert not (caps.supports_market_order or caps.supports_nxt or caps.realtime_open_orders)
 
 
 def test_us_market_and_wrong_market_quote_are_refused():
