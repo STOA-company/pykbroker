@@ -163,10 +163,37 @@ def test_us_limit_buy_day_order_and_cancel_once_each():
     assert [call for call in made["sdk"].calls if call[0] == "cancel_order"] == [("cancel_order", "o-1")]
 
 
-def test_us_sell_market_and_kr_symbol_never_submit():
+def test_us_limit_sell_day_order_submits_once():
+    # 대표 D11: US 지정가 매도 개방. 가격 밴드는 trader 게이트 몫이라 여기선 번역만 본다.
+    broker, made = _broker(sdk_dry_run=False)
+    result = broker._place_order(_order(side="sell", client_key="pilot-sell-1"))
+    assert (result.id, result.side, result.order_type) == ("o-1", "sell", "limit")
+    submitted = [call for call in made["sdk"].calls if call[0] == "submit_order"]
+    assert len(submitted) == 1
+    assert submitted[0][1]["side"] == "SELL"
+    assert submitted[0][1]["order_type"] == "LIMIT"
+    assert submitted[0][1]["time_in_force"] == "DAY"
+    assert submitted[0][1]["price"] == "13.12"
+    assert submitted[0][1]["quantity"] == "1"
+    assert submitted[0][1]["client_order_id"]
+
+
+def test_us_sell_and_buy_keys_differ_for_the_same_cycle():
+    broker, made = _broker(sdk_dry_run=False)
+    broker._place_order(_order())
+    broker._place_order(_order(side="sell"))
+    keys = [call[1]["client_order_id"] for call in made["sdk"].calls if call[0] == "submit_order"]
+    assert len(keys) == 2 and keys[0] != keys[1]
+
+
+def test_us_market_close_and_kr_symbol_never_submit():
     broker, made = _broker(sdk_dry_run=False)
     for request in (
-        _order(side="sell"),
+        OrderRequest(symbol="F", side="sell", quantity=1, order_type="market", market="US", client_key="sell-market"),
+        OrderRequest(symbol="F", side="sell", quantity=1, price="13.12", order_type="close", market="US",
+                     client_key="sell-close"),
+        OrderRequest(symbol="F", side="buy", quantity=1, price="13.12", order_type="close", market="US",
+                     client_key="buy-close"),
         OrderRequest(symbol="F", side="buy", quantity=1, order_type="market", market="US", client_key="market"),
         OrderRequest(symbol="005930", side="buy", quantity=1, price="13.12", market="US", client_key="kr"),
     ):
@@ -179,6 +206,8 @@ def test_us_dry_run_blocks_submit_and_cancel():
     broker, made = _broker()
     with pytest.raises(DryRunError):
         broker._place_order(_order())
+    with pytest.raises(DryRunError):
+        broker._place_order(_order(side="sell"))
     with pytest.raises(DryRunError):
         broker._cancel_order(CancelRequest(order_id="o-1", symbol="F", quantity=1,
                                                    market="US", client_key="cancel-1"))
@@ -276,3 +305,45 @@ def test_sdk_bridge_success_posts_once_and_cancel_is_only_acknowledged():
     assert [path for method, path, _ in transport.calls] == ["/api/v1/orders", "/api/v1/orders/buy-1/cancel"]
     assert all(kwargs["retryable"] is False and kwargs["account_seq"] == 7
                for _, _, kwargs in transport.calls)
+
+
+def test_sdk_bridge_limit_sell_posts_once_as_sell_limit():
+    pytest.importorskip("toss_openapi")
+    from toss_openapi.errors import TossApiError
+    from toss_openapi.models import order as order_models
+
+    from pykbroker.brokers.toss import _TossBridge
+
+    class Transport:
+        def __init__(self):
+            self.calls = []
+
+        async def request(self, method, path, **kwargs):
+            self.calls.append((method, path, kwargs))
+            return {"orderId": "sell-1"}
+
+    class Manager:
+        async def get_access_token(self):
+            return "fixture-token"
+
+    checked = []
+    transport = Transport()
+    bridge = object.__new__(_TossBridge)
+    bridge._dry_run = False
+    bridge._models = order_models
+    bridge._api_error_type = TossApiError
+    bridge._guard = SimpleNamespace(check_create=lambda request, account: checked.append(request))
+    bridge._context = object()
+    bridge._manager = Manager()
+    bridge._transport = transport
+    bridge._account_seq = 7
+    submitted = asyncio.run(bridge.submit_order(symbol="F", side="SELL", order_type="LIMIT",
+                                                quantity="1", price="13.12", time_in_force="DAY",
+                                                client_order_id="pilot-sell-1"))
+    assert submitted["order_id"] == "sell-1"
+    assert len(checked) == 1 and checked[0].side is order_models.OrderSide.SELL
+    assert len(transport.calls) == 1
+    method, path, kwargs = transport.calls[0]
+    assert (method, path, kwargs["retryable"]) == ("POST", "/api/v1/orders", False)
+    body = kwargs["json_body"]
+    assert (body["side"], body["orderType"], body["timeInForce"], body["price"]) == ("SELL", "LIMIT", "DAY", "13.12")

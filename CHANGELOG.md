@@ -32,6 +32,13 @@
   B′-0 이 그것을 닫았습니다. 문서의 「Toss KR / US」 표기도 실제와 맞췄습니다.
 - **검사 범위**: 거래소 정합을 KR/US 매트릭스와 취소(`CancelRequest`) 경로까지 넓혔습니다.
 
+### 토스 US 파일럿 지정가 매도 (D11)
+
+- **US 지정가 매도 허용**: `allow_us_pilot=True` 인 토스 US 는 LIMIT 매수에 더해 LIMIT 매도를
+  SDK 에 `SELL`·`LIMIT`·`DAY` 로 보냅니다. 시장가·종가는 계속 거부합니다.
+  드라이런 기본·`order_key` 멱등·`retryable=False` 단일 POST 는 그대로이고,
+  매도 가격 판정(현재가 밴드)과 보유 수량 확인은 여기서 하지 않습니다(trader 게이트 몫).
+
 ### 한투 주문 POST 1회 · DB증권 close 토큰 보존 (C4·C5)
 
 - **KIS 주문 POST 1회**: Pykis 전송 계층은 tenacity 로 실패한 POST 를 최대 3회 다시 보내

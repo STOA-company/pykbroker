@@ -192,6 +192,13 @@ MUTATIONS = (
         "        if False:",
     ),
     Mutation(
+        "D11",
+        "Toss US pilot sends market or close orders now that LIMIT SELL is open",
+        SRC / "brokers/toss.py",
+        '        if self.market == "US" and request.order_type != "limit":',
+        "        if False:",
+    ),
+    Mutation(
         "B'2-3",
         "cancellations skip the venue-required check that orders get",
         SRC / "brokers/_common.py",
