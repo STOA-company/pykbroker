@@ -164,13 +164,29 @@ def test_a_failed_or_unreadable_send_is_unknown_and_the_post_goes_out_once(live_
     assert "fixture-token" not in str(raised.value) and not isinstance(raised.value, BrokerRejectedError)
 
 
-@pytest.mark.parametrize("code", [1, 8005, 1700, 1999, -1])
-def test_an_integer_return_code_but_zero_is_a_refusal(live_safety, code):
+@pytest.mark.parametrize("code", [1, 8005, 1700, -1, 1998, 2000])
+def test_an_integer_return_code_but_zero_and_1999_is_a_refusal(live_safety, code):
     body = {**OFFICIAL["kt10000"], "return_code": code, "return_msg": "secret detail"}
     broker, client = make({"kt10000": [body]}, safety=live_safety)
     with pytest.raises(BrokerRejectedError) as raised:
         broker.place_order(buy())
     assert len(client.calls) == 1 and "secret detail" not in str(raised.value)
+
+
+def test_1999_unexpected_error_on_a_write_is_unknown_not_a_refusal(live_safety):
+    # 1999 «예기치 못한 에러» may come after the order was taken: not «safe to resubmit». One POST, never a retry.
+    body = {**OFFICIAL["kt10000"], "return_code": 1999, "return_msg": "secret detail"}
+    broker, client = make({"kt10000": [body, OFFICIAL["kt10000"]]}, safety=live_safety)
+    with pytest.raises(InvalidResponseError) as raised:
+        broker.place_order(buy())
+    assert not isinstance(raised.value, BrokerRejectedError) and len(client.calls) == 1
+    assert "secret detail" not in str(raised.value)
+    broker, client = make(
+        {"kt10003": [{**OFFICIAL["kt10003"], "return_code": 1999}, OFFICIAL["kt10003"]]}, safety=live_safety
+    )
+    with pytest.raises(InvalidResponseError) as raised:
+        broker.cancel_order(cancel())
+    assert not isinstance(raised.value, BrokerRejectedError) and len(client.calls) == 1
 
 
 @pytest.mark.parametrize("code", ["0", "8005", True, False, None, 0.0, [0]])
@@ -267,7 +283,7 @@ def test_cancel_quantity_is_explicit_never_the_remainder_shorthand(live_safety):
         cancel(quantity=0)
 
 
-@pytest.mark.parametrize("order_id", ["12345678", "abc", "00 1", "-1", "１２３"])
+@pytest.mark.parametrize("order_id", ["12345678", "abc", "00 1", "-1", "１２３", "0000000", "0"])
 def test_cancel_refuses_an_order_number_that_is_not_the_documented_form(live_safety, order_id):
     broker, client = make({"kt10003": [OFFICIAL["kt10003"]]}, safety=live_safety)
     with pytest.raises(ConfigurationError):

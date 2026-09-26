@@ -55,6 +55,7 @@ TOKEN_EXPIRY_MARGIN = timedelta(minutes=5)
 _EXPIRES_DT = re.compile(r"\d{14}")
 # Spec: ord_no is «7자리» (the kt10000 sample shows 5), and 0000000 is the «no original order» filler, never an order.
 _ORDER_NO = re.compile(r"[0-9]{1,7}")
+_UNEXPECTED_ERROR_CODE = 1999
 # trde_tp 0 (보통) is the only order type sent; ka10075/kt00007 spell types in Korean (보통 / 지정가 / 시장가), and any
 # other name stays unknown.
 KIWOOM_LIMIT_TRDE_TP = "0"
@@ -109,6 +110,10 @@ def _unpack(reply: Any, *, write: bool = False) -> tuple[Mapping[str, Any], Mapp
     # A write is refused only by an integer code: a code that is not one is «unknown», never «safe to resubmit».
     if write and type(body["return_code"]) is not int:
         raise InvalidResponseError("Kiwoom write response has no integer return_code; reconcile before retrying")
+    # 1999 is the error table's «예기치 못한 에러» (unexpected error): a backend failure that may arrive after the
+    # order was taken, so it is not an explicit refusal. On a write it is unknown — reconcile before resubmitting.
+    if write and body["return_code"] == _UNEXPECTED_ERROR_CODE:
+        raise InvalidResponseError("Kiwoom reported an unexpected error (1999); reconcile before retrying")
     if type(body["return_code"]) is not int or body["return_code"] != 0:
         raise BrokerRejectedError("Kiwoom rejected the request")
     return body, {str(key).lower(): value for key, value in headers.items()}
@@ -349,8 +354,9 @@ class Kiwoom(BaseBroker):
         super()._validate_order(request)
         if isinstance(request, OrderRequest) and request.order_type != "limit":
             raise NotSupportedError("Kiwoom implements limit orders only")
-        if isinstance(request, CancelRequest) and not _ORDER_NO.fullmatch(request.order_id):
-            raise ConfigurationError("Kiwoom order numbers are at most 7 digits")
+        if isinstance(request, CancelRequest) and not (_ORDER_NO.fullmatch(request.order_id) and int(request.order_id)):
+            # all zeros is the «no original order» filler, never a real order number
+            raise ConfigurationError("Kiwoom order numbers are 1 to 7 digits and not all zeros")
 
     def _write(self, path: str, tr: str, body: dict[str, Any]) -> Mapping[str, Any]:
         """One POST, never repeated: this client does not retry and no caller loop may. A refusal is a return_code
