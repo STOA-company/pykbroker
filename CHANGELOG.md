@@ -32,6 +32,16 @@
   B′-0 이 그것을 닫았습니다. 문서의 「Toss KR / US」 표기도 실제와 맞췄습니다.
 - **검사 범위**: 거래소 정합을 KR/US 매트릭스와 취소(`CancelRequest`) 경로까지 넓혔습니다.
 
+### 한투 주문 POST 1회 · DB증권 close 토큰 보존 (C4·C5)
+
+- **KIS 주문 POST 1회**: Pykis 전송 계층은 tenacity 로 실패한 POST 를 최대 3회 다시 보내
+  중복 주문 위험이 있었습니다. `KIS._place_order` 는 그 재시도를 우회해 1회만 보냅니다.
+  실패는 «불명»으로 기존 분류(`TransportError`·`InvalidResponseError`)로 올라옵니다.
+  조회(GET) 재시도는 그대로이고, 재시도를 우회할 수 없는 전송 계층이면 주문을 거절합니다.
+- **DBFI.close 는 토큰을 폐기하지 않음**: Pydb `DBFI.close()` 가 `revoke_token` 으로
+  계좌행 토큰을 폐기해 같은 토큰을 쓰는 레거시가 끊길 수 있었습니다. 이제 `close` 는
+  세션만 닫고 Pydb `close()` 를 부르지 않습니다.
+
 ### 2라운드 리뷰 반영 (A′2-1 ~ A′2-6)
 
 - **모의계좌 주문 조회**: 국내 모의는 벤더가 모의 TR(VTTC8001R)로 갈아주는 일별 원장을

@@ -1,6 +1,9 @@
 """KIS translation over the optional Pykis client and domestic/overseas helpers."""
 
+import inspect
+import threading
 from collections.abc import Callable, Mapping
+from contextlib import contextmanager
 from datetime import date, datetime
 from decimal import Decimal
 from importlib import import_module
@@ -34,6 +37,60 @@ KST = ZoneInfo("Asia/Seoul")
 UNFILLED = "미체결"
 # base/overseas.py:377 hardcodes TTTS3018R, a real-account TR with no mock branch,
 # so US open orders have no mock route at all. That is declared, never faked.
+
+
+# Pykis retries inside its transport: `_execute_request` is wrapped by tenacity (3 attempts on
+# everything but ReadTimeout and KisTransientError) and `request` loops again on KisTransientError
+# (_pykis/client/client.py:208-214, 245-280). An order POST that fails there can reach the venue
+# up to three times with nothing above the transport able to see it. Writes go through the raw,
+# unwrapped `_execute_request` instead; reads keep the vendor's retries.
+_SINGLE_ATTEMPT = threading.local()
+_ARM_LOCK = threading.Lock()
+_TENACITY_MARKS = ("retry", "retry_with")  # what tenacity's `@retry` (and any `functools.wraps` copy of it) carries
+
+
+def _bypass_target(execute: Any) -> Callable[..., Any]:
+    """The call under every wrapper, or a refusal when a retry layer could survive the unwrap.
+
+    Only the outermost layer may carry tenacity's marks (it is the one being bypassed). A mark on
+    any layer below it or on the unwrapped call -- a second `@retry`, or a decorator stacked over
+    `@retry` -- means the chain is not the shape we know, so the write is refused, not retried.
+    """
+    layers: list[Any] = []
+
+    def visit(layer: Any) -> bool:
+        layers.append(layer)
+        return False
+
+    try:
+        raw = inspect.unwrap(execute, stop=visit)
+    except ValueError:  # a wrapper cycle
+        raw = execute
+    below = [*layers[1:], raw]
+    if raw is execute or not callable(raw) or any(hasattr(layer, mark) for layer in below for mark in _TENACITY_MARKS):
+        raise ConfigurationError("KIS transport retries cannot be bypassed; refusing to send an order")
+    return raw
+
+
+def _arm_single_attempt(vendor: Any) -> None:
+    """Route `vendor.client.request` to one attempt while a write on this thread asks for it."""
+    transport = getattr(vendor, "client", None)
+    execute = getattr(type(transport), "_execute_request", None)
+    if execute is None:
+        return  # not the Pykis transport: nothing hidden retries under this client
+    raw = _bypass_target(execute)
+    with _ARM_LOCK:
+        if getattr(transport, "_pykbroker_single_attempt", False):
+            return
+        retrying = transport.request
+
+        def request(*args: Any, **kwargs: Any) -> Any:
+            if getattr(_SINGLE_ATTEMPT, "active", False):
+                return raw(transport, *args, **kwargs)
+            return retrying(*args, **kwargs)
+
+        transport.request = request
+        transport._pykbroker_single_attempt = True
 
 
 def _yes_no(value: Any) -> bool | None:
@@ -343,31 +400,44 @@ class KIS(BaseBroker):
             )
         return result
 
+    @contextmanager
+    def _single_attempt(self):
+        """A write that fails is unknown, not retryable: the vendor transport sends it once."""
+        _arm_single_attempt(self._client)
+        previous = getattr(_SINGLE_ATTEMPT, "active", False)
+        _SINGLE_ATTEMPT.active = True
+        try:
+            yield
+        finally:
+            _SINGLE_ATTEMPT.active = previous
+
     def _place_order(self, request: OrderRequest) -> Order:
         scope, api = self._connect()
         symbol = self._symbol(request.symbol, request.market)
         if self.market == "KR":
-            response = api.post_order_domestic(
-                kis_account=scope,
-                stock_code=symbol,
-                order_type=request.side,
-                order_qty=request.quantity,
-                order_price=int(request.price) if request.order_type == "limit" else 0,
-                dvsn={"limit": "지정가", "market": "시장가", "close": "장후 시간외"}[request.order_type],
-            )
+            with self._single_attempt():
+                response = api.post_order_domestic(
+                    kis_account=scope,
+                    stock_code=symbol,
+                    order_type=request.side,
+                    order_qty=request.quantity,
+                    order_price=int(request.price) if request.order_type == "limit" else 0,
+                    dvsn={"limit": "지정가", "market": "시장가", "close": "장후 시간외"}[request.order_type],
+                )
         else:
             if request.order_type != "limit":
                 raise NotSupportedError("US KIS only implements limit orders")
             if request.venue not in (None, self.venue):
                 raise NotSupportedError("Order venue must match the configured US venue")
-            response = api.post_order_overseas(
-                kis_account=scope,
-                ticker=symbol,
-                market=VENUES[self.venue][1],
-                order_type=request.side,
-                order_qty=request.quantity,
-                order_price=float(request.price),
-            )
+            with self._single_attempt():
+                response = api.post_order_overseas(
+                    kis_account=scope,
+                    ticker=symbol,
+                    market=VENUES[self.venue][1],
+                    order_type=request.side,
+                    order_qty=request.quantity,
+                    order_price=float(request.price),
+                )
         envelope = check_response(response, "kis")
         if isinstance(response, Mapping) and field(envelope, "rt_cd") is None:
             raise InvalidResponseError("KIS submission response lacks a success status")

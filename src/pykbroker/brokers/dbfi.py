@@ -271,12 +271,9 @@ class DBFI(BaseBroker):
         return Order(id=request.order_id, symbol=request.symbol, status="accepted", market=self.market)
 
     def close(self) -> None:
-        if not self._closed and self._owns_client and self._client is not None:
-            try:
-                close = getattr(self._client, "close", None)
-                if callable(close):
-                    self._call(close)
-            finally:
-                super().close()
-        else:
-            super().close()
+        # Pydb's DBFI.close() revokes the access token (api.py:31-32 -> oauth.py:177). That token sits
+        # on the account row and the legacy DbfiOrder/TriggerTrader reuse it, so closing this broker
+        # ends the session only: the client is dropped, never closed, and nothing reaches the venue.
+        if self._owns_client:
+            self._client = None
+        super().close()
