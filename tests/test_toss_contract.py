@@ -118,3 +118,20 @@ def test_toss_rejects_mismatched_quote_symbol():
     with Toss(account="fixture", account_seq=1, sdk_factory=Wrong) as broker:
         with pytest.raises(InvalidResponseError):
             broker.get_quote("005930")
+
+
+def test_toss_kr_limit_sell_translation_unchanged(live_safety):
+    # US 매도 개방(D11)이 KR 번역을 건드리지 않는지 본다.
+    from pykbroker.models import OrderRequest
+
+    broker = Toss(account="fixture", account_seq=1, sdk_factory=LoopSDK, safety=live_safety, sdk_dry_run=False)
+    order = broker.place_order(
+        OrderRequest(symbol="005930", side="sell", quantity=1, price="70000", client_key="kr-sell")
+    )
+    assert order.id == "fixture-order"
+    assert len(broker._sdk.calls) == 1
+    call = broker._sdk.calls[0]
+    assert (call["symbol"], call["side"], call["order_type"], call["time_in_force"], call["price"]) == (
+        "005930", "SELL", "LIMIT", "DAY", "70000"
+    )
+    broker.close()

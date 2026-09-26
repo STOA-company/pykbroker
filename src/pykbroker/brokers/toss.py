@@ -443,8 +443,10 @@ class Toss(BaseBroker):
         return self._call(read)
 
     def _place_order(self, request: OrderRequest) -> Order:
-        if self.market == "US" and (request.side != "buy" or request.order_type != "limit"):
-            raise NotSupportedError("Toss US pilot accepts LIMIT BUY orders only")
+        # US 파일럿은 지정가만(D11: 매수·매도). 시장가·종가는 계속 거부하고,
+        # 매도 가격 판정(현재가 밴드)은 trader 게이트가 한다.
+        if self.market == "US" and request.order_type != "limit":
+            raise NotSupportedError("Toss US pilot accepts LIMIT orders only")
         # 종가(CLS) 주문은 벤더 해외 세션 전용이고, 그 해외 경로는 B′2-2 로 잠겨 있다.
         if request.order_type == "close":
             raise NotSupportedError("Toss close orders need the unverified overseas session")
