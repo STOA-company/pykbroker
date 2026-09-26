@@ -194,6 +194,82 @@ def test_an_unbypassable_transport_refuses_the_write(live_safety, request_order)
     assert transport.sent == []
 
 
+def _real_tenacity_transport(decorate):
+    """The same wire as `VendorTransport`, but with the real tenacity `@retry` under `decorate`."""
+    tenacity = pytest.importorskip("tenacity")
+
+    class RealRetryTransport(VendorTransport):
+        @decorate
+        @tenacity.retry(
+            stop=tenacity.stop_after_attempt(ATTEMPTS),
+            retry=tenacity.retry_if_not_exception_type((KisTransientError, TimeoutError)),
+            reraise=True,
+            wait=tenacity.wait_none(),
+        )
+        def _execute_request(self, method, path, headers=None, body=None, params=None, response=None):
+            return VendorTransport._execute_request.__wrapped__(self, method, path, headers, body, params, response)
+
+    return RealRetryTransport
+
+
+def _broker_on(live_safety, transport):
+    scope = VendorScope(transport)
+    vendor = SimpleNamespace(
+        client=transport, key=SimpleNamespace(virtual_account=False), account=lambda _account: scope
+    )
+    return KIS(account="fixture-account", client=vendor, api=VendorApi(), safety=live_safety)
+
+
+def _wraps_layer(function):
+    @functools.wraps(function)
+    def outer(*args, **kwargs):
+        return function(*args, **kwargs)
+
+    return outer
+
+
+def _plain_layer(function):
+    """A layer that keeps the chain walkable (`__wrapped__`) but does not copy tenacity's attributes."""
+
+    def outer(*args, **kwargs):
+        return function(*args, **kwargs)
+
+    outer.__wrapped__ = function
+    return outer
+
+
+def test_real_tenacity_is_still_sent_once(live_safety, request_order):
+    transport = _real_tenacity_transport(lambda function: function)([ConnectionError("reset")])
+    with pytest.raises(TransportError):
+        _place(_broker_on(live_safety, transport), request_order)
+    assert len(transport.posts()) == 1
+
+
+@pytest.mark.parametrize("layer", [_wraps_layer, _plain_layer], ids=["functools-wraps", "wrapped-only"])
+def test_a_layer_over_the_retry_is_refused_not_sent(live_safety, request_order, layer):
+    # `__wrapped__` of the outer layer is still the retrying function: one step down is not the raw call.
+    transport = _real_tenacity_transport(layer)([ConnectionError("reset")] * 2)
+    with pytest.raises(ConfigurationError):
+        _place(_broker_on(live_safety, transport), request_order)
+    assert transport.sent == []
+
+
+def test_a_layer_under_the_retry_is_refused_not_sent(live_safety, request_order):
+    tenacity = pytest.importorskip("tenacity")
+
+    class Doubled(VendorTransport):
+        @tenacity.retry(stop=tenacity.stop_after_attempt(ATTEMPTS), reraise=True, wait=tenacity.wait_none())
+        @tenacity.retry(stop=tenacity.stop_after_attempt(ATTEMPTS), reraise=True, wait=tenacity.wait_none())
+        def _execute_request(self, method, path, headers=None, body=None, params=None, response=None):
+            self.sent.append((method, path))
+            raise ConnectionError("reset")
+
+    transport = Doubled([])
+    with pytest.raises(ConfigurationError):
+        _place(_broker_on(live_safety, transport), request_order)
+    assert transport.sent == []
+
+
 def test_a_client_without_a_vendor_transport_is_untouched(kis, request_order):
     broker, _, api, _ = kis
     assert broker.place_order(request_order).id

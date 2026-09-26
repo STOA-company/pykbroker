@@ -1,5 +1,6 @@
 """KIS translation over the optional Pykis client and domestic/overseas helpers."""
 
+import inspect
 import threading
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
@@ -45,6 +46,30 @@ UNFILLED = "미체결"
 # unwrapped `_execute_request` instead; reads keep the vendor's retries.
 _SINGLE_ATTEMPT = threading.local()
 _ARM_LOCK = threading.Lock()
+_TENACITY_MARKS = ("retry", "retry_with")  # what tenacity's `@retry` (and any `functools.wraps` copy of it) carries
+
+
+def _bypass_target(execute: Any) -> Callable[..., Any]:
+    """The call under every wrapper, or a refusal when a retry layer could survive the unwrap.
+
+    Only the outermost layer may carry tenacity's marks (it is the one being bypassed). A mark on
+    any layer below it or on the unwrapped call -- a second `@retry`, or a decorator stacked over
+    `@retry` -- means the chain is not the shape we know, so the write is refused, not retried.
+    """
+    layers: list[Any] = []
+
+    def visit(layer: Any) -> bool:
+        layers.append(layer)
+        return False
+
+    try:
+        raw = inspect.unwrap(execute, stop=visit)
+    except ValueError:  # a wrapper cycle
+        raw = execute
+    below = [*layers[1:], raw]
+    if raw is execute or not callable(raw) or any(hasattr(layer, mark) for layer in below for mark in _TENACITY_MARKS):
+        raise ConfigurationError("KIS transport retries cannot be bypassed; refusing to send an order")
+    return raw
 
 
 def _arm_single_attempt(vendor: Any) -> None:
@@ -53,9 +78,7 @@ def _arm_single_attempt(vendor: Any) -> None:
     execute = getattr(type(transport), "_execute_request", None)
     if execute is None:
         return  # not the Pykis transport: nothing hidden retries under this client
-    raw = getattr(execute, "__wrapped__", None)
-    if not callable(raw):
-        raise ConfigurationError("KIS transport retries cannot be bypassed; refusing to send an order")
+    raw = _bypass_target(execute)
     with _ARM_LOCK:
         if getattr(transport, "_pykbroker_single_attempt", False):
             return

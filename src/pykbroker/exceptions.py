@@ -22,7 +22,11 @@ class SpecUnverifiedError(NotSupportedError):
 
 
 class InvalidResponseError(BrokerError):
-    """A vendor response cannot be interpreted safely."""
+    """A vendor response cannot be interpreted safely.
+
+    On an order write this means the outcome is unknown, not rejected: the order may have reached
+    the venue. Reconcile against the venue's order records before submitting it again.
+    """
 
 
 class BrokerRejectedError(BrokerError):
