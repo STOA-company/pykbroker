@@ -1,4 +1,4 @@
-"""Kiwoom domestic read half over a stored token, with explicit au10001 issuance. No orders or cancels here.
+"""Kiwoom domestic broker over a stored token, with explicit au10001 issuance: reads, limit orders and single cancels.
 
 Spec: the official portal pages of 2026-09-26 12:44 KST (openapi.kiwoom.com/guide/apiGuideContents/...), as
 extracted in q-gateway plans/kiwoom_rest_spec.md. What those pages do not say is refused, never guessed.
@@ -22,6 +22,7 @@ from pykbroker.exceptions import (
     TransportError,
 )
 from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
+from pykbroker.models.order import OrderType, Side
 from pykbroker.rules.kr import KST, equity_rules
 from pykbroker.safety.gate import OrderSafety
 from pykbroker.safety.rate_limit import RateLimiter, credential_rate_limiter
@@ -32,9 +33,12 @@ from ._common import BaseBroker, decimal, whole
 # spelled here once so that `virtual` alone picks it.
 KIWOOM_API_BASE_URL = "https://api.kiwoom.com"
 KIWOOM_MOCK_BASE_URL = "https://mockapi.kiwoom.com"
-# Spec: real 5 read calls/s, mock «TR 1개당 1초 1회», but whether a bucket is per TR or per account is unstated.
-# Four read TRs at 1/s each stay within 5/s under either reading of the real limit.
-KIWOOM_TR_RATE_LIMITS: dict[str, int] = {"ka10001": 1, "ka10004": 1, "kt00001": 1, "kt00018": 1}
+# Spec: real 5 order and 5 read calls/s, mock «TR 1개당 1초 1회», but whether a bucket is per TR or per account is
+# unstated. Every TR is at most 1/s and the read TRs sum to 5 (4 x 1 + 2 x 0.5): either reading of the real limit holds.
+KIWOOM_TR_RATE_LIMITS: dict[str, float] = {
+    "ka10001": 1, "ka10004": 1, "kt00001": 1, "kt00018": 1, "ka10075": 0.5, "kt00007": 0.5,
+    "kt10000": 1, "kt10001": 1, "kt10003": 1,
+}  # fmt: skip
 # A stored token is the only credential the broker holds; the secret key is used once by `issue_token` and dropped.
 CLIENT_OPTION_KEYS = {"token", "token_type", "expires_dt", "app_key"}
 # kt00001 qry_tp is 3 (estimated) or 2 (ordinary). The official sample asks for 3, but neither is described and an
@@ -49,6 +53,13 @@ KIWOOM_MAX_PAGES = 20
 # KST, the earlier of the plausible readings, and a margin is kept: expiry is judged early, never late.
 TOKEN_EXPIRY_MARGIN = timedelta(minutes=5)
 _EXPIRES_DT = re.compile(r"\d{14}")
+# Spec: ord_no is «7자리» (the kt10000 sample shows 5), and 0000000 is the «no original order» filler, never an order.
+_ORDER_NO = re.compile(r"[0-9]{1,7}")
+# trde_tp 0 (보통) is the only order type sent; ka10075/kt00007 spell types in Korean (보통 / 지정가 / 시장가), and any
+# other name stays unknown.
+KIWOOM_LIMIT_TRDE_TP = "0"
+_TYPE_NAMES: dict[str, OrderType] = {"보통": "limit", "지정가": "limit", "시장가": "market"}
+_SIDE_NAMES: dict[str, Side] = {"매수": "buy", "매도": "sell"}
 _JSON_HEADERS = {"content-type": "application/json; charset=utf-8"}
 
 
@@ -87,7 +98,7 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-def _unpack(reply: Any) -> tuple[Mapping[str, Any], Mapping[str, str]]:
+def _unpack(reply: Any, *, write: bool = False) -> tuple[Mapping[str, Any], Mapping[str, str]]:
     if not (isinstance(reply, tuple) and len(reply) == 2 and all(isinstance(part, Mapping) for part in reply)):
         raise InvalidResponseError("Kiwoom client must return a JSON object and its headers")
     body, headers = reply
@@ -95,9 +106,18 @@ def _unpack(reply: Any) -> tuple[Mapping[str, Any], Mapping[str, str]]:
     # as a body code, so an HTTP error surfaces as a transport failure and any body code but 0 is a refusal.
     if "return_code" not in body:
         raise InvalidResponseError("Kiwoom response has no return_code")
+    # A write is refused only by an integer code: a code that is not one is «unknown», never «safe to resubmit».
+    if write and type(body["return_code"]) is not int:
+        raise InvalidResponseError("Kiwoom write response has no integer return_code; reconcile before retrying")
     if type(body["return_code"]) is not int or body["return_code"] != 0:
         raise BrokerRejectedError("Kiwoom rejected the request")
     return body, {str(key).lower(): value for key, value in headers.items()}
+
+
+def _order_number(value: Any) -> str:
+    if not (isinstance(value, str) and _ORDER_NO.fullmatch(value) and int(value)):
+        raise InvalidResponseError("Kiwoom order number is not the documented form; reconcile before retrying")
+    return value
 
 
 def _price(value: Any) -> Decimal:
@@ -196,7 +216,7 @@ class Kiwoom(BaseBroker):
             raise TransportError("Token issuance failed; an earlier token may or may not still be valid") from None
 
     def _post(
-        self, path: str, tr: str, body: dict[str, Any], continuation: str | None = None
+        self, path: str, tr: str, body: dict[str, Any], continuation: str | None = None, *, write: bool = False
     ) -> tuple[Mapping[str, Any], Mapping[str, str]]:
         if self._expires_at is not None and self._clock() >= self._expires_at - TOKEN_EXPIRY_MARGIN:
             raise ConfigurationError("The stored Kiwoom token is expired or about to expire; issue a new one")
@@ -204,7 +224,7 @@ class Kiwoom(BaseBroker):
         if continuation is not None:
             headers.update({"cont-yn": "Y", "next-key": continuation})
         self._limiter.wait(tr)
-        return _unpack(self._client.post(path, headers=headers, json=body))
+        return _unpack(self._client.post(path, headers=headers, json=body), write=write)
 
     def _rows(self, path: str, tr: str, body: dict[str, Any], key: str) -> list[Mapping[str, Any]]:
         """Every page of a list TR. Spec: the response headers `cont-yn`=Y and `next-key` are set on the next request
@@ -229,7 +249,10 @@ class Kiwoom(BaseBroker):
     def capabilities(self) -> Capabilities:
         return Capabilities(
             supports_spot=True,
-            supports_limit_order=False,
+            supports_limit_order=True,
+            supports_single_order_cancel=True,
+            supports_order_history=True,
+            # ka10075 is a snapshot, but the spec does not say how current it is: not declared real-time.
             supports_virtual_account=True,
             virtual=self.virtual,
             venues=("KRX",),
@@ -322,8 +345,119 @@ class Kiwoom(BaseBroker):
     def get_positions(self) -> list[Position]:
         return self._call(self._positions)
 
-    def place_order(self, request: OrderRequest) -> Order:
-        raise NotSupportedError("Kiwoom orders are not implemented in the read half")
+    def _validate_order(self, request: OrderRequest | CancelRequest) -> None:
+        super()._validate_order(request)
+        if isinstance(request, OrderRequest) and request.order_type != "limit":
+            raise NotSupportedError("Kiwoom implements limit orders only")
+        if isinstance(request, CancelRequest) and not _ORDER_NO.fullmatch(request.order_id):
+            raise ConfigurationError("Kiwoom order numbers are at most 7 digits")
 
-    def cancel_order(self, request: CancelRequest) -> Order:
-        raise NotSupportedError("Kiwoom cancellation is not implemented in the read half")
+    def _write(self, path: str, tr: str, body: dict[str, Any]) -> Mapping[str, Any]:
+        """One POST, never repeated: this client does not retry and no caller loop may. A refusal is a return_code
+        integer other than 0; a failed send or an unreadable answer is unknown, so `_call` reports it as such."""
+        response = self._post(path, tr, body, write=True)[0]
+        _order_number(response.get("ord_no"))
+        return response
+
+    def _place_order(self, request: OrderRequest) -> Order:
+        code = self._symbol(request.symbol, request.market)
+        body = {
+            "dmst_stex_tp": "KRX",
+            "stk_cd": code,
+            "ord_qty": str(request.quantity),
+            "ord_uv": str(int(request.price)),
+            "trde_tp": KIWOOM_LIMIT_TRDE_TP,
+        }
+        response = self._write("/api/dostk/ordr", "kt10000" if request.side == "buy" else "kt10001", body)
+        if response.get("dmst_stex_tp", "KRX") != "KRX":
+            raise InvalidResponseError("Kiwoom order went to another exchange; reconcile before retrying")
+        # 접수 is not 체결: the acknowledgement says nothing about fills.
+        return Order(
+            id=response["ord_no"],
+            symbol=code,
+            side=request.side,
+            order_type="limit",
+            quantity=request.quantity,
+            price=request.price,
+            status="accepted",
+            virtual=self.virtual,
+        )
+
+    def _cancel_order(self, request: CancelRequest) -> Order:
+        code = self._symbol(request.symbol, request.market)
+        body = {
+            "dmst_stex_tp": "KRX",
+            "orig_ord_no": request.order_id,
+            "stk_cd": code,
+            "cncl_qty": str(request.quantity),
+        }
+        response = self._write("/api/dostk/ordr", "kt10003", body)
+        # ord_no is the cancel's own number; base_orig_ord_no is not compared (its meaning is unstated). A different
+        # cancelled quantity than asked is not an outcome this adapter can name.
+        if whole(response["cncl_qty"]) != request.quantity:
+            raise InvalidResponseError("Kiwoom cancelled another quantity; reconcile before retrying")
+        # A cancel acknowledgement does not establish the final state of the order.
+        return Order(id=request.order_id, symbol=code, status="accepted", virtual=self.virtual)
+
+    def list_orders(self, symbol: str | None = None) -> list[Order]:
+        code = self._symbol(symbol, self.market) if symbol is not None else None
+        body = {"all_stk_tp": "0" if code is None else "1", "trde_tp": "0", "stex_tp": "1"}
+        if code is not None:
+            body["stk_cd"] = code
+
+        def read() -> list[Order]:
+            orders = []
+            for row in self._rows("/api/dostk/acnt", "ka10075", body, "oso"):
+                listed = self._symbol(row["stk_cd"], "KR")
+                if code is not None and listed != code:
+                    continue
+                filled, remaining = whole(row["cntr_qty"]), whole(row["oso_qty"])
+                orders.append(
+                    Order(
+                        id=_order_number(row["ord_no"]),
+                        symbol=listed,
+                        side=_SIDE_NAMES.get(str(row["io_tp_nm"]).lstrip("+-")),  # +/- only colours the label
+                        order_type=_TYPE_NAMES.get(row["trde_tp"]),
+                        quantity=whole(row["ord_qty"]),
+                        price=_optional_price(row["ord_pric"]),
+                        filled=filled,
+                        remaining=remaining,
+                        status=("partial" if filled else "open") if remaining else "unknown",
+                        virtual=self.virtual,
+                    )
+                )
+            return orders
+
+        return self._call(read)
+
+    def status(self, order: Order) -> Order:
+        """kt00007 for today (KST) by order number. An order the ledger does not show exactly once, or whose numbers
+        do not add up, or that a cancel/amend row points at, is unknown: absence never proves a fill or a cancel."""
+        code = self._symbol(order.symbol, order.market)
+        today = self._clock().astimezone(KST).strftime("%Y%m%d")
+        body = {
+            "ord_dt": today,
+            "qry_tp": "1",
+            "stk_bond_tp": "1",
+            "sell_tp": "0",
+            "stk_cd": code,
+            "dmst_stex_tp": "KRX",
+        }
+
+        def read() -> Order:
+            rows = self._rows("/api/dostk/acnt", "kt00007", body, "acnt_ord_cntr_prps_dtl")
+            mine = [row for row in rows if row.get("ord_no") == order.id]
+            if len(mine) != 1 or self._symbol(mine[0]["stk_cd"], "KR") != code:
+                return order.model_copy(update={"status": "unknown"})
+            quantity, filled, remaining = (whole(mine[0][name]) for name in ("ord_qty", "cntr_qty", "ord_remnq"))
+            touched = any(row.get("ori_ord") == order.id and str(row.get("mdfy_cncl") or "").strip() for row in rows)
+            status = "unknown"
+            if filled and filled == quantity and not remaining:
+                status = "filled"
+            elif remaining and not touched and filled + remaining == quantity:
+                status = "partial" if filled else "open"
+            return order.model_copy(
+                update={"status": status, "quantity": quantity, "filled": filled, "remaining": remaining}
+            )
+
+        return self._call(read)
