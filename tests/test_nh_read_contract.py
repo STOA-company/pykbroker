@@ -70,10 +70,11 @@ def reply(body, status=200, headers=None):
     return status, body, headers or {}
 
 
-def test_unregistered_and_no_order_capability():
+def test_unregistered_and_limit_order_capability():
     broker, _ = make()
     assert "nh" not in BROKERS
-    assert not broker.capabilities().supports_limit_order
+    assert broker.capabilities().supports_limit_order
+    assert broker.capabilities().supports_single_order_cancel
     assert not broker.capabilities().supports_market_order
 
 
@@ -357,14 +358,13 @@ def test_cash_buyable_quantity_requires_explicit_limit_price():
 def test_same_symbol_cash_and_credit_rows_share_one_cash_sellable_result():
     rows = [
         {**BALANCE["Output_1"][0], "itg_bnc_qty": 2, "phs_pr": 10000, "eal_amt": 30000},
-        {**BALANCE["Output_1"][0], "itg_bnc_qty": 3, "phs_pr": 12000, "eal_amt": 45000,
-         "itg_bnc_tp_cd": "credit"},
+        {**BALANCE["Output_1"][0], "itg_bnc_qty": 3, "phs_pr": 12000, "eal_amt": 45000, "itg_bnc_tp_cd": "credit"},
     ]
     responses = {
-        "/krstock/inquiry/v1/balance": reply({"Output_0": BALANCE["Output_0"], "Output_1": rows,
-                                                 "rsp_cd": "00000"}),
+        "/krstock/inquiry/v1/balance": reply({"Output_0": BALANCE["Output_0"], "Output_1": rows, "rsp_cd": "00000"}),
         "/krstock/inquiry/v1/sellableQuantity": reply(
-            {"Output_0": {"iem_cd": "005930", "sll_pbl_qty": 2}, "rsp_cd": "00000"}),
+            {"Output_0": {"iem_cd": "005930", "sll_pbl_qty": 2}, "rsp_cd": "00000"}
+        ),
     }
     broker, calls = make(responses)
     (position,) = broker.get_positions()
@@ -372,7 +372,8 @@ def test_same_symbol_cash_and_credit_rows_share_one_cash_sellable_result():
     assert position.average_price == 11200 and position.market_value == 75000
     assert [path for _, path, _, _ in calls].count("/krstock/inquiry/v1/sellableQuantity") == 1
     responses["/krstock/inquiry/v1/sellableQuantity"] = reply(
-        {"Output_0": {"iem_cd": "005930", "sll_pbl_qty": 6}, "rsp_cd": "00000"})
+        {"Output_0": {"iem_cd": "005930", "sll_pbl_qty": 6}, "rsp_cd": "00000"}
+    )
     with pytest.raises(InvalidResponseError):
         broker.get_positions()
 
@@ -400,8 +401,11 @@ def test_business_token_error_renews_once_and_replaces_stale_cache():
 
 def test_rejected_token_without_secret_is_removed_from_cache():
     cache = {KEY: {"token": TOKEN, "expires_at": (NOW + timedelta(hours=1)).isoformat()}}
-    broker, calls = make({"/krstock/inquiry/v1/balance": reply({"rsp_cd": "IGW40043"})},
-                         options={"app_key": KEY, "token": TOKEN}, cache=cache)
+    broker, calls = make(
+        {"/krstock/inquiry/v1/balance": reply({"rsp_cd": "IGW40043"})},
+        options={"app_key": KEY, "token": TOKEN},
+        cache=cache,
+    )
     with pytest.raises(ConfigurationError):
         broker.get_balance()
     assert KEY not in cache and len(calls) == 1
@@ -409,14 +413,19 @@ def test_rejected_token_without_secret_is_removed_from_cache():
 
 def test_unknown_negated_completion_and_malformed_message_fail_closed():
     for body, error in [
-        ({"Output_0": BALANCE["Output_0"], "rsp_cd": "99999", "rsp_msg": "조회가 완료되지 않았습니다."},
-         BrokerRejectedError),
-        ({"Output_0": BALANCE["Output_0"], "rsp_cd": "99999", "rsp_msg": "조회 미완료되었습니다."},
-         BrokerRejectedError),
-        ({"Output_0": BALANCE["Output_0"], "rsp_cd": "00000", "rsp_msg": "조회가 완료되지 않았습니다."},
-         BrokerRejectedError),
-        ({"Output_0": BALANCE["Output_0"], "rsp_cd": "99999", "message": "malformed"},
-         InvalidResponseError),
+        (
+            {"Output_0": BALANCE["Output_0"], "rsp_cd": "99999", "rsp_msg": "조회가 완료되지 않았습니다."},
+            BrokerRejectedError,
+        ),
+        (
+            {"Output_0": BALANCE["Output_0"], "rsp_cd": "99999", "rsp_msg": "조회 미완료되었습니다."},
+            BrokerRejectedError,
+        ),
+        (
+            {"Output_0": BALANCE["Output_0"], "rsp_cd": "00000", "rsp_msg": "조회가 완료되지 않았습니다."},
+            BrokerRejectedError,
+        ),
+        ({"Output_0": BALANCE["Output_0"], "rsp_cd": "99999", "message": "malformed"}, InvalidResponseError),
         ({"Output_0": BALANCE["Output_0"], "rsp_cd": "00000", "rsp_msg": 42}, InvalidResponseError),
     ]:
         broker, _ = make({"/krstock/inquiry/v1/balance": reply(body)})
@@ -425,8 +434,13 @@ def test_unknown_negated_completion_and_malformed_message_fail_closed():
 
 
 def test_quote_rejects_different_response_symbol():
-    broker, _ = make({"/krstock/quote/v1/currentPrice": reply(
-        {"Output_0": {"iem_cd": "000660", "stck_prpr": 15000}, "rsp_cd": "00000"})})
+    broker, _ = make(
+        {
+            "/krstock/quote/v1/currentPrice": reply(
+                {"Output_0": {"iem_cd": "000660", "stck_prpr": 15000}, "rsp_cd": "00000"}
+            )
+        }
+    )
     with pytest.raises(InvalidResponseError):
         broker.get_quote("005930")
 
