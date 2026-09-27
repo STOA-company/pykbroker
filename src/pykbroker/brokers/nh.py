@@ -296,10 +296,14 @@ class NH(BaseBroker):
         message = body.get("rsp_msg") or (nested.get("usr_msg") if nested is not None else None)
         if message is not None and not isinstance(message, str):
             raise InvalidResponseError("NH response message is malformed")
-        # Match an affirmative completion at the end, not the word inside
-        # "완료되지 않았습니다". Known successful codes may omit a message.
+        # Only documented affirmative lookup wording can authorize an unknown
+        # code. Arbitrary text following "완료" may describe a failed read.
         completed = bool(
-            message and re.search(r"(?<!미)완료(?:되었습니다|됐습니다|했습니다|됨)?(?:\s*\([^)]*\))?[.!\s]*$", message)
+            message
+            and re.fullmatch(
+                r"(?:(?:정상\s+)?조회(?:가)?\s*)?완료(?:되었습니다|됐습니다|했습니다|됨)?(?:\s*\(\d+건\))?[.!]?",
+                message.strip(),
+            )
         )
         if code not in NH_SUCCESS_CODES | NH_CONTINUATION_CODES and not completed:
             raise BrokerRejectedError("NH read rejected")
