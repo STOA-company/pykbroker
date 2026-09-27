@@ -8,6 +8,7 @@ token file is created by this adapter.
 """
 
 import json
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -187,6 +188,15 @@ class NH(BaseBroker):
             raise ConfigurationError("NH token is absent or expired; supply app_secret or a fresh stored token")
         return self.issue_token()["token"]
 
+    def _discard_token(self) -> None:
+        rejected_token = self._token
+        self._token = None
+        self._expires_at = None
+        if self._cache is not None:
+            cached = self._cache.get(self._app_key)
+            if isinstance(cached, Mapping) and cached.get("token") == rejected_token:
+                self._cache.pop(self._app_key, None)
+
     def issue_token(self) -> dict[str, str]:
         """Explicit or lazy issuance; never retry on 429 and never include secrets in errors."""
         if not self._app_secret:
@@ -251,25 +261,35 @@ class NH(BaseBroker):
         data = json.dumps({"Input_0": payload}, ensure_ascii=False).encode("utf-8")
         self._limiter.wait("read")
         status, body, response_headers = self._post_raw(client or self._client, path, headers, data)
-        if status == 401:
-            # Only an explicit 401 permits renewal. One replay, no retry loop.
+        if status == 401 or (status == 200 and body.get("rsp_cd") == "IGW40043"):
+            # HTTP 401 and this business code both mean an invalid access token.
+            self._discard_token()
             if not self._app_secret:
                 raise ConfigurationError("NH token was rejected; supply app_secret to renew")
             self.issue_token()
             headers["authorization"] = f"Bearer {self._token}"
             self._limiter.wait("read")
             status, body, response_headers = self._post_raw(client or self._client, path, headers, data)
-        if status == 401:
+        if status == 401 or (status == 200 and body.get("rsp_cd") == "IGW40043"):
+            self._discard_token()
             raise ConfigurationError("NH token was rejected")
         if status == 429:
             raise TransportError("NH read rate limit")
         if status != 200:
             raise TransportError(f"NH read HTTP {status}")
         code = str(body.get("rsp_cd", ""))
-        message = str(body.get("rsp_msg") or (body.get("message") or {}).get("usr_msg", ""))
-        if code == "IGW40043":
-            raise ConfigurationError("NH token was rejected")
-        if code and code not in NH_SUCCESS_CODES | NH_CONTINUATION_CODES and "완료" not in message:
+        nested = body.get("message")
+        if nested is not None and not isinstance(nested, Mapping):
+            raise InvalidResponseError("NH response message is malformed")
+        message = body.get("rsp_msg") or (nested.get("usr_msg") if nested is not None else None)
+        if message is not None and not isinstance(message, str):
+            raise InvalidResponseError("NH response message is malformed")
+        # Match an affirmative completion at the end, not the word inside
+        # "완료되지 않았습니다". Known successful codes may omit a message.
+        completed = bool(message and re.search(r"(?:^|\s)완료(?:되었습니다|됐습니다|했습니다|됨)?[.!\s]*$", message))
+        if code not in NH_SUCCESS_CODES | NH_CONTINUATION_CODES and not completed:
+            raise BrokerRejectedError("NH read rejected")
+        if code in NH_SUCCESS_CODES and message and "완료" in message and not completed:
             raise BrokerRejectedError("NH read rejected")
         # Documented blocks are optional in the wire schema, but a money/price read
         # without the expected block cannot be interpreted as zero or success.
@@ -329,6 +349,8 @@ class NH(BaseBroker):
             ]
             if not isinstance(row, Mapping):
                 raise InvalidResponseError("NH quote block is invalid")
+            if row.get("iem_cd") is not None and row["iem_cd"] != code:
+                raise InvalidResponseError("NH quote symbol does not match request")
             bid = decimal(row["bidp"]) if row.get("bidp") not in (None, "", 0, "0") else None
             ask = decimal(row["askp"]) if row.get("askp") not in (None, "", 0, "0") else None
             if bid is not None and ask is not None and bid > ask:
@@ -392,24 +414,39 @@ class NH(BaseBroker):
             rows = body.get("Output_1", [])
             if not isinstance(rows, list):
                 raise InvalidResponseError("NH positions block is invalid")
-            result = []
+            grouped: dict[str, dict[str, Any]] = {}
             for row in rows:
                 if not isinstance(row, Mapping):
                     raise InvalidResponseError("NH position row is invalid")
                 code = self._symbol(row["iem_cd"], "KR")
                 quantity = whole(row["itg_bnc_qty"])
-                result.append(
-                    Position(
-                        symbol=code,
-                        name=str(row.get("iem_nm", "")),
-                        quantity=quantity,
-                        sellable=self._sellable_quantity(code),
-                        average_price=decimal(row["phs_pr"]),
-                        last=decimal(row["now_pr"]),
-                        market_value=decimal(row["eal_amt"]),
-                    )
+                price, last, value = decimal(row["phs_pr"]), decimal(row["now_pr"]), decimal(row["eal_amt"])
+                if code not in grouped:
+                    grouped[code] = {
+                        "name": str(row.get("iem_nm", "")),
+                        "quantity": 0,
+                        "cost": Decimal(0),
+                        "last": last,
+                        "value": Decimal(0),
+                    }
+                item = grouped[code]
+                if item["last"] != last:
+                    raise InvalidResponseError("NH position prices conflict for the same symbol")
+                item["quantity"] += quantity
+                item["cost"] += price * quantity
+                item["value"] += value
+            return [
+                Position(
+                    symbol=code,
+                    name=item["name"],
+                    quantity=item["quantity"],
+                    sellable=self._sellable_quantity(code),
+                    average_price=item["cost"] / item["quantity"] if item["quantity"] else Decimal(0),
+                    last=item["last"],
+                    market_value=item["value"],
                 )
-            return result
+                for code, item in grouped.items()
+            ]
 
         return self._call(read)
 
@@ -432,19 +469,20 @@ class NH(BaseBroker):
         return self._call(lambda: self._sellable_quantity(code))
 
     def buyable_quantity(self, symbol: str, *, price: Decimal | None = None) -> int:
-        """Cash buyable quantity for a stock and optional proposed limit price."""
+        """Cash buyable quantity at the caller's ordinary limit price."""
         code = self._symbol(symbol, "KR")
+        if price is None:
+            raise ConfigurationError("NH buyable quantity requires a limit price")
         payload: dict[str, Any] = {
             "ost_dit_cd": "1",
             "act_no": self._account,
             "iem_cd": code,
             "nmn_pr_tp_cd": "01",
         }
-        if price is not None:
-            value = decimal(price)
-            if value <= 0 or value != value.to_integral_value():
-                raise ConfigurationError("NH KR order price must be positive whole won")
-            payload["orr_pr"] = int(value)
+        value = decimal(price)
+        if value <= 0 or value != value.to_integral_value():
+            raise ConfigurationError("NH KR order price must be positive whole won")
+        payload["orr_pr"] = int(value)
 
         def read() -> int:
             row = self._read("/krstock/inquiry/v1/buyableQuantity", payload, "Output_0")["Output_0"]

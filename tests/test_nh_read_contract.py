@@ -347,6 +347,90 @@ def test_cash_buyable_quantity_uses_cash_field_and_requires_it():
         broker.buyable_quantity("005930", price=Decimal(15000))
 
 
+def test_cash_buyable_quantity_requires_explicit_limit_price():
+    broker, calls = make({"/krstock/inquiry/v1/buyableQuantity": reply({"rsp_cd": "00000"})})
+    with pytest.raises(ConfigurationError, match="limit price"):
+        broker.buyable_quantity("005930")
+    assert calls == []
+
+
+def test_same_symbol_cash_and_credit_rows_share_one_cash_sellable_result():
+    rows = [
+        {**BALANCE["Output_1"][0], "itg_bnc_qty": 2, "phs_pr": 10000, "eal_amt": 30000},
+        {**BALANCE["Output_1"][0], "itg_bnc_qty": 3, "phs_pr": 12000, "eal_amt": 45000,
+         "itg_bnc_tp_cd": "credit"},
+    ]
+    responses = {
+        "/krstock/inquiry/v1/balance": reply({"Output_0": BALANCE["Output_0"], "Output_1": rows,
+                                                 "rsp_cd": "00000"}),
+        "/krstock/inquiry/v1/sellableQuantity": reply(
+            {"Output_0": {"iem_cd": "005930", "sll_pbl_qty": 2}, "rsp_cd": "00000"}),
+    }
+    broker, calls = make(responses)
+    (position,) = broker.get_positions()
+    assert position.quantity == 5 and position.sellable == 2
+    assert position.average_price == 11200 and position.market_value == 75000
+    assert [path for _, path, _, _ in calls].count("/krstock/inquiry/v1/sellableQuantity") == 1
+    responses["/krstock/inquiry/v1/sellableQuantity"] = reply(
+        {"Output_0": {"iem_cd": "005930", "sll_pbl_qty": 6}, "rsp_cd": "00000"})
+    with pytest.raises(InvalidResponseError):
+        broker.get_positions()
+
+
+def test_business_token_error_renews_once_and_replaces_stale_cache():
+    error = reply({"rsp_cd": "IGW40043", "rsp_msg": "token expired"})
+    cache = {KEY: {"token": TOKEN, "expires_at": (NOW + timedelta(hours=1)).isoformat()}}
+    responses = {
+        "/oauth2/token": reply({"access_token": "new-token", "expires_in": 86400}),
+        "/krstock/inquiry/v1/balance": [error, reply(BALANCE)],
+    }
+    broker, calls = make(responses, options={"app_key": KEY, "token": TOKEN, "app_secret": SECRET}, cache=cache)
+    assert broker.get_balance().cash_available == 40000
+    assert cache[KEY]["token"] == "new-token"
+    assert [path for _, path, _, _ in calls].count("/oauth2/token") == 1
+    assert calls[-1][2]["authorization"] == "Bearer new-token"
+    responses["/krstock/inquiry/v1/balance"] = [error, error]
+    cache = {}
+    broker, calls = make(responses, options={"app_key": KEY, "token": TOKEN, "app_secret": SECRET}, cache=cache)
+    with pytest.raises(ConfigurationError):
+        broker.get_balance()
+    assert [path for _, path, _, _ in calls].count("/oauth2/token") == 1
+    assert KEY not in cache
+
+
+def test_rejected_token_without_secret_is_removed_from_cache():
+    cache = {KEY: {"token": TOKEN, "expires_at": (NOW + timedelta(hours=1)).isoformat()}}
+    broker, calls = make({"/krstock/inquiry/v1/balance": reply({"rsp_cd": "IGW40043"})},
+                         options={"app_key": KEY, "token": TOKEN}, cache=cache)
+    with pytest.raises(ConfigurationError):
+        broker.get_balance()
+    assert KEY not in cache and len(calls) == 1
+
+
+def test_unknown_negated_completion_and_malformed_message_fail_closed():
+    for body, error in [
+        ({"Output_0": BALANCE["Output_0"], "rsp_cd": "99999", "rsp_msg": "조회가 완료되지 않았습니다."},
+         BrokerRejectedError),
+        ({"Output_0": BALANCE["Output_0"], "rsp_cd": "99999", "rsp_msg": "조회 미완료되었습니다."},
+         BrokerRejectedError),
+        ({"Output_0": BALANCE["Output_0"], "rsp_cd": "00000", "rsp_msg": "조회가 완료되지 않았습니다."},
+         BrokerRejectedError),
+        ({"Output_0": BALANCE["Output_0"], "rsp_cd": "99999", "message": "malformed"},
+         InvalidResponseError),
+        ({"Output_0": BALANCE["Output_0"], "rsp_cd": "00000", "rsp_msg": 42}, InvalidResponseError),
+    ]:
+        broker, _ = make({"/krstock/inquiry/v1/balance": reply(body)})
+        with pytest.raises(error):
+            broker.get_balance()
+
+
+def test_quote_rejects_different_response_symbol():
+    broker, _ = make({"/krstock/quote/v1/currentPrice": reply(
+        {"Output_0": {"iem_cd": "000660", "stck_prpr": 15000}, "rsp_cd": "00000"})})
+    with pytest.raises(InvalidResponseError):
+        broker.get_quote("005930")
+
+
 def test_cash_balance_uses_lower_deposit_when_order_amount_is_higher():
     body = {"Output_0": {"dca": 1000, "orr_pbl_amt": 5000, "tot_eal_amt": 0}, "rsp_cd": "00000"}
     broker, _ = make({"/krstock/inquiry/v1/balance": reply(body)})
@@ -393,7 +477,6 @@ def test_account_type_must_match_host_and_account_list():
         virtual=True,
     )
     assert broker.verify_account() == "03"
-    assert calls[0][0] == NH_API_BASE_URL
     assert calls[0][0] == NH_API_BASE_URL
     assert json.loads(calls[0][3]) == {"Input_0": {}}
     broker, _ = make(
