@@ -142,8 +142,7 @@ class NH(BaseBroker):
         self._client = factory(base_url=NH_MOCK_BASE_URL if virtual else NH_API_BASE_URL)
         # Token issuance is always on the live host, including for mock accounts.
         self._auth_client = factory(base_url=NH_API_BASE_URL)
-        if token_cache is not None and token and self._expires_at:
-            token_cache[app_key] = self.token_state()
+        self._publish_token_if_fresher()
 
     def token_state(self) -> dict[str, str]:
         """Return only the issued token and expiry for caller controlled persistence."""
@@ -171,9 +170,7 @@ class NH(BaseBroker):
     def _token_valid(self) -> bool:
         return bool(self._token) and (self._expires_at is None or self._clock() < self._expires_at - TOKEN_MARGIN)
 
-    def _ensure_token(self) -> str:
-        if self._token_valid():
-            return self._token  # type: ignore[return-value]
+    def _cached_token(self) -> tuple[str, datetime] | None:
         if self._cache is not None:
             cached = self._cache.get(self._app_key)
             if isinstance(cached, Mapping):
@@ -182,8 +179,26 @@ class NH(BaseBroker):
                     _expiry(cached.get("expires_at")) if cached.get("expires_at") else None,
                 )
                 if isinstance(token, str) and token and expiry and self._clock() < expiry - TOKEN_MARGIN:
-                    self._token, self._expires_at = token, expiry
-                    return token
+                    return token, expiry
+        return None
+
+    def _publish_token_if_fresher(self) -> None:
+        if self._cache is None or not self._token_valid() or self._expires_at is None:
+            return
+        cached = self._cached_token()
+        if cached is None or self._expires_at > cached[1]:
+            self._cache[self._app_key] = self.token_state()
+
+    def _ensure_token(self) -> str:
+        cached = self._cached_token()
+        if cached is not None and (
+            not self._token_valid() or self._expires_at is None or cached[1] > self._expires_at
+        ):
+            self._token, self._expires_at = cached
+            return cached[0]
+        if self._token_valid():
+            self._publish_token_if_fresher()
+            return self._token  # type: ignore[return-value]
         if not self._app_secret:
             raise ConfigurationError("NH token is absent or expired; supply app_secret or a fresh stored token")
         return self.issue_token()["token"]
@@ -237,8 +252,7 @@ class NH(BaseBroker):
         self._token = token
         self._expires_at = self._clock() + timedelta(seconds=ttl)
         state = self.token_state()
-        if self._cache is not None:
-            self._cache[self._app_key] = state
+        self._publish_token_if_fresher()
         return state
 
     def _read_response(
@@ -264,9 +278,7 @@ class NH(BaseBroker):
         if status == 401 or (status == 200 and body.get("rsp_cd") == "IGW40043"):
             # HTTP 401 and this business code both mean an invalid access token.
             self._discard_token()
-            if not self._app_secret:
-                raise ConfigurationError("NH token was rejected; supply app_secret to renew")
-            self.issue_token()
+            self._ensure_token()
             headers["authorization"] = f"Bearer {self._token}"
             self._limiter.wait("read")
             status, body, response_headers = self._post_raw(client or self._client, path, headers, data)
@@ -286,7 +298,9 @@ class NH(BaseBroker):
             raise InvalidResponseError("NH response message is malformed")
         # Match an affirmative completion at the end, not the word inside
         # "완료되지 않았습니다". Known successful codes may omit a message.
-        completed = bool(message and re.search(r"(?:^|\s)완료(?:되었습니다|됐습니다|했습니다|됨)?[.!\s]*$", message))
+        completed = bool(
+            message and re.search(r"(?<!미)완료(?:되었습니다|됐습니다|했습니다|됨)?(?:\s*\([^)]*\))?[.!\s]*$", message)
+        )
         if code not in NH_SUCCESS_CODES | NH_CONTINUATION_CODES and not completed:
             raise BrokerRejectedError("NH read rejected")
         if code in NH_SUCCESS_CODES and message and "완료" in message and not completed:
@@ -298,7 +312,7 @@ class NH(BaseBroker):
         return body, response_headers
 
     def _read(
-        self, path: str, payload: Mapping[str, Any], expected: str, *, client: Any | None = None
+        self, path: str, payload: Mapping[str, Any], expected: str | None, *, client: Any | None = None
     ) -> Mapping[str, Any]:
         body, headers = self._read_response(path, payload, expected, client=client)
         page_headers = {str(key).lower(): value for key, value in headers.items()}
@@ -360,7 +374,7 @@ class NH(BaseBroker):
 
         return self._call(read)
 
-    def _balance(self) -> Mapping[str, Any]:
+    def _balance(self, *, allow_empty_positions: bool = False) -> Mapping[str, Any]:
         payload = {
             "act_no": self._account,
             "bnc_bse_cd": "5",
@@ -389,6 +403,8 @@ class NH(BaseBroker):
             more = flag == "Y" or (flag is None and code in NH_CONTINUATION_CODES)
             if not more:
                 if not isinstance(body.get("Output_0"), Mapping):
+                    if allow_empty_positions and code == "13578" and not rows and body.get("Output_0") is None:
+                        return {**body, "Output_1": []}
                     raise InvalidResponseError("NH balance final summary is missing")
                 return {**body, "Output_1": rows}
             if not isinstance(next_cts, str) or not next_cts or next_cts in seen:
@@ -410,7 +426,7 @@ class NH(BaseBroker):
 
     def get_positions(self) -> list[Position]:
         def read() -> list[Position]:
-            body = self._balance()
+            body = self._balance(allow_empty_positions=True)
             rows = body.get("Output_1", [])
             if not isinstance(rows, list):
                 raise InvalidResponseError("NH positions block is invalid")
@@ -451,16 +467,25 @@ class NH(BaseBroker):
         return self._call(read)
 
     def _sellable_quantity(self, code: str) -> int:
-        row = self._read(
+        body = self._read(
             "/krstock/inquiry/v1/sellableQuantity",
             {
                 "act_no": self._account,
                 "iem_cd": code,
                 "cfd_lon_cd": "00",
             },
-            "Output_0",
-        )["Output_0"]
-        if not isinstance(row, Mapping) or row.get("iem_cd") != code:
+            None,
+        )
+        row = body.get("Output_0")
+        if row is None and str(body.get("rsp_cd", "")) == "13578":
+            return 0
+        if not isinstance(row, Mapping):
+            raise InvalidResponseError("NH sellable quantity block is missing")
+        try:
+            response_code = self._symbol(row["iem_cd"], "KR")
+        except (ConfigurationError, KeyError):
+            raise InvalidResponseError("NH sellable quantity symbol is invalid") from None
+        if response_code != code:
             raise InvalidResponseError("NH sellable quantity does not match symbol")
         return whole(row["sll_pbl_qty"])
 
