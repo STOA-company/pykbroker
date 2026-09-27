@@ -25,13 +25,17 @@ from pykbroker.exceptions import (
     TransportError,
 )
 from pykbroker.models import Balance, Capabilities, Position, Quote
+from pykbroker.safety.rate_limit import RateLimiter, credential_rate_limiter
 
 from ._common import BaseBroker, decimal, whole
 
 NH_API_BASE_URL = "https://api.nhplug.com:8443"
 NH_MOCK_BASE_URL = "https://moapi.nhplug.com:8443"
 NH_SUCCESS_CODES = frozenset({"00000", "00166", "00221", "13578"})
+NH_CONTINUATION_CODES = frozenset({"00165", "00218"})
 TOKEN_MARGIN = timedelta(minutes=5)
+NH_READ_RATES = {"read": 4.0}
+NH_MAX_BALANCE_PAGES = 100
 _OPTIONS = {"app_key", "app_secret", "token", "token_type", "expires_at", "acct_type"}
 _VENUES = frozenset({"KRX", "NXT", "UNT"})
 
@@ -103,6 +107,7 @@ class NH(BaseBroker):
         client_factory: Callable[..., Any] | None = None,
         token_cache: MutableMapping[str, dict[str, str]] | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        rate_limiter: RateLimiter | None = None,
     ) -> None:
         super().__init__(account=account, market=market, virtual=virtual)
         if market != "KR":
@@ -131,6 +136,7 @@ class NH(BaseBroker):
         self._expires_at = _expiry(options.get("expires_at"))
         self._cache = token_cache
         self._clock = clock
+        self._limiter = rate_limiter or credential_rate_limiter("nh", app_key, NH_READ_RATES)
         factory = client_factory or _NhRestClient
         self._client = factory(base_url=NH_MOCK_BASE_URL if virtual else NH_API_BASE_URL)
         # Token issuance is always on the live host, including for mock accounts.
@@ -225,22 +231,34 @@ class NH(BaseBroker):
             self._cache[self._app_key] = state
         return state
 
-    def _read(self, path: str, payload: Mapping[str, Any], expected: str) -> Mapping[str, Any]:
+    def _read_response(
+        self,
+        path: str,
+        payload: Mapping[str, Any],
+        expected: str | None,
+        *,
+        client: Any | None = None,
+        cts: str | None = None,
+    ) -> tuple[Mapping[str, Any], Mapping[str, str]]:
         self._ensure_token()
         headers = {
             "authorization": f"Bearer {self._token}",
             "x-client-id": self._app_key,
             "content-type": "application/json; charset=UTF-8",
         }
+        if cts is not None:
+            headers.update({"cts": cts, "cts_flag": "Y"})
         data = json.dumps({"Input_0": payload}, ensure_ascii=False).encode("utf-8")
-        status, body, _ = self._post_raw(self._client, path, headers, data)
+        self._limiter.wait("read")
+        status, body, response_headers = self._post_raw(client or self._client, path, headers, data)
         if status == 401:
             # Only an explicit 401 permits renewal. One replay, no retry loop.
             if not self._app_secret:
                 raise ConfigurationError("NH token was rejected; supply app_secret to renew")
             self.issue_token()
             headers["authorization"] = f"Bearer {self._token}"
-            status, body, _ = self._post_raw(self._client, path, headers, data)
+            self._limiter.wait("read")
+            status, body, response_headers = self._post_raw(client or self._client, path, headers, data)
         if status == 401:
             raise ConfigurationError("NH token was rejected")
         if status == 429:
@@ -251,12 +269,21 @@ class NH(BaseBroker):
         message = str(body.get("rsp_msg") or (body.get("message") or {}).get("usr_msg", ""))
         if code == "IGW40043":
             raise ConfigurationError("NH token was rejected")
-        if code and code not in NH_SUCCESS_CODES and "완료" not in message:
+        if code and code not in NH_SUCCESS_CODES | NH_CONTINUATION_CODES and "완료" not in message:
             raise BrokerRejectedError("NH read rejected")
         # Documented blocks are optional in the wire schema, but a money/price read
         # without the expected block cannot be interpreted as zero or success.
-        if expected not in body or body[expected] is None:
+        if expected is not None and (expected not in body or body[expected] is None):
             raise InvalidResponseError(f"NH read missing {expected}")
+        return body, response_headers
+
+    def _read(
+        self, path: str, payload: Mapping[str, Any], expected: str, *, client: Any | None = None
+    ) -> Mapping[str, Any]:
+        body, headers = self._read_response(path, payload, expected, client=client)
+        page_headers = {str(key).lower(): value for key, value in headers.items()}
+        if page_headers.get("cts_flag") not in (None, "N") or str(body.get("rsp_cd", "")) in NH_CONTINUATION_CODES:
+            raise InvalidResponseError("NH single-result read unexpectedly needs continuation")
         return body
 
     def capabilities(self) -> Capabilities:
@@ -275,7 +302,7 @@ class NH(BaseBroker):
         """Check /n2/acctinfo account ownership and its documented live/mock type."""
 
         def read() -> str:
-            body = self._read("/n2/acctinfo", {}, "Output_0")
+            body = self._read("/n2/acctinfo", {}, "Output_0", client=self._auth_client)
             rows = body["Output_0"]
             if isinstance(rows, Mapping):
                 rows = [rows]
@@ -312,18 +339,41 @@ class NH(BaseBroker):
         return self._call(read)
 
     def _balance(self) -> Mapping[str, Any]:
-        return self._read(
-            "/krstock/inquiry/v1/balance",
-            {
-                "act_no": self._account,
-                "bnc_bse_cd": "5",
-                "ltg_aot_dit_cd": "9",
-                "aet_bse": "1",
-                "qut_dit_cd": self.venue,
-                "aly_qut_cd": "2",
-            },
-            "Output_0",
-        )
+        payload = {
+            "act_no": self._account,
+            "bnc_bse_cd": "5",
+            "ltg_aot_dit_cd": "9",
+            "aet_bse": "1",
+            "qut_dit_cd": self.venue,
+            "aly_qut_cd": "2",
+        }
+        rows: list[Any] = []
+        seen: set[str] = set()
+        cts: str | None = None
+        for _ in range(NH_MAX_BALANCE_PAGES):
+            body, headers = self._read_response("/krstock/inquiry/v1/balance", payload, None, cts=cts)
+            page_rows = body.get("Output_1", [])
+            if not isinstance(page_rows, list):
+                raise InvalidResponseError("NH positions block is invalid")
+            rows.extend(page_rows)
+            page_headers = {str(key).lower(): value for key, value in headers.items()}
+            flag = page_headers.get("cts_flag")
+            next_cts = page_headers.get("cts")
+            if flag not in (None, "Y", "N"):
+                raise InvalidResponseError("NH balance continuation flag is invalid")
+            code = str(body.get("rsp_cd", ""))
+            if flag == "N" and code in NH_CONTINUATION_CODES:
+                raise InvalidResponseError("NH balance continuation signals conflict")
+            more = flag == "Y" or (flag is None and code in NH_CONTINUATION_CODES)
+            if not more:
+                if not isinstance(body.get("Output_0"), Mapping):
+                    raise InvalidResponseError("NH balance final summary is missing")
+                return {**body, "Output_1": rows}
+            if not isinstance(next_cts, str) or not next_cts or next_cts in seen:
+                raise InvalidResponseError("NH balance continuation key is missing or repeated")
+            seen.add(next_cts)
+            cts = next_cts
+        raise InvalidResponseError("NH balance exceeded the page limit")
 
     def get_balance(self) -> Balance:
         def read() -> Balance:
@@ -400,6 +450,8 @@ class NH(BaseBroker):
             row = self._read("/krstock/inquiry/v1/buyableQuantity", payload, "Output_0")["Output_0"]
             if not isinstance(row, Mapping):
                 raise InvalidResponseError("NH buying power block is invalid")
-            return whole(row["orr_pbl_qty"])
+            if "csh_orr_pbl_qty" not in row:
+                raise InvalidResponseError("NH cash buyable quantity is missing")
+            return whole(row["csh_orr_pbl_qty"])
 
         return self._call(read)

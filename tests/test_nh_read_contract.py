@@ -10,6 +10,7 @@ import pytest
 from pykbroker.brokers.nh import NH, NH_API_BASE_URL, NH_MOCK_BASE_URL
 from pykbroker.exceptions import BrokerRejectedError, ConfigurationError, InvalidResponseError, TransportError
 from pykbroker.factory import BROKERS
+from pykbroker.safety.rate_limit import RateLimiter
 
 NOW = datetime(2026, 9, 27, tzinfo=UTC)
 KEY = "fixture-key"
@@ -45,7 +46,7 @@ class FakeTransport:
         return response
 
 
-def make(responses=None, *, options=None, virtual=False, cache=None, venue="KRX"):
+def make(responses=None, *, options=None, virtual=False, cache=None, venue="KRX", rate_limiter=None):
     calls = []
     replies = responses or {}
 
@@ -60,12 +61,13 @@ def make(responses=None, *, options=None, virtual=False, cache=None, venue="KRX"
         token_cache=cache,
         venue=venue,
         clock=lambda: NOW,
+        rate_limiter=rate_limiter,
     )
     return broker, calls
 
 
-def reply(body, status=200):
-    return status, body, {}
+def reply(body, status=200, headers=None):
+    return status, body, headers or {}
 
 
 def test_unregistered_and_no_order_capability():
@@ -127,7 +129,9 @@ def test_balance_positions_and_buying_power_exact_inputs():
         "/krstock/inquiry/v1/sellableQuantity": reply(
             {"Output_0": {"iem_cd": "005930", "sll_pbl_qty": 1}, "rsp_cd": "00000"}
         ),
-        "/krstock/inquiry/v1/buyableQuantity": reply({"Output_0": {"orr_pbl_qty": 3}, "rsp_cd": "00221"}),
+        "/krstock/inquiry/v1/buyableQuantity": reply(
+            {"Output_0": {"orr_pbl_qty": 8, "csh_orr_pbl_qty": 3, "max_pbl_qty": 12}, "rsp_cd": "00221"}
+        ),
     }
     broker, calls = make(responses)
     assert broker.get_balance().cash_available == 40000
@@ -204,6 +208,169 @@ def test_only_401_renews_and_replays_once():
     assert len(calls) == 1
 
 
+def test_balance_reads_all_pages_before_using_final_totals():
+    first = {
+        "Output_0": {"dca": 0, "orr_pbl_amt": 0, "tot_eal_amt": 0},
+        "Output_1": BALANCE["Output_1"],
+        "rsp_cd": "00165",
+    }
+    last = {
+        "Output_0": {"dca": 50000, "orr_pbl_amt": 40000, "tot_eal_amt": 60000},
+        "Output_1": [{**BALANCE["Output_1"][0], "iem_cd": "000660"}],
+        "rsp_cd": "00000",
+    }
+    responses = {
+        "/krstock/inquiry/v1/balance": [
+            reply(first, headers={"Cts": "next-page", "CTS_FLAG": "Y"}),
+            reply(last, headers={"cts_flag": "N"}),
+        ],
+        "/krstock/inquiry/v1/sellableQuantity": [
+            reply({"Output_0": {"iem_cd": "005930", "sll_pbl_qty": 1}, "rsp_cd": "00000"}),
+            reply({"Output_0": {"iem_cd": "000660", "sll_pbl_qty": 1}, "rsp_cd": "00000"}),
+        ],
+    }
+    broker, calls = make(responses)
+    assert broker.get_balance().position_value == 60000
+    assert json.loads(calls[1][3]) == json.loads(calls[0][3])
+    assert calls[1][2]["cts"] == "next-page" and calls[1][2]["cts_flag"] == "Y"
+    responses["/krstock/inquiry/v1/balance"] = [
+        reply(first, headers={"cts": "next-page", "cts_flag": "Y"}),
+        reply(last, headers={"cts_flag": "N"}),
+    ]
+    assert {p.symbol for p in broker.get_positions()} == {"005930", "000660"}
+
+
+def test_balance_continuation_without_cursor_or_progress_fails_closed():
+    first = {"Output_0": {"dca": 0, "orr_pbl_amt": 0, "tot_eal_amt": 0}, "rsp_cd": "00218"}
+    for pages in (
+        [reply(first)],
+        [
+            reply(first, headers={"cts": "same", "cts_flag": "Y"}),
+            reply(first, headers={"cts": "same", "cts_flag": "Y"}),
+        ],
+    ):
+        broker, _ = make({"/krstock/inquiry/v1/balance": pages})
+        with pytest.raises(InvalidResponseError):
+            broker.get_balance()
+
+
+def test_balance_code_only_continuation_uses_response_cursor():
+    first = {"Output_1": BALANCE["Output_1"], "rsp_cd": "00165"}
+    last = {"Output_0": BALANCE["Output_0"], "rsp_cd": "00000"}
+    broker, calls = make({"/krstock/inquiry/v1/balance": [reply(first, headers={"cts": "next"}), reply(last)]})
+    assert broker.get_balance().position_value == 30000
+    assert calls[1][2]["cts"] == "next"
+
+
+def test_single_result_continuation_fails_closed():
+    broker, _ = make(
+        {
+            "/krstock/quote/v1/currentPrice": reply(
+                {"Output_0": {"iem_cd": "005930", "stck_prpr": 1000}, "rsp_cd": "00165"},
+                headers={"cts": "next", "cts_flag": "Y"},
+            )
+        }
+    )
+    with pytest.raises(InvalidResponseError):
+        broker.get_quote("005930")
+
+
+def test_balance_page_limit_fails_closed():
+    current = [0.0]
+    limiter = RateLimiter(
+        {"read": 4}, clock=lambda: current[0], sleeper=lambda delay: current.__setitem__(0, current[0] + delay)
+    )
+    pages = [reply({"rsp_cd": "00165", "Output_1": []}, headers={"cts_flag": "Y", "cts": str(n)}) for n in range(101)]
+    broker, calls = make({"/krstock/inquiry/v1/balance": pages}, rate_limiter=limiter)
+    with pytest.raises(InvalidResponseError, match="page limit"):
+        broker.get_balance()
+    assert len(calls) == 100
+
+
+def test_read_limiter_shares_credential_and_spaces_calls_at_four_per_second():
+    current = [0.0]
+    sleeps = []
+
+    def advance(seconds):
+        sleeps.append(seconds)
+        current[0] += seconds
+
+    rows = [{**BALANCE["Output_1"][0], "iem_cd": f"{n:06d}"} for n in range(1, 7)]
+
+    class TimedTransport(FakeTransport):
+        def post(self, path, *, headers, data):
+            times.append(current[0])
+            return super().post(path, headers=headers, data=data)
+
+    times = []
+    calls = []
+
+    def factory(*, base_url):
+        return TimedTransport(base_url=base_url, responses=responses, calls=calls)
+
+    responses = {
+        "/krstock/inquiry/v1/balance": reply({"Output_0": BALANCE["Output_0"], "Output_1": rows, "rsp_cd": "00000"}),
+        "/krstock/inquiry/v1/sellableQuantity": [
+            reply({"Output_0": {"iem_cd": f"{n:06d}", "sll_pbl_qty": 1}, "rsp_cd": "00000"}) for n in range(1, 7)
+        ],
+    }
+    limiter = RateLimiter({"read": 4}, clock=lambda: current[0], sleeper=advance)
+    broker = NH(
+        account="12345678901",
+        client_options={"app_key": KEY, "token": TOKEN},
+        client_factory=factory,
+        clock=lambda: NOW,
+        rate_limiter=limiter,
+    )
+    assert len(broker.get_positions()) == 6
+    assert len(times) == 7 and all(b - a >= 0.25 for a, b in zip(times, times[1:]))
+    assert len(sleeps) == 6
+    other, _ = make({"/krstock/inquiry/v1/balance": reply(BALANCE)})
+    same, _ = make({"/krstock/inquiry/v1/balance": reply(BALANCE)})
+    assert other._limiter is same._limiter
+
+
+def test_cash_buyable_quantity_uses_cash_field_and_requires_it():
+    broker, calls = make(
+        {
+            "/krstock/inquiry/v1/buyableQuantity": reply(
+                {"Output_0": {"orr_pbl_qty": 100, "csh_orr_pbl_qty": 2, "max_pbl_qty": 100}, "rsp_cd": "00000"}
+            )
+        }
+    )
+    assert broker.buyable_quantity("005930", price=Decimal(15000)) == 2
+    assert len(calls) == 1
+    broker, _ = make(
+        {"/krstock/inquiry/v1/buyableQuantity": reply({"Output_0": {"orr_pbl_qty": 100}, "rsp_cd": "00000"})}
+    )
+    with pytest.raises(InvalidResponseError):
+        broker.buyable_quantity("005930", price=Decimal(15000))
+
+
+def test_cash_balance_uses_lower_deposit_when_order_amount_is_higher():
+    body = {"Output_0": {"dca": 1000, "orr_pbl_amt": 5000, "tot_eal_amt": 0}, "rsp_cd": "00000"}
+    broker, _ = make({"/krstock/inquiry/v1/balance": reply(body)})
+    assert broker.get_balance().cash_available == 1000
+
+
+def test_quote_requires_expected_output_block():
+    broker, _ = make({"/krstock/quote/v1/currentPrice": reply({"rsp_cd": "00000"})})
+    with pytest.raises(InvalidResponseError, match="missing Output_0"):
+        broker.get_quote("005930")
+
+
+def test_sellable_quantity_rejects_different_symbol():
+    broker, _ = make(
+        {
+            "/krstock/inquiry/v1/sellableQuantity": reply(
+                {"Output_0": {"iem_cd": "000660", "sll_pbl_qty": 2}, "rsp_cd": "00000"}
+            )
+        }
+    )
+    with pytest.raises(InvalidResponseError):
+        broker.available_qty("005930")
+
+
 def test_mock_host_requires_explicit_boolean_and_us_is_locked():
     with pytest.raises(ConfigurationError):
         make(virtual="yes")
@@ -226,6 +393,8 @@ def test_account_type_must_match_host_and_account_list():
         virtual=True,
     )
     assert broker.verify_account() == "03"
+    assert calls[0][0] == NH_API_BASE_URL
+    assert calls[0][0] == NH_API_BASE_URL
     assert json.loads(calls[0][3]) == {"Input_0": {}}
     broker, _ = make(
         {
@@ -240,8 +409,3 @@ def test_account_type_must_match_host_and_account_list():
     )
     with pytest.raises(ConfigurationError):
         broker.verify_account()
-
-
-def test_rollback_sample_remove_module_leaves_factory_unchanged():
-    # Rollback of this unregistered adapter is one-file removal; factory still has only prior brokers.
-    assert tuple(sorted(BROKERS)) == ("dbfi", "kis", "toss")
