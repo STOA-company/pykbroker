@@ -35,6 +35,13 @@ class Mutation:
 
 MUTATIONS = (
     Mutation(
+        "NO-REDIRECT",
+        "broker tokens follow redirects again through the default urllib opener",
+        SRC / "_http.py",
+        "_OPENER = build_opener(_NoRedirect())",
+        "_OPENER = build_opener()",
+    ),
+    Mutation(
         "L27",
         "LS accepts error codes with normal blocks",
         SRC / "brokers/ls.py",
