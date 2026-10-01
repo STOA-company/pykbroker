@@ -49,7 +49,12 @@ def make(script, *, safety=None, virtual=False, venue="KRX"):
 
     broker = NH(
         account="12345678901",
-        client_options={"app_key": "secret-key", "app_secret": "secret-value", "token": "secret-token"},
+        client_options={
+            "app_key": "secret-key",
+            "app_secret": "secret-value",
+            "token": "secret-token",
+            "acct_type": "03" if virtual else "01",
+        },
         client_factory=Fake,
         clock=lambda: NOW,
         rate_limiter=RateLimiter({"read": 10000}),
@@ -83,7 +88,7 @@ def test_cash_buy_and_sell_exact_wire_contract_and_mock_host(live_safety):
     )
     bought = broker.place_order(order())
     sold = broker.place_order(order(side="sell", quantity=1, price="15000", client_key="sell-key"))
-    assert "nh" not in BROKERS
+    assert BROKERS["nh"] is NH
     assert (bought.id, bought.status, bought.virtual) == ("mkt:123", "accepted", True)
     assert (sold.id, sold.side, sold.price) == ("mkt:124", "sell", Decimal(15000))
     assert [call[1] for call in calls] == [ORDER + "cashBuy", ORDER + "cashSell"]

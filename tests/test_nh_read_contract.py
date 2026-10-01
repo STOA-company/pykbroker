@@ -41,6 +41,8 @@ class FakeTransport:
         response = self.responses[path]
         if isinstance(response, list):
             response = response.pop(0)
+        if callable(response):
+            response = response()
         if isinstance(response, Exception):
             raise response
         return response
@@ -53,6 +55,8 @@ def make(responses=None, *, options=None, virtual=False, cache=None, venue="KRX"
     def factory(*, base_url):
         return FakeTransport(base_url=base_url, responses=replies, calls=calls)
 
+    if virtual is True:
+        options = {**(options or {"app_key": KEY, "token": TOKEN}), "acct_type": "03"}
     broker = NH(
         account="12345678901",
         client_options=options or {"app_key": KEY, "token": TOKEN},
@@ -70,9 +74,9 @@ def reply(body, status=200, headers=None):
     return status, body, headers or {}
 
 
-def test_unregistered_and_limit_order_capability():
+def test_registered_and_limit_order_capability():
     broker, _ = make()
-    assert "nh" not in BROKERS
+    assert BROKERS["nh"] is NH
     assert broker.capabilities().supports_limit_order
     assert broker.capabilities().supports_single_order_cancel
     assert not broker.capabilities().supports_market_order
@@ -506,3 +510,85 @@ def test_account_type_must_match_host_and_account_list():
     )
     with pytest.raises(ConfigurationError):
         broker.verify_account()
+
+
+def test_older_constructor_token_does_not_replace_fresher_shared_cache():
+    fresh = {"token": "shared-fresh", "expires_at": (NOW + timedelta(hours=2)).isoformat()}
+    cache = {KEY: fresh.copy()}
+    broker, calls = make(
+        {"/krstock/quote/v1/currentPrice": reply({"Output_0": {"stck_prpr": 1}, "rsp_cd": "00000"})},
+        options={
+            "app_key": KEY,
+            "token": "expired-local",
+            "expires_at": (NOW - timedelta(hours=1)).isoformat(),
+            "app_secret": SECRET,
+        },
+        cache=cache,
+    )
+    assert cache[KEY] == fresh
+    assert broker.get_quote("005930").last == 1
+    assert len(calls) == 1 and calls[0][2]["authorization"] == "Bearer shared-fresh"
+
+
+@pytest.mark.parametrize("first", [reply({}, 401), reply({"rsp_cd": "IGW40043"})])
+def test_rejected_token_reuses_newer_shared_token_without_issuance(first):
+    cache = {}
+
+    def concurrent_refresh():
+        cache[KEY] = {"token": "other-worker-token", "expires_at": (NOW + timedelta(hours=2)).isoformat()}
+        return first
+
+    broker, calls = make(
+        {"/krstock/inquiry/v1/balance": [concurrent_refresh, reply(BALANCE)]},
+        options={"app_key": KEY, "token": TOKEN},
+        cache=cache,
+    )
+    assert broker.get_balance().cash_available == 40000
+    assert [path for _, path, _, _ in calls] == ["/krstock/inquiry/v1/balance"] * 2
+    assert calls[1][2]["authorization"] == "Bearer other-worker-token"
+    assert cache[KEY]["token"] == "other-worker-token"
+
+
+def test_known_no_data_response_means_empty_positions_and_zero_sellable_only():
+    broker, calls = make(
+        {
+            "/krstock/inquiry/v1/balance": reply({"rsp_cd": "13578"}),
+            "/krstock/inquiry/v1/sellableQuantity": reply({"rsp_cd": "13578"}),
+        }
+    )
+    assert broker.get_positions() == []
+    assert broker.available_qty("005930") == 0
+    assert [path for _, path, _, _ in calls].count("/krstock/inquiry/v1/sellableQuantity") == 1
+    with pytest.raises(InvalidResponseError):
+        broker.get_balance()
+
+
+def test_sellable_quantity_accepts_a_prefixed_response_symbol():
+    broker, _ = make(
+        {
+            "/krstock/inquiry/v1/sellableQuantity": reply(
+                {"Output_0": {"iem_cd": "A005930", "sll_pbl_qty": 2}, "rsp_cd": "00000"}
+            )
+        }
+    )
+    assert broker.available_qty("005930") == 2
+
+
+@pytest.mark.parametrize("message", ["조회완료", "정상 조회 완료 (1건)"])
+def test_known_success_accepts_completion_message_variants(message):
+    broker, _ = make(
+        {"/krstock/inquiry/v1/balance": reply({"Output_0": BALANCE["Output_0"], "rsp_cd": "00000", "rsp_msg": message})}
+    )
+    assert broker.get_balance().cash_available == 40000
+
+
+@pytest.mark.parametrize(
+    "message", ["불완료", "완료 (실패)", "처리 완료 (오류)", "오류 처리 완료", "조회 미완료되었습니다."]
+)
+@pytest.mark.parametrize("code", ["99999", "00000"])
+def test_read_completion_never_accepts_failed_or_arbitrary_wording(message, code):
+    broker, _ = make(
+        {"/krstock/inquiry/v1/balance": reply({"Output_0": BALANCE["Output_0"], "rsp_cd": code, "rsp_msg": message})}
+    )
+    with pytest.raises(BrokerRejectedError):
+        broker.get_balance()

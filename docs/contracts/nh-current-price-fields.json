@@ -1,0 +1,56 @@
+{
+  "source": "https://www.nhplug.com/openapi-docs/krstock/openapi.json",
+  "local_snapshot": "nhb_krstock_openapi.json (2026-09-27 work, read locally 2026-10-01)",
+  "snapshot_sha256": "c49b793a0429ca7b4a48126619a2fe9bfecdaa9dc6dc6a11f03557f0f0a35772",
+  "spec_title": "NH투자증권 Open API — 국내주식 (Domestic Stock)",
+  "spec_version": "v1",
+  "path": "/krstock/quote/v1/currentPrice",
+  "response_block": "Output_0",
+  "selected_properties": {
+    "stck_prpr": {
+      "type": "integer",
+      "format": "int32",
+      "description": "현재가 / 길이 10"
+    },
+    "stck_prdy_clpr": {
+      "type": "integer",
+      "format": "int32",
+      "description": "전일종가 / 길이 10"
+    },
+    "stck_mxpr": {
+      "type": "integer",
+      "format": "int32",
+      "description": "상한가 / 길이 10"
+    },
+    "stck_llam": {
+      "type": "integer",
+      "format": "int32",
+      "description": "하한가 / 길이 10"
+    },
+    "market1": {
+      "type": "string",
+      "description": "시장조치1 / 길이 16"
+    },
+    "market2": {
+      "type": "string",
+      "description": "시장조치2 / 길이 16"
+    },
+    "market3": {
+      "type": "string",
+      "description": "시장조치3 / 길이 16"
+    },
+    "market4": {
+      "type": "string",
+      "description": "시장조치4 / 길이 16"
+    },
+    "market5": {
+      "type": "string",
+      "description": "시장조치5 / 길이 16"
+    },
+    "market6": {
+      "type": "string",
+      "description": "시장조치6 / 길이 16"
+    }
+  },
+  "note": "Schema excerpt only; not a measured broker response. market1..6 have no documented halt value mapping."
+}
