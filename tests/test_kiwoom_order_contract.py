@@ -26,9 +26,10 @@ from pykbroker.exceptions import (
     DuplicateOrderError,
     InvalidResponseError,
     NotSupportedError,
+    SpecUnverifiedError,
     TransportError,
 )
-from pykbroker.factory import BROKERS
+from pykbroker.factory import BROKERS, create_broker
 from pykbroker.models import CancelRequest, Order, OrderRequest
 from pykbroker.safety.rate_limit import RateLimiter
 
@@ -62,7 +63,8 @@ def make(responses=None, *, safety=None, options=OPTIONS, **kwargs):
         return made[0]
 
     extra = {"safety": safety} if safety is not None else {}
-    broker = Kiwoom(
+    broker = create_broker(
+        "kiwoom",
         account="fixture-account",
         client_factory=factory,
         client_options=options,
@@ -327,10 +329,22 @@ def test_amend_and_market_orders_stay_unsupported():
     code = "\n".join(line.split("#")[0] for line in source.splitlines())
     assert "kt10002" not in code and "mdfy_qty" not in code and "ust2" not in code and "kt00010" not in code
     assert not hasattr(Kiwoom, "modify_order") and not hasattr(Kiwoom, "amend_order")
-    assert "kiwoom" not in BROKERS
+    assert BROKERS["kiwoom"] is Kiwoom
 
 
 # --- ka10075: open orders ---
+
+
+@pytest.mark.parametrize("price", ["70000", "+70000", "-70000"])
+def test_open_order_signed_price_contract(price):
+    row = {**OFFICIAL["ka10075"]["oso"][0], "ord_pric": price}
+    broker, client = make({"ka10075": [{**OFFICIAL["ka10075"], "oso": [row]}]})
+    if price.startswith("-"):
+        with pytest.raises(SpecUnverifiedError):
+            broker.list_orders()
+    else:
+        assert broker.list_orders()[0].price == Decimal("70000")
+    assert [call["headers"]["api-id"] for call in client.calls] == ["ka10075"]
 
 
 def test_open_orders_request_and_the_official_sample():
@@ -459,8 +473,9 @@ def test_status_is_decided_by_the_ledger_quantities_only(changes, status, filled
     assert (result.status, result.filled, result.remaining) == (status, filled, remaining)
 
 
-def test_a_cancel_or_amend_row_pointing_at_the_order_leaves_it_unknown_unless_fully_executed():
-    cancel_row = {**OFFICIAL["kt00007"][LEDGER][0], "ord_no": "0000051", "ori_ord": "0000050", "mdfy_cncl": "취소확인"}
+@pytest.mark.parametrize("change", ["취소확인", "정정확인"])
+def test_a_cancel_or_amend_row_pointing_at_the_order_leaves_it_unknown_unless_fully_executed(change):
+    cancel_row = {**OFFICIAL["kt00007"][LEDGER][0], "ord_no": "0000051", "ori_ord": "0000050", "mdfy_cncl": change}
     open_row = {**OFFICIAL["kt00007"][LEDGER][0], "cntr_qty": "0000000000", "ord_remnq": "0000000001"}
     page = {**OFFICIAL["kt00007"], LEDGER: [open_row, cancel_row]}
     # the spec does not say what the original row shows once cancelled, so «open» would be a guess

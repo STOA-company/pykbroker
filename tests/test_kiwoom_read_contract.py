@@ -26,7 +26,7 @@ from pykbroker.exceptions import (
     SpecUnverifiedError,
     TransportError,
 )
-from pykbroker.factory import BROKERS
+from pykbroker.factory import BROKERS, create_broker
 from pykbroker.models import OrderRequest
 from pykbroker.safety.rate_limit import RateLimiter
 
@@ -68,7 +68,8 @@ def make(responses=None, *, options=None, codes=CODES, **kwargs):
         return made[0]
 
     limiter = RateLimiter({tr: 1000 for tr in module.KIWOOM_TR_RATE_LIMITS})
-    broker = Kiwoom(
+    broker = create_broker(
+        "kiwoom",
         account="fixture-account",
         client_factory=factory,
         client_options=OPTIONS if options is None else options,
@@ -287,6 +288,13 @@ def test_minus_sign_on_a_holding_price_is_refused_as_unverified(field):
     broker, _ = make({**RESPONSES, "kt00018": with_row(**{field: "-000000059000"})})
     with pytest.raises(SpecUnverifiedError):
         broker.get_positions()
+
+
+@pytest.mark.parametrize("field", ["pur_pric", "cur_prc"])
+def test_plus_sign_on_a_holding_price_preserves_its_magnitude(field):
+    broker, _ = make({**RESPONSES, "kt00018": with_row(**{field: "+000000059000"})})
+    (position,) = broker.get_positions()
+    assert getattr(position, "average_price" if field == "pur_pric" else "last") == Decimal("59000")
 
 
 @pytest.mark.parametrize(
@@ -587,8 +595,8 @@ def test_us_market_and_wrong_market_quote_are_refused():
         make()[0].get_quote("AAPL", market="US")
 
 
-def test_it_is_a_broker_but_stays_out_of_the_factory():
-    assert issubclass(Kiwoom, BaseBroker) and "kiwoom" not in BROKERS
+def test_it_is_the_registered_broker():
+    assert issubclass(Kiwoom, BaseBroker) and BROKERS["kiwoom"] is Kiwoom
 
 
 def test_the_legacy_slips_are_not_repeated():
