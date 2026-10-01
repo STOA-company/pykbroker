@@ -22,7 +22,7 @@ def make(*, row=None, virtual=False, options=None, factory=False, **kwargs):
 
     class Fake:
         def __init__(self, *, base_url):
-            self.host = base_url
+            self.base_url = self.host = base_url
             hosts.append(base_url)
 
         def post(self, path, *, headers, data):
@@ -84,6 +84,7 @@ def test_all_paths_keep_order_host_and_auth_host_separate(virtual, live_safety):
     broker, calls, hosts = make(
         virtual=virtual,
         safety=live_safety,
+        allow_live_orders=True,
         options={"app_key": "fixture-key", "app_secret": "fixture-secret", "acct_type": "03" if virtual else "01"},
     )
     assert calls == []
@@ -97,7 +98,7 @@ def test_all_paths_keep_order_host_and_auth_host_separate(virtual, live_safety):
     assert [(host, path) for host, path, _, _ in calls] == [
         (NH_API_BASE_URL, "/oauth2/token"),
         (NH_API_BASE_URL, "/n2/acctinfo"),
-        (order_host, QUOTE),
+        (NH_API_BASE_URL, QUOTE),
         (order_host, "/krstock/order/v1/cashBuy"),
         (order_host, "/krstock/order/v1/cashSell"),
         (order_host, "/krstock/order/v1/cancel"),
@@ -195,7 +196,8 @@ def test_factory_registration_keeps_mutations_disabled_by_default(virtual):
 
 
 def test_factory_loads_nh_options_with_injected_http_client(monkeypatch):
-    monkeypatch.setenv("PYKBROKER_CLIENT_OPTIONS", json.dumps({"app_key": "fixture-key", "token": "fixture-token"}))
+    options = {"app_key": "fixture-key", "token": "fixture-token", "acct_type": "01"}
+    monkeypatch.setenv("PYKBROKER_CLIENT_OPTIONS", json.dumps(options))
     broker, calls, _ = make(factory=True, options=False)
     assert broker.get_quote("005930").last == 70000
     assert len(calls) == 1

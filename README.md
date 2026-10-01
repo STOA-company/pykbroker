@@ -1,14 +1,14 @@
 # pykbroker
 
-pykbroker는 한국 증권사(한국투자·DB증권·토스증권) Open API를 공통 파이썬 인터페이스와 기본 읽기 전용 MCP 서버로 묶은 Apache-2.0 라이브러리입니다.
+pykbroker는 한국 증권사(한국투자·DB증권·토스증권·키움·NH) Open API를 공통 파이썬 인터페이스와 기본 읽기 전용 MCP 서버로 묶은 Apache-2.0 라이브러리입니다.
 
-pykbroker is an Apache-2.0 Python library that unifies Korean brokerage (KIS, DB Securities, and Toss Securities) Open APIs behind a common interface and a read-only-by-default MCP server.
+pykbroker is an Apache-2.0 Python library that unifies Korean brokerage (KIS, DB Securities, Toss Securities, Kiwoom, and NH Investment) Open APIs behind a common interface and a read-only-by-default MCP server.
 
 | 구현 어댑터 | 오프라인 테스트 | Python |
 | --- | --- | --- |
-| **3곳** — KIS·DBFI·Toss | **141 통과** · 1건 환경 제약 skip | **3.11 이상** |
+| **5곳** — KIS·DBFI·Toss·키움·NH | 가짜 응답 계약·변이 검사 | **3.11 이상** |
 
-2026-09-09 실측입니다. 구현 수는 패키지의 `BROKERS` 등록 수이며, 테스트는 mock·합성 fixture 기반입니다. **실 API·모의계좌·실거래 검증은 수행하지 않았습니다.** skip은 sandbox의 로컬 IPC 제한입니다. [지원 표](docs/BROKER_MATRIX.md)에 세부 범위가 있습니다. 초기 알파이며 PyPI 미게시 소스 기준 안내입니다.
+2026-10-01 등록 구현 기준입니다. 구현 수는 패키지의 `BROKERS` 등록 수이며, 테스트는 mock·합성 fixture 기반입니다. **실 API·모의계좌·실거래 검증은 수행하지 않았습니다.** [지원 표](docs/BROKER_MATRIX.md)에 세부 범위가 있습니다. 초기 알파이며 PyPI 미게시 소스 기준 안내입니다.
 
 ## 30초 예제 — 한국투자증권 시세 조회
 
@@ -47,8 +47,8 @@ with create_broker("kis") as broker:
 | 위치 | 하는 일 |
 | --- | --- |
 | `base` | 조회·주문·취소·종료를 정의한 공통 계약 |
-| `brokers` | KIS·DBFI·Toss 변환 구현; 검증 범위는 오프라인 계약 테스트 |
-| `experimental` | LS·키움의 미검증 매핑과 NH·KB 스켈레톤; 주문 잠금 유지 |
+| `brokers` | KIS·DBFI·Toss·키움·NH 변환 구현; 검증 범위는 오프라인 계약 테스트 |
+| `experimental` | LS 미검증 매핑·KB 스켈레톤과 옛 매핑; 주문 잠금 유지 |
 | `safety` | 호출자가 주입하는 한도·멱등성·드라이런·중단 판단 |
 | `mcp` | 기본 읽기 전용 도구, 설정으로만 등록되는 주문 도구 |
 
@@ -84,7 +84,7 @@ pykbroker 코드는 [Apache-2.0](LICENSE)으로 제공되며 라이선스 조건
 
 ### LS증권·키움증권·NH투자증권·KB증권도 지원하나요?
 
-네 어댑터는 모두 **미검증 experimental**이며 3곳의 등록 어댑터 수에 포함하지 않습니다. LS·키움은 국내 요청 매핑이 있으나 주문 잠금 상태이고 조회 결과도 미검증이며, NH·KB는 네트워크 전송 없는 스켈레톤입니다. 최상위 팩터리에 등록되지 않았고, 잠금만 해제해 실사용할 수 있는 상태가 아닙니다.
+키움·NH는 국내 REST 어댑터로 팩터리에 등록됐고 가짜 응답으로 계약을 검증했습니다. NH는 KRX·NXT 현금 지정가·단일 취소를 구현했으며 **실주문은 기본 잠금**입니다. 주문번호와 원장번호 연결은 BS-25에서 해결할 항목이며, 실제 API·모의계좌 왕복은 아직 검증하지 않았습니다. LS는 잠금된 미검증 매핑, KB는 전송 없는 스켈레톤으로 등록되지 않았습니다.
 
 ## 관련 프로젝트
 

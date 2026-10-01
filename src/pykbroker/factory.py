@@ -38,6 +38,8 @@ def create_broker(name: str, *, account: str | None = None, **kwargs: Any) -> Ba
                 raise ConfigurationError("PYKBROKER_TOSS_ACCOUNT_SEQ is required") from None
         if "credentials_options" not in kwargs and "sdk_factory" not in kwargs:
             kwargs["credentials_options"] = _options()
-    elif "client_options" not in kwargs and (key in {"kiwoom", "nh"} or not {"client", "client_factory"} & kwargs.keys()):
+    elif "client_options" not in kwargs and (
+        key in {"kiwoom", "nh"} or not {"client", "client_factory"} & kwargs.keys()
+    ):
         kwargs["client_options"] = _options()
     return BROKERS[key](account=account, **kwargs)

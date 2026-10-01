@@ -237,6 +237,26 @@ MUTATIONS = (
         ),
         "        return self",
     ),
+    # NH review: routing, live lock, shared tokens and missing data must fail closed.
+    Mutation("NH", "injected host is trusted", SRC / "brokers/nh.py",
+             '        if getattr(client, "base_url", None) != expected:', '        if False:'),
+    Mutation("NH", "mock quote goes to the order host", SRC / "brokers/nh.py",
+             '"Output_0", client=self._auth_client\n', '"Output_0", client=self._client\n'),
+    Mutation("NH", "live NH orders lose the SDK lock", SRC / "brokers/nh.py",
+             '        if not self.virtual and self._allow_live_orders is not True:', '        if False:'),
+    Mutation("NH", "older valid local token overwrites newer cache", SRC / "brokers/nh.py",
+             '        if cached is None or self._expires_at > cached[1]:', '        if True:'),
+    Mutation("NH", "valid local token ignores newer shared token", SRC / "brokers/nh.py",
+             ' or cached[1] > self._expires_at', ''),
+    Mutation("NH", "absent sellable block becomes zero for any code", SRC / "brokers/nh.py",
+             '        if row is None and str(body.get("rsp_cd", "")).strip() == "13578":', '        if row is None:'),
+    Mutation("NH", "required read block is optional again", SRC / "brokers/nh.py",
+             '        if expected is not None and (expected not in body or body[expected] is None):',
+             '        if False:'),
+    Mutation("NH", "urllib follows credential-bearing redirects", SRC / "brokers/nh.py",
+             'self._opener.open(request, timeout=self.timeout)',
+             'urllib.request.urlopen(request, timeout=self.timeout)'),
+
 )
 
 

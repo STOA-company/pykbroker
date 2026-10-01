@@ -56,6 +56,7 @@ def make(script, *, safety=None, virtual=False, venue="KRX"):
             "acct_type": "03" if virtual else "01",
         },
         client_factory=Fake,
+        allow_live_orders=True,  # Fake transport; production defaults remain locked.
         clock=lambda: NOW,
         rate_limiter=RateLimiter({"read": 10000}),
         safety=safety,
@@ -201,7 +202,9 @@ def test_daily_list_and_status_use_integrated_number_without_guessing_market_num
 
 
 def test_empty_daily_ledger_with_affirmative_envelope_is_empty():
-    broker, _ = make({DAILY: [reply(message="조회완료", code=None)]})
+    empty = reply(message="조회완료", code=None)
+    empty[1]["Output_1"] = []
+    broker, _ = make({DAILY: [empty]})
     assert broker.list_orders() == []
 
 

@@ -23,6 +23,7 @@ from pykbroker.exceptions import (
     ConfigurationError,
     InvalidResponseError,
     NotSupportedError,
+    SafetyError,
     TransportError,
 )
 from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
@@ -47,21 +48,29 @@ _COMPLETED = re.compile(
 )
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 class _NhRestClient:
     """Small injectable HTTP boundary; HTTP errors never expose response bodies."""
 
     def __init__(self, *, base_url: str, timeout: float = 10.0) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self._opener = urllib.request.build_opener(_NoRedirect)
 
     def post(
         self, path: str, *, headers: Mapping[str, str], data: bytes
     ) -> tuple[int, Mapping[str, Any], Mapping[str, str]]:
         request = urllib.request.Request(self.base_url + path, data=data, headers=dict(headers), method="POST")
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            with self._opener.open(request, timeout=self.timeout) as response:
                 return response.status, _json_object(response.read()), dict(response.headers)
         except urllib.error.HTTPError as exc:
+            if 300 <= exc.code < 400:
+                raise TransportError("NH redirect refused") from None
             # A 4xx/5xx body may contain customer or credential data. Classify by status only.
             return exc.code, {}, dict(exc.headers)
         except Exception:
@@ -132,6 +141,7 @@ class NH(BaseBroker):
         market: str = "KR",
         venue: str = "KRX",
         virtual: bool = False,
+        allow_live_orders: bool = False,
         client_factory: Callable[..., Any] | None = None,
         token_cache: MutableMapping[str, dict[str, str]] | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -144,6 +154,9 @@ class NH(BaseBroker):
             raise NotSupportedError("NH overseas reads are not implemented")
         if venue not in _VENUES:
             raise ConfigurationError("NH venue must be KRX, NXT or UNT")
+        if type(allow_live_orders) is not bool:
+            raise ConfigurationError("allow_live_orders must be a boolean")
+        self._allow_live_orders = allow_live_orders
         options = dict(client_options)
         if not set(options) <= _OPTIONS:
             raise ConfigurationError("Unknown NH client option")
@@ -159,7 +172,7 @@ class NH(BaseBroker):
         account_type = options.get("acct_type")
         if virtual and account_type != "03":
             raise ConfigurationError("NH mock account type must be explicitly 03")
-        if account_type is not None and account_type not in ({"03"} if virtual else {"01", "02"}):
+        if account_type not in ({"03"} if virtual else {"01", "02"}):
             raise ConfigurationError("NH account type does not match the selected host")
         self.venue = venue
         self._app_key = app_key
@@ -170,10 +183,18 @@ class NH(BaseBroker):
         self._clock = clock
         self._limiter = rate_limiter or credential_rate_limiter("nh", app_key, NH_READ_RATES)
         factory = client_factory or _NhRestClient
-        self._client = factory(base_url=NH_MOCK_BASE_URL if virtual else NH_API_BASE_URL)
+        order_host = NH_MOCK_BASE_URL if virtual else NH_API_BASE_URL
+        self._client = factory(base_url=order_host)
+        self._verify_host(self._client, order_host)
         # Token issuance is always on the live host, including for mock accounts.
         self._auth_client = factory(base_url=NH_API_BASE_URL)
+        self._verify_host(self._auth_client, NH_API_BASE_URL)
         self._publish_token_if_fresher()
+
+    @staticmethod
+    def _verify_host(client: Any, expected: str) -> None:
+        if getattr(client, "base_url", None) != expected:
+            raise ConfigurationError("NH client host does not match the requested mode")
 
     def token_state(self) -> dict[str, str]:
         """Return only the issued token and expiry for caller controlled persistence."""
@@ -205,10 +226,11 @@ class NH(BaseBroker):
         if self._cache is not None:
             cached = self._cache.get(self._app_key)
             if isinstance(cached, Mapping):
-                token, expiry = (
-                    cached.get("token"),
-                    _expiry(cached.get("expires_at")) if cached.get("expires_at") else None,
-                )
+                token = cached.get("token")
+                try:
+                    expiry = _expiry(cached.get("expires_at")) if cached.get("expires_at") else None
+                except ConfigurationError:
+                    return None
                 if isinstance(token, str) and token and expiry and self._clock() < expiry - TOKEN_MARGIN:
                     return token, expiry
         return None
@@ -325,8 +347,7 @@ class NH(BaseBroker):
         message = body.get("rsp_msg") or (nested.get("usr_msg") if nested is not None else None)
         if message is not None and not isinstance(message, str):
             raise InvalidResponseError("NH response message is malformed")
-        # Only documented affirmative lookup wording can authorize an unknown
-        # code. Arbitrary text following "완료" may describe a failed read.
+        # Unknown codes still need affirmative wording; known failures always close the read.
         completed = bool(
             message
             and re.fullmatch(
@@ -337,7 +358,7 @@ class NH(BaseBroker):
         )
         if code not in NH_SUCCESS_CODES | NH_CONTINUATION_CODES and not completed:
             raise BrokerRejectedError("NH read rejected")
-        if code in NH_SUCCESS_CODES and message and "완료" in message and not completed:
+        if message and re.search(r"실패|오류|에러|불완료|미완료|않|못", message):
             raise BrokerRejectedError("NH read rejected")
         # Documented blocks are optional in the wire schema, but a money/price read
         # without the expected block cannot be interpreted as zero or success.
@@ -405,9 +426,10 @@ class NH(BaseBroker):
         return self._call(read)
 
     def _quote_row(self, code: str) -> Mapping[str, Any]:
-        row = self._read("/krstock/quote/v1/currentPrice", {"market_cd": self.venue, "iem_cd": code}, "Output_0")[
-            "Output_0"
-        ]
+        row = self._read(
+            "/krstock/quote/v1/currentPrice", {"market_cd": self.venue, "iem_cd": code},
+            "Output_0", client=self._auth_client
+        )["Output_0"]
         if not isinstance(row, Mapping):
             raise InvalidResponseError("NH quote block is invalid")
         if row.get("iem_cd") is not None and row["iem_cd"] != code:
@@ -587,6 +609,8 @@ class NH(BaseBroker):
 
     def _validate_order(self, request: OrderRequest | CancelRequest) -> None:
         super()._validate_order(request)
+        if not self.virtual and self._allow_live_orders is not True:
+            raise SafetyError("NH live orders are locked pending BS-25")
         if request.venue is not None and request.venue != self.venue:
             raise NotSupportedError("NH order venue must match the configured venue")
         if isinstance(request, OrderRequest):
@@ -690,7 +714,7 @@ class NH(BaseBroker):
         seen: set[str] = set()
         cts: str | None = None
         for _ in range(NH_MAX_BALANCE_PAGES):
-            body, headers = self._read_response("/krstock/inquiry/v1/dailyOrderExecution", payload, None, cts=cts)
+            body, headers = self._read_response("/krstock/inquiry/v1/dailyOrderExecution", payload, "Output_1", cts=cts)
             page = body.get("Output_1", [])
             if not isinstance(page, list) or any(not isinstance(row, Mapping) for row in page):
                 raise InvalidResponseError("NH daily order rows are invalid")

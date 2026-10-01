@@ -7,7 +7,7 @@ from decimal import Decimal
 
 import pytest
 
-from pykbroker.brokers.nh import NH, NH_API_BASE_URL, NH_MOCK_BASE_URL
+from pykbroker.brokers.nh import NH, NH_API_BASE_URL
 from pykbroker.exceptions import BrokerRejectedError, ConfigurationError, InvalidResponseError, TransportError
 from pykbroker.factory import BROKERS
 from pykbroker.safety.rate_limit import RateLimiter
@@ -55,11 +55,11 @@ def make(responses=None, *, options=None, virtual=False, cache=None, venue="KRX"
     def factory(*, base_url):
         return FakeTransport(base_url=base_url, responses=replies, calls=calls)
 
-    if virtual is True:
-        options = {**(options or {"app_key": KEY, "token": TOKEN}), "acct_type": "03"}
+    options = dict(options) if options is not None else {"app_key": KEY, "token": TOKEN}
+    options.setdefault("acct_type", "03" if virtual is True else "01")
     broker = NH(
         account="12345678901",
-        client_options=options or {"app_key": KEY, "token": TOKEN},
+        client_options=options,
         client_factory=factory,
         virtual=virtual,
         token_cache=cache,
@@ -111,7 +111,7 @@ def test_token_form_live_host_cache_and_mock_read_host():
         "scope": ["oob"],
     }
     host, path, headers, data = calls[1]
-    assert host == NH_MOCK_BASE_URL and path.endswith("currentPrice")
+    assert host == NH_API_BASE_URL and path.endswith("currentPrice")
     assert headers["authorization"] == f"Bearer {TOKEN}" and headers["x-client-id"] == KEY
     assert "x-client-secret" not in headers and SECRET not in str(headers)
     assert json.loads(data) == {"Input_0": {"market_cd": "KRX", "iem_cd": "005930"}}
@@ -322,7 +322,7 @@ def test_read_limiter_shares_credential_and_spaces_calls_at_four_per_second():
     limiter = RateLimiter({"read": 4}, clock=lambda: current[0], sleeper=advance)
     broker = NH(
         account="12345678901",
-        client_options={"app_key": KEY, "token": TOKEN},
+        client_options={"app_key": KEY, "token": TOKEN, "acct_type": "01"},
         client_factory=factory,
         clock=lambda: NOW,
         rate_limiter=limiter,
@@ -477,7 +477,7 @@ def test_mock_host_requires_explicit_boolean_and_us_is_locked():
     with pytest.raises(ConfigurationError):
         make(virtual="yes")
     with pytest.raises(Exception):
-        NH(account="a", client_options={"app_key": KEY, "token": TOKEN}, market="US")
+        NH(account="a", client_options={"app_key": KEY, "token": TOKEN, "acct_type": "01"}, market="US")
 
 
 def test_account_type_must_match_host_and_account_list():
