@@ -204,6 +204,31 @@ def test_dry_run_is_the_default_and_touches_no_transport():
     assert code == 0
 
 
+@pytest.mark.parametrize(
+    "env",
+    [
+        {},
+        {script.APP_KEY_ENV: "fake"},
+        {script.SECRET_KEY_ENV: "fake"},
+        {script.APP_KEY_ENV: "  ", script.SECRET_KEY_ENV: "fake"},
+        {script.APP_KEY_ENV: "fake", script.SECRET_KEY_ENV: "  "},
+    ],
+)
+def test_missing_keys_exit_safely_with_zero_calls(env, capsys):
+    calls = []
+
+    def factory(**kwargs):
+        calls.append(kwargs)
+        pytest.fail("missing keys must stop before client construction")
+
+    code = script.main(["--execute"], env=env, client_factory=factory)
+    result = json.loads(capsys.readouterr().out)
+    assert code == 0 and result["status"] == "missing_keys"
+    assert "키 없음" in result["reason"]
+    assert [step["name"] for step in result["steps"]] == ["host_check"]
+    assert calls == []
+
+
 # --- guard: real-server host is rejected ---
 
 
@@ -257,7 +282,7 @@ def test_an_explicit_rejection_is_reported_distinctly_from_an_unclear_answer():
 def test_a_signed_current_price_aborts_as_manual_check_not_a_guess():
     responses = full_responses()
     responses["ka10001"] = [{**QUOTE_BODY, "cur_prc": "-72000"}]
-    factory, _ = make_factory(responses)
+    factory, holder = make_factory(responses)
 
     result = script.run(execute=True, env=FAKE_ENV, client_factory=factory, rate_limiter=RateLimiter(FAST_RATES))
 
@@ -268,6 +293,21 @@ def test_a_signed_current_price_aborts_as_manual_check_not_a_guess():
         "error": "SpecUnverifiedError",
         "minus_sign_seen": True,
     }
+    assert [call["key"] for call in holder["client"].calls] == [TOKEN_PATH, "ka10001"]
+
+
+def test_plus_signed_prices_complete_only_the_fake_roundtrip():
+    responses = full_responses()
+    for body in responses["ka10001"]:
+        for field in ("cur_prc", "upl_pric", "lst_pric", "base_pric"):
+            body[field] = "+" + body[field]
+    for field in ("buy_fpr_bid", "sel_fpr_bid"):
+        responses["ka10004"][0][field] = "+" + responses["ka10004"][0][field]
+    factory, holder = make_factory(responses)
+    result = script.run(execute=True, env=FAKE_ENV, client_factory=factory, rate_limiter=RateLimiter(FAST_RATES))
+    assert result["status"] == "ok"
+    assert len(holder["client"].calls) == 8
+    assert holder["client"].calls[4]["json"]["ord_uv"] == "50400"
 
 
 # --- guard: credentials are never printed ---

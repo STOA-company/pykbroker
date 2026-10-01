@@ -108,16 +108,17 @@ def test_a_mock_flag_does_not_unlock_an_experimental_broker(module_name, class_n
 
 @pytest.mark.parametrize("module_name,class_name", [pair for pair in LOCKED if pair[0] != "nh"])
 @pytest.mark.parametrize("case", [str.lower, str.upper, str.title])
-def test_locked_brokers_are_not_reachable_through_the_factory(module_name, class_name, case):
-    """Experimental adapters remain unreachable through case folding."""
-    assert module_name not in BROKERS and class_name not in BROKERS
+def test_experimental_brokers_are_not_reachable_through_the_factory(module_name, class_name, case):
+    """The factory never selects an experimental class; registered REST adapters require credentials."""
+    experimental = getattr(import_module("pykbroker.experimental." + module_name), class_name)
+    assert BROKERS.get(module_name) is not experimental and class_name not in BROKERS
     assert class_name not in pykbroker.__all__
     with pytest.raises(ConfigurationError):
         create_broker(case(module_name), account="fixture")
 
 
-def test_the_factory_ships_the_registered_adapters():
-    assert set(BROKERS) == {"kis", "dbfi", "toss", "nh"}
+def test_the_factory_ships_exactly_the_registered_adapters():
+    assert set(BROKERS) == {"kis", "dbfi", "toss", "kiwoom", "nh"}
 
 
 # --- B′-0: 거래소 선언 정합 --------------------------------------------------
