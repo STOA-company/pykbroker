@@ -1,5 +1,5 @@
 ---
-description: "Offline verification scope for KIS, DBFI and Toss, experimental LS/Kiwoom/NH/KB status, KR/US markets and cancellation limits."
+description: "Offline verification scope for KIS, DBFI and Toss, locked LS and experimental Kiwoom/NH/KB status, KR/US markets and cancellation limits."
 lang: en
 ---
 
@@ -12,7 +12,7 @@ This describes the extracted implementation as of 2026-09-09. All validation use
 | KIS | KR / US | Unsupported | KR, separate session and valuation authorization required | Unsupported | Conversion implementation and offline tests |
 | DBFI | KR / US | Supported | KR, separate session and valuation authorization required | KR | Conversion implementation and offline tests |
 | Toss | KR | Entire unfilled remainder | KR, separate session and valuation authorization required | Unsupported | SDK bridge checked with mocks |
-| LS | KR | Locked | Unverified | Unsupported | `LS_SPEC_VERIFIED = False` |
+| LS | KR | Mapped, locked | Mapped, locked | Unsupported | Formal module/factory, `LS_SPEC_VERIFIED = False` |
 | Kiwoom | KR | Unimplemented | Unverified | Unsupported | `KIWOOM_SPEC_VERIFIED = False` |
 | NH | KR skeleton | Unimplemented | Unimplemented | Unsupported | `NH_SPEC_VERIFIED = False` |
 | KB | KR skeleton | Unimplemented | Unimplemented | Unsupported | `KB_SPEC_VERIFIED = False` |
@@ -24,3 +24,12 @@ KIS/DB US orderable cash varies by account type and requires an injected `cash_p
 TODO: LS/Kiwoom US request mappings lacked verified enum values in the source; only domestic mappings were carried over. Expansion requires official specifications and fixtures. NH/KB require endpoints and TR definitions and cannot run merely by changing the lock. LS/Kiwoom query results are also unverified reference data and are excluded from the registered implementation count.
 
 [한국어](../BROKER_MATRIX.md)
+
+LS BS-17 (2026-10-01): `brokers/ls.py` and the factory are registered, with writes
+locked by default. No transport, credentials, or TR budgets are supplied automatically.
+`experimental.ls` aliases the same module and lock. Candidate `t0425.cheqty/cheprice`
+fill quantity/average price semantics are **UNVERIFIED**. Locked responses retain
+`unknown` status; missing execution price is `None`, never the order limit price.
+Realtime orders, history, and virtual-account support remain unclaimed pending
+specification comparison and H-LS. All LS fixtures are synthetic; see
+`tests/fixtures/ls/README.md` for provenance and unverified fields.

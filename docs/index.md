@@ -52,8 +52,8 @@ with create_broker("kis") as broker:
 | 위치 | 하는 일 |
 | --- | --- |
 | `base` | 조회·주문·취소·종료를 정의한 공통 계약 |
-| `brokers` | KIS·DBFI·Toss 변환 구현; 검증 범위는 오프라인 계약 테스트 |
-| `experimental` | LS·키움의 미검증 매핑과 NH·KB 스켈레톤; 주문 잠금 유지 |
+| `brokers` | KIS·DBFI·Toss 변환과 기본 잠금 LS; 검증 범위는 오프라인 계약 시험 |
+| `experimental` | LS 호환 경로·다른 미검증 매핑/스켈레톤; 주문 잠금 유지 |
 | `safety` | 호출자가 주입하는 한도·멱등성·드라이런·중단 판단 |
 | `mcp` | 기본 읽기 전용 도구, 설정으로만 등록되는 주문 도구 |
 
@@ -89,7 +89,7 @@ pykbroker 코드는 [Apache-2.0](https://github.com/STOA-company/pykbroker/blob/
 
 ### LS증권·키움증권·NH투자증권·KB증권도 지원하나요?
 
-네 어댑터는 모두 **미검증 experimental**이며 3곳의 등록 어댑터 수에 포함하지 않습니다. LS·키움은 국내 요청 매핑이 있으나 주문 잠금 상태이고 조회 결과도 미검증이며, NH·KB는 네트워크 전송 없는 스켈레톤입니다. 최상위 팩터리에 등록되지 않았고, 잠금만 해제해 실사용할 수 있는 상태가 아닙니다.
+LS는 2026-10-01부터 `brokers/ls.py`와 factory에 등록됐으나 **기본 주문 잠금은 닫혀 있습니다**. 실사용 지원을 뜻하지 않으며 상세 명세와 H-LS 왕복은 미확인입니다. 체결가 후보값도 `UNVERIFIED`로 표시합니다. 기존 `experimental.ls`는 같은 모듈의 호환 경로입니다. 다른 experimental 어댑터의 상태는 지원 표를 확인하세요.
 
 ## 관련 프로젝트
 

@@ -14,10 +14,12 @@ Models are immutable Pydantic v2 objects that reject unknown fields. Amounts rem
 | `Quote` | symbol, market, last, bid, ask, prev_close, timestamp |
 | `OrderRequest` | symbol, side, quantity, order_type, price, market, venue, client_key |
 | `CancelRequest` | order_id, symbol, quantity, market, venue, client_key |
-| `Order` | id, symbol, status, quantity, price, filled, remaining |
+| `Order` | id, symbol, status, quantity, price, fill_price, filled, remaining |
 | `Rules` | symbol, market, currency, tick, lot, min_notional, regular_open, regular_close, timezone |
 | `Capabilities` | Markets, single-order cancellation, market orders, NXT, and order-history support |
 
 `None` means unverified or unknown. `accepted` means request acceptance, not a fill or final cancellation. Models do not store raw responses, accounts, or keys. `client_key` is hidden from repr but is included if a caller serializes the entire model; do not log that serialization.
+
+`Order.fill_price` is the broker-reported average execution price, defaulting to `None`. It is never derived from the submitted `price` or holding cost. LS `cheprice` remains an UNVERIFIED candidate mapping.
 
 [한국어](../../api/models.md)

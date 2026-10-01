@@ -1,5 +1,5 @@
 ---
-description: "KIS·DBFI·Toss의 오프라인 검증 범위와 LS·키움·NH·KB experimental 상태, KR·US 시장과 취소 제약."
+description: "KIS·DBFI·Toss의 오프라인 검증 범위와 LS 기본 잠금과 키움·NH·KB experimental 상태, KR·US 시장과 취소 제약."
 lang: ko
 ---
 
@@ -12,7 +12,7 @@ lang: ko
 | KIS | KR / US | 미지원 | KR, 별도 세션·평가 승인 필요 | 미지원 | 변환 구현·오프라인 테스트 |
 | DBFI | KR / US | 지원 | KR, 별도 세션·평가 승인 필요 | KR | 변환 구현·오프라인 테스트 |
 | Toss | KR | 전체 미체결분 | KR, 별도 세션·평가 승인 필요 | 미지원 | SDK 브리지 mock 검사 |
-| LS | KR | 잠금 상태 | 미검증 | 미지원 | `LS_SPEC_VERIFIED = False` |
+| LS | KR | 매핑 구현·잠금 | 매핑 구현·잠금 | 미지원 | 정식 모듈·factory 등록, `LS_SPEC_VERIFIED = False` |
 | Kiwoom | KR | 미구현 | 미검증 | 미지원 | `KIWOOM_SPEC_VERIFIED = False` |
 | NH | KR 스켈레톤 | 미구현 | 미구현 | 미지원 | `NH_SPEC_VERIFIED = False` |
 | KB | KR 스켈레톤 | 미구현 | 미구현 | 미지원 | `KB_SPEC_VERIFIED = False` |
@@ -22,5 +22,13 @@ KIS는 정정·취소 가능 주문 목록을, Toss는 열린 주문 목록을 �
 KIS/DB US 잔고의 주문 가능 현금은 계좌 유형별로 달라 `cash_provider` 주입을 요구합니다. US 매수·매도는 지정가만 노출합니다. 계좌에 없는 NXT·상품·시장 기능을 유추하지 않습니다.
 
 TODO: LS·키움 해외 요청 매핑은 원본에도 열거값 검증이 없으며 이번 패키지에는 국내 매핑만 옮겼습니다. 공식 스펙과 fixture 확보 후 확장해야 합니다. NH·KB는 엔드포인트/TR 확보부터 필요하며 잠금만 바꿔도 실행되지 않습니다. LS·키움의 조회 결과도 미검증 참고 데이터이며, 실사용 지원 수에 포함하지 않습니다.
+
+LS BS-17(2026-10-01): `brokers/ls.py`로 경로를 승격하고 `factory`에 등록했습니다.
+**등록은 실사용 잠금 해제가 아닙니다.** 기본 클라이언트·키·요청 예산은 없고 주문·취소는
+잠겨 있습니다. 기존 `experimental.ls`는 같은 모듈/잠금의 호환 경로입니다.
+`t0425.cheqty/cheprice`의 체결 수량·평균 체결가 후보 매핑은 **UNVERIFIED(명세 미확인)**입니다.
+명세 잠금 상태에서는 체결 상태를 `unknown`으로 유지하며 체결가 누락은 `None`입니다.
+상세 명세 대조와 H-LS 왕복 전에는 실시간 미체결·주문 이력·모의계좌 지원을 선언하지 않습니다.
+합성 fixture 출처와 미확인 목록: `tests/fixtures/ls/README.md`.
 
 [English](en/BROKER_MATRIX.md)

@@ -40,6 +40,6 @@ lang: ko
 
 실행기는 `capabilities()`를 보고 계획을 세웁니다. 미국 경로는 두 증권사 모두 **시장가가 없고** 거래소를 반드시 지정해야 하므로 `supports_market_order=False`, `requires_venue=True`, `venues=("NASDAQ","NYSE","AMEX")`로 선언합니다. 선언 목록 밖 거래소나 설정과 다른 거래소로 나가는 주문은 안전 게이트 이전에 거절됩니다.
 
-`experimental` 어댑터는 최상위 `BROKERS` 팩터리에 등록하지 않습니다. 모듈을 직접 import해야 하며 기본 주문 잠금은 항상 닫혀 있습니다.
+`experimental` 어댑터는 모듈을 직접 import하며 기본 주문 잠금이 닫혀 있습니다. BS-17 LS는 예외로 `pykbroker.brokers.ls.LS`와 `create_broker("ls")`에 등록했습니다. 클라이언트·코드·요청 제한은 명시적으로 주입하며 등록만으로 주문 잠금이 열리지 않습니다.
 
 [English](../en/api/brokers.md)
