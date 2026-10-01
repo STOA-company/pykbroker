@@ -629,12 +629,12 @@ def test_rest_client_posts_json_and_returns_the_body_with_lowercase_headers(monk
         seen.update(url=request.full_url, body=json.loads(request.data), method=request.method, timeout=timeout)
         return _Response()
 
-    monkeypatch.setattr(module.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(module, "urlopen", urlopen)
     client = _KiwoomRestClient("https://fixture.invalid/", timeout=3)
     body, headers = client.post("/p", headers={"api-id": "x"}, json={"a": "한"})
     assert body == {"return_code": 0} and headers == {"cont-yn": "Y", "next-key": "K1"}
     assert seen == {"url": "https://fixture.invalid/p", "body": {"a": "한"}, "method": "POST", "timeout": 3}
-    monkeypatch.setattr(module.urllib.request, "urlopen", lambda request, timeout: _Response(b"[1]"))
+    monkeypatch.setattr(module, "urlopen", lambda request, timeout: _Response(b"[1]"))
     with pytest.raises(ValueError):
         client.post("/p", headers={}, json={})
 
@@ -645,7 +645,7 @@ def test_an_http_error_status_is_a_transport_failure_not_a_parsed_body(monkeypat
     def urlopen(request, timeout):
         raise urllib.error.HTTPError(request.full_url, 429, "fixture-token", {}, None)
 
-    monkeypatch.setattr(module.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(module, "urlopen", urlopen)
     broker = Kiwoom(account="fixture-account", client_options=OPTIONS, codes=CODES)
     with pytest.raises(TransportError) as raised:
         broker.get_quote("005930")

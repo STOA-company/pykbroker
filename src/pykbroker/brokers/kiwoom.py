@@ -12,6 +12,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
+from pykbroker._http import urlopen
 from pykbroker.exceptions import (
     BrokerError,
     BrokerRejectedError,
@@ -74,7 +75,7 @@ class _KiwoomRestClient:
     def post(self, path: str, *, headers: dict, json: dict) -> tuple[dict, dict[str, str]]:
         """The body and the lower-cased response headers: `cont-yn` and `next-key` are the only truncation signal."""
         request = urllib.request.Request(f"{self.base_url}{path}", data=_dumps(json), headers=headers, method="POST")
-        with urllib.request.urlopen(request, timeout=self._timeout) as response:
+        with urlopen(request, timeout=self._timeout) as response:
             return _loads(response.read()), {key.lower(): value for key, value in response.headers.items()}
 
 

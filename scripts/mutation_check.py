@@ -36,6 +36,13 @@ class Mutation:
 
 MUTATIONS = (
     Mutation(
+        "NO-REDIRECT",
+        "broker tokens follow redirects again through the default urllib opener",
+        SRC / "_http.py",
+        "_OPENER = build_opener(_NoRedirect())",
+        "_OPENER = build_opener()",
+    ),
+    Mutation(
         "A'-1",
         "the mock-account flag never reaches the vendor factory",
         SRC / "brokers/kis.py",
