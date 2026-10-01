@@ -1,0 +1,35 @@
+{
+  "rsp_cd": "00000",
+  "t0425OutBlock": {
+    "cts_ordno": ""
+  },
+  "t0425OutBlock1": [
+    {
+      "ordno": "42",
+      "expcode": "005930",
+      "qty": "3",
+      "price": "70000",
+      "cheqty": "1",
+      "cheprice": "69000.25",
+      "ordrem": "2"
+    },
+    {
+      "ordno": "43",
+      "expcode": "005930",
+      "qty": "3",
+      "price": "70000",
+      "cheqty": "3",
+      "cheprice": "68900",
+      "ordrem": "0"
+    },
+    {
+      "ordno": "44",
+      "expcode": "000660",
+      "qty": "3",
+      "price": "70000",
+      "cheqty": "0",
+      "cheprice": "0",
+      "ordrem": "0"
+    }
+  ]
+}

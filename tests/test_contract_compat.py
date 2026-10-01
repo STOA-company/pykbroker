@@ -6,8 +6,7 @@ here because a reviewer had to find each of them by hand:
 
 * every A′ addition to `base.py` is additive — new methods, and new parameters that are
   keyword-only with defaults, so a pre-A′ call site still binds;
-* `experimental/_rest.py` takes no mock-account argument — the lock is not a side door,
-  and A′ has no business reaching into it;
+* `experimental/_rest.py` accepts explicit mode without opening unsupported mock accounts;
 * `pip install -e ".[dev]"` can actually run the suite it ships.
 """
 
@@ -21,6 +20,7 @@ from pykbroker.base import BrokerAdapter, StockBroker
 from pykbroker.brokers.dbfi import DBFI
 from pykbroker.brokers.kis import KIS
 from pykbroker.brokers.toss import Toss
+from pykbroker.exceptions import NotSupportedError
 from pykbroker.experimental._rest import RestBroker
 
 PYPROJECT = Path(__file__).resolve().parent.parent / "pyproject.toml"
@@ -67,15 +67,19 @@ def test_a_pre_a_call_site_still_binds(broker_type):
 
 
 @pytest.mark.parametrize("argument", ["virtual", "halt_provider"])
-def test_the_locked_rest_mapping_takes_no_mock_account_argument(argument):
-    """Bypass 1: A′ must not widen an unverified mapping's constructor on its way past."""
-    assert argument not in inspect.signature(RestBroker.__init__).parameters
+def test_rest_mode_is_explicit_and_no_halt_argument_is_added(argument):
+    parameters = inspect.signature(RestBroker.__init__).parameters
+    if argument == "virtual":
+        assert parameters[argument].kind is inspect.Parameter.KEYWORD_ONLY
+        assert parameters[argument].default is False
+    else:
+        assert argument not in parameters
 
 
 def test_the_locked_rest_mapping_never_claims_a_mock_domain():
     """Bypass 2: whatever the constructor accepts, the lock declares no mock account."""
     assert RestBroker.supports_virtual is False
-    with pytest.raises(TypeError):
+    with pytest.raises(NotSupportedError):
         RestBroker(account="fixture", virtual=True)
 
 

@@ -52,8 +52,8 @@ Queries return shared models. Orders and cancellations pass through **dry-run â†
 | Component | Responsibility |
 | --- | --- |
 | `base` | Shared query, order, cancellation, and shutdown contracts |
-| `brokers` | KIS/DBFI/Toss/Kiwoom/NH conversions; verified with offline contract tests |
-| `experimental` | Unverified LS mappings, KB skeleton and legacy mappings; order locks remain closed |
+| `brokers` | Registered KIS/DBFI/Toss/Kiwoom/LS/NH adapters; offline contract tests |
+| `experimental` | LS compatibility alias, KB skeleton and legacy mappings; writes stay locked |
 | `safety` | Caller-injected limits, idempotency, dry-run, and halt decisions |
 | `mcp` | Default read-only tools; order tools registered only through configuration |
 
@@ -89,7 +89,7 @@ The code is provided under [Apache-2.0](https://github.com/STOA-company/pykbroke
 
 ### Are LS, Kiwoom, NH Investment, and KB Securities supported?
 
-Kiwoom and NH are registered domestic REST adapters, verified with fake response contracts. NH implements KRX/NXT cash limit orders and single-order cancellation; **live orders are locked by default**. The market-to-integrated order number link remains unverified, and real APIs and mock-account round trips remain unverified. LS has locked, unverified mappings; KB is an offline skeleton. Neither is registered.
+Kiwoom, LS and NH are registered in the factory and checked with fake response contracts. LS writes are limited to verified mock instances; **live-binding orders and cancellations remain locked**. An injected client with an explicit host is required. The mock address contract and detailed specifications remain unverified. Locked quantity, filled quantity and execution price remain `None`; `fill_price` stays unmapped pending average-price evidence. `experimental.ls` aliases the same module. NH implements KRX/NXT cash limit orders and single-order cancellation; **live orders are SDK-locked by default**. Order-to-ledger reconciliation, real APIs and mock-account round trips remain unverified. Only KB remains outside the factory as an offline skeleton.
 
 ## Related projects
 

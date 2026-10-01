@@ -24,8 +24,9 @@ class RestBroker(BaseBroker):
         rate_limiter: RateLimiter | None = None,
         safety: OrderSafety | None = None,
         market: str = "KR",
+        virtual: bool = False,
     ) -> None:
-        super().__init__(account=account, safety=safety, market=market)
+        super().__init__(account=account, safety=safety, market=market, virtual=virtual)
         if market != "KR":
             raise NotSupportedError("This experimental REST mapping is domestic only")
         self._client, self._codes = client, dict(codes or {})

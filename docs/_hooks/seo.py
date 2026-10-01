@@ -60,7 +60,10 @@ def document_text(path, base):
 
 def generate():
     base = site_url()
-    pages = sorted(DOCS.rglob("*.md"), key=lambda p: p.relative_to(DOCS).as_posix())
+    pages = sorted(
+        (p for p in DOCS.rglob("*.md") if re.search(r'^description: "', p.read_text(), re.M)),
+        key=lambda p: p.relative_to(DOCS).as_posix(),
+    )
     sections = []
     summaries = []
     for path in pages:
@@ -75,9 +78,10 @@ def generate():
         "# pykbroker\n\n"
         "> Apache-2.0 Python SDK and read-only-by-default MCP server for Korean broker Open APIs.\n\n"
         "한국어 기본 문서와 영어 번역 / Korean documentation with English translations.\n"
-        "KIS, DBFI, Toss, Kiwoom and NH are registered adapters with offline mock/fixture validation only.\n"
-        "Real APIs, paper accounts and live trading have not been validated. LS has\n"
-        "unverified locked mappings; KB is an offline skeleton. NH live orders are SDK-locked by default.\n"
+        "KIS, DBFI, Toss, Kiwoom, LS and NH are registered adapters with offline mock/fixture validation only.\n"
+        "Real APIs, paper accounts and live trading have not been validated. LS writes are limited\n"
+        "to verified mock instances; live-binding writes remain locked. NH live orders are SDK-locked\n"
+        "by default. Only KB remains outside the factory as an offline skeleton. See the broker support matrix.\n"
         "Dry-run blocks order/cancellation transmission; it does not simulate successful orders.\n"
         "Vendor source SDKs and authentication must be supplied separately.\n"
         "The execution SDK contains contracts only, without an execution engine.\n"

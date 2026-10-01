@@ -1,0 +1,17 @@
+{
+  "rsp_cd": "00000",
+  "t0424OutBlock": {
+    "cts_expcode": ""
+  },
+  "t0424OutBlock1": [
+    {
+      "expcode": "005930",
+      "hname": "fixture stock",
+      "janqty": "3",
+      "mdposqt": "2",
+      "pamt": "68000.25",
+      "price": "70000",
+      "appamt": "210000"
+    }
+  ]
+}

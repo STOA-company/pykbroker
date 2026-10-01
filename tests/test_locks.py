@@ -1,4 +1,5 @@
 from importlib import import_module
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -19,7 +20,8 @@ CASES = [
 def test_every_mutation_is_locked(module_name, class_name, constant, operation, request_order, live_safety):
     module = import_module("pykbroker.experimental." + module_name)
     assert getattr(module, constant) is False
-    broker = getattr(module, class_name)(account="fixture", safety=live_safety)
+    kwargs = {"client": SimpleNamespace(base_url=module.LS_API_BASE_URL)} if module_name == "ls" else {}
+    broker = getattr(module, class_name)(account="fixture", safety=live_safety, **kwargs)
     request = (
         request_order
         if operation.startswith("place")
@@ -46,8 +48,12 @@ def test_flag_alone_cannot_submit(module_name, class_name, constant, monkeypatch
     module = import_module("pykbroker.experimental." + module_name)
     monkeypatch.setattr(module, constant, True)
     client = Mock()
+    if module_name == "ls":
+        client.base_url = module.LS_API_BASE_URL
     broker = getattr(module, class_name)(account="fixture", client=client, safety=live_safety)
-    with pytest.raises(Exception, match="code"):
+    expected = SpecUnverifiedError if module_name == "ls" else Exception
+    message = "live writes are locked" if module_name == "ls" else "code"
+    with pytest.raises(expected, match=message):
         broker.place_order(request_order)
     client.post.assert_not_called()
 
@@ -66,8 +72,14 @@ def test_reviewed_fixture_codes_choose_exact_tr(
         else {"return_code": 0, "ord_no": "42"}
     )
     codes = {key: "fixture-" + key for key in ("buy", "sell", "limit", "cash", "condition", "member", "exchange")}
+    kwargs = {}
+    if module_name == "ls":
+        # UNVERIFIED: fake host/codes/response, never a broker account.
+        monkeypatch.setattr(module, "LS_MOCK_BASE_URL", "https://ls-mock.invalid:8080")
+        client.base_url = module.LS_MOCK_BASE_URL
+        kwargs = {"virtual": True, "spec_verified": True}
     broker = getattr(module, class_name)(
-        account="fixture", client=client, codes=codes, rate_limiter=limiter, safety=live_safety
+        account="fixture", client=client, codes=codes, rate_limiter=limiter, safety=live_safety, **kwargs
     )
     result = broker.place_order(request_order.model_copy(update={"side": side}))
     assert result.id == "42"

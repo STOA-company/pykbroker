@@ -17,6 +17,11 @@ from pykbroker.exceptions import ConfigurationError, NotSupportedError, SpecUnve
 from pykbroker.factory import BROKERS, create_broker
 from pykbroker.models import CancelRequest, OrderRequest
 
+
+def _locked_client(module_name):
+    return {"client": SimpleNamespace(base_url="https://openapi.ls-sec.co.kr:8080")} if module_name == "ls" else {}
+
+
 SHIPPED = [KIS, DBFI, Toss, NH]
 LOCKED = [("ls", "LS"), ("kiwoom", "Kiwoom"), ("nh", "NH"), ("kb", "KB")]
 # Every question the settlement-aware executor asks a broker, whatever the asset class.
@@ -88,7 +93,7 @@ def test_only_kis_claims_a_mock_domain():
 @pytest.mark.parametrize("operation", ["place_order", "place", "cancel_order", "cancel"])
 def test_locked_brokers_still_refuse_every_mutation(module_name, class_name, operation, request_order, live_safety):
     module = import_module("pykbroker.experimental." + module_name)
-    broker = getattr(module, class_name)(account="fixture", safety=live_safety)
+    broker = getattr(module, class_name)(account="fixture", safety=live_safety, **_locked_client(module_name))
     request = (
         request_order
         if operation.startswith("place")
@@ -102,24 +107,33 @@ def test_locked_brokers_still_refuse_every_mutation(module_name, class_name, ope
 def test_a_mock_flag_does_not_unlock_an_experimental_broker(module_name, class_name, request_order, live_safety):
     """Bypass 1: the new mock-account argument must not become a side door.
 
-    The two REST-backed mappings refuse it hardest of all — A′ left their constructor
-    alone, so the argument does not exist there. The two skeletons forward **kwargs and
-    are refused by the base contract instead. Either way, no mock domain is claimed.
+    LS accepts an explicit mode but refuses an unverified mock address. Other locked
+    mappings reject unsupported modes. None claims a verified mock-account contract.
     """
     module = import_module("pykbroker.experimental." + module_name)
     broker_type = getattr(module, class_name)
-    assert broker_type(account="fixture").capabilities().supports_virtual_account is False
-    with pytest.raises((NotSupportedError, TypeError)):
-        broker_type(account="fixture", virtual=True, safety=live_safety)
+    assert (
+        broker_type(account="fixture", **_locked_client(module_name)).capabilities().supports_virtual_account is False
+    )
+    with pytest.raises((NotSupportedError, TypeError, ConfigurationError)):
+        broker_type(account="fixture", virtual=True, safety=live_safety, **_locked_client(module_name))
     with pytest.raises(SpecUnverifiedError):
-        broker_type(account="fixture", safety=live_safety).place_order(request_order)
+        broker_type(account="fixture", safety=live_safety, **_locked_client(module_name)).place_order(request_order)
 
 
 @pytest.mark.parametrize("module_name,class_name", LOCKED)
 @pytest.mark.parametrize("case", [str.lower, str.upper, str.title])
 def test_experimental_brokers_are_not_reachable_through_the_factory(module_name, class_name, case):
-    """The factory never selects an experimental class; registered REST adapters require credentials."""
+    """Registered REST adapters require credentials; the LS compatibility alias stays locked."""
     experimental = getattr(import_module("pykbroker.experimental." + module_name), class_name)
+    if module_name == "ls":
+        assert BROKERS["ls"] is experimental
+        broker = create_broker(case(module_name), account="fixture", **_locked_client(module_name))
+        with pytest.raises(SpecUnverifiedError):
+            broker.place_order(_kr_order())
+        with pytest.raises(ConfigurationError):
+            create_broker(case(module_name), account="fixture")
+        return
     assert BROKERS.get(module_name) is not experimental and class_name not in BROKERS
     assert class_name not in pykbroker.__all__
     with pytest.raises(ConfigurationError):
@@ -127,7 +141,7 @@ def test_experimental_brokers_are_not_reachable_through_the_factory(module_name,
 
 
 def test_the_factory_ships_exactly_the_registered_adapters():
-    assert set(BROKERS) == {"kis", "dbfi", "toss", "kiwoom", "nh"}
+    assert set(BROKERS) == {"kis", "dbfi", "toss", "kiwoom", "ls", "nh"}
 
 
 # --- B′-0: 거래소 선언 정합 --------------------------------------------------
