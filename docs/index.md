@@ -1,19 +1,19 @@
 ---
-description: "한국투자·DB증권·토스증권 Open API를 공통 Python SDK와 기본 읽기 전용 MCP 서버로 연결하는 pykbroker의 설치, 지원 범위와 안전장치."
+description: "한국투자·DB증권·토스증권·키움·NH Open API를 공통 Python SDK와 기본 읽기 전용 MCP 서버로 연결하는 pykbroker의 설치, 지원 범위와 안전장치."
 lang: ko
 ---
 
 # pykbroker
 
-pykbroker는 한국 증권사(한국투자·DB증권·토스증권) Open API를 공통 파이썬 인터페이스와 기본 읽기 전용 MCP 서버로 묶은 Apache-2.0 라이브러리입니다.
+pykbroker는 한국 증권사(한국투자·DB증권·토스증권·키움·NH) Open API를 공통 파이썬 인터페이스와 기본 읽기 전용 MCP 서버로 묶은 Apache-2.0 라이브러리입니다.
 
-pykbroker is an Apache-2.0 Python library that unifies Korean brokerage (KIS, DB Securities, and Toss Securities) Open APIs behind a common interface and a read-only-by-default MCP server.
+pykbroker is an Apache-2.0 Python library that unifies Korean brokerage (KIS, DB Securities, Toss Securities, Kiwoom, and NH Investment) Open APIs behind a common interface and a read-only-by-default MCP server.
 
 | 구현 어댑터 | 오프라인 테스트 | Python |
 | --- | --- | --- |
-| **3곳** — KIS·DBFI·Toss | **141 통과** · 1건 환경 제약 skip | **3.11 이상** |
+| **5곳** — KIS·DBFI·Toss·키움·NH | 가짜 응답 계약·변이 검사 | **3.11 이상** |
 
-2026-09-09 실측입니다. 구현 수는 패키지의 `BROKERS` 등록 수이며, 테스트는 mock·합성 fixture 기반입니다. **실 API·모의계좌·실거래 검증은 수행하지 않았습니다.** skip은 sandbox의 로컬 IPC 제한입니다. [지원 표](BROKER_MATRIX.md)에 세부 범위가 있습니다. 초기 알파이며 PyPI 미게시 소스 기준 안내입니다.
+2026-10-01 등록 구현 기준입니다. 구현 수는 패키지의 `BROKERS` 등록 수이며, 테스트는 mock·합성 fixture 기반입니다. **실 API·모의계좌·실거래 검증은 수행하지 않았습니다.** [지원 표](BROKER_MATRIX.md)에 세부 범위가 있습니다. 초기 알파이며 PyPI 미게시 소스 기준 안내입니다.
 
 ## 30초 예제 — 한국투자증권 시세 조회
 
@@ -52,8 +52,8 @@ with create_broker("kis") as broker:
 | 위치 | 하는 일 |
 | --- | --- |
 | `base` | 조회·주문·취소·종료를 정의한 공통 계약 |
-| `brokers` | KIS·DBFI·Toss 변환과 기본 잠금 LS; 검증 범위는 오프라인 계약 시험 |
-| `experimental` | LS 호환 경로·다른 미검증 매핑/스켈레톤; 주문 잠금 유지 |
+| `brokers` | KIS·DBFI·Toss·키움·LS·NH 등록; 검증 범위는 오프라인 계약 시험 |
+| `experimental` | LS 호환 경로·KB 스켈레톤과 옛 매핑; 주문 잠금 유지 |
 | `safety` | 호출자가 주입하는 한도·멱등성·드라이런·중단 판단 |
 | `mcp` | 기본 읽기 전용 도구, 설정으로만 등록되는 주문 도구 |
 
@@ -89,7 +89,7 @@ pykbroker 코드는 [Apache-2.0](https://github.com/STOA-company/pykbroker/blob/
 
 ### LS증권·키움증권·NH투자증권·KB증권도 지원하나요?
 
-LS는 `brokers/ls.py`와 factory에 등록되어 있으며 **실 바인딩 주문은 잠겨 있습니다**. 명시적인 호스트를 가진 클라이언트가 필요합니다. 모의 주소 계약과 상세 명세는 미확인이고, 잠금 중 수량·체결수량·체결가는 `None`으로 남습니다. 평균 체결가 정의를 확인하기 전에는 `fill_price`를 채우지 않습니다. `experimental.ls`는 같은 모듈의 호환 경로입니다. 다른 어댑터 상태는 지원 표를 확인하세요.
+키움·LS·NH는 팩터리에 등록됐고 가짜 응답으로 계약을 검증했습니다. LS 쓰기는 검증된 모의 인스턴스만 가능하며 **실 바인딩 주문·취소는 잠겨 있습니다**. 명시적인 호스트를 가진 클라이언트가 필요하고 모의 주소 계약과 상세 명세는 미확인입니다. 잠금 중 수량·체결수량·체결가는 `None`이며 평균 체결가 정의를 확인하기 전에는 `fill_price`를 채우지 않습니다. `experimental.ls`는 같은 모듈의 호환 경로입니다. NH는 KRX·NXT 현금 지정가·단일 취소를 구현했으며 **실주문은 SDK 기본 잠금**입니다. 주문번호와 원장번호 연결, 실제 API·모의계좌 왕복은 아직 검증하지 않았습니다. KB만 팩터리 밖의 전송 없는 스켈레톤입니다.
 
 ## 관련 프로젝트
 
@@ -121,7 +121,7 @@ LS는 `brokers/ls.py`와 factory에 등록되어 있으며 **실 바인딩 주�
     "@type": "Organization",
     "name": "Quantus Technologies"
   },
-  "description": "한국투자·DB증권·토스증권 Open API를 공통 Python SDK와 기본 읽기 전용 MCP 서버로 연결하는 pykbroker의 설치, 지원 범위와 안전장치.",
+  "description": "한국투자·DB증권·토스증권·키움·NH Open API를 공통 Python SDK와 기본 읽기 전용 MCP 서버로 연결하는 pykbroker의 설치, 지원 범위와 안전장치.",
   "inLanguage": "ko"
 }
 </script>

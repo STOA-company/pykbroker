@@ -1,19 +1,19 @@
 ---
-description: "pykbroker unifies KIS, DB Securities and Toss APIs in a Python SDK and read-only-by-default MCP server. Installation, support limits and safety."
+description: "pykbroker unifies KIS, DB Securities, Toss, Kiwoom and NH APIs in a Python SDK and read-only-by-default MCP server. Installation, support limits and safety."
 lang: en
 ---
 
 # pykbroker
 
-pykbroker is an Apache-2.0 Python library that unifies Korean brokerage (KIS, DB Securities, and Toss Securities) Open APIs behind a common interface and a read-only-by-default MCP server.
+pykbroker is an Apache-2.0 Python library that unifies Korean brokerage (KIS, DB Securities, Toss Securities, Kiwoom, and NH Investment) Open APIs behind a common interface and a read-only-by-default MCP server.
 
-pykbroker는 한국 증권사(한국투자·DB증권·토스증권) Open API를 공통 파이썬 인터페이스와 기본 읽기 전용 MCP 서버로 묶은 Apache-2.0 라이브러리입니다.
+pykbroker는 한국 증권사(한국투자·DB증권·토스증권·키움·NH) Open API를 공통 파이썬 인터페이스와 기본 읽기 전용 MCP 서버로 묶은 Apache-2.0 라이브러리입니다.
 
 | Implemented adapters | Offline tests | Python |
 | --- | --- | --- |
-| **3** — KIS, DBFI, Toss | **141 passed**, 1 environment-related skip | **3.11+** |
+| **5** — KIS, DBFI, Toss, Kiwoom, NH | Fake response contracts and mutation checks | **3.11+** |
 
-Measured on 2026-09-09. The adapter count is the number of entries in `BROKERS`; tests use mocks and synthetic fixtures. **Real APIs, paper accounts, and live trading have not been validated.** The skip concerns sandbox restrictions on local IPC. See the [support matrix](BROKER_MATRIX.md). This is an alpha, unpublished source checkout.
+Registered implementation as of 2026-10-01. The adapter count is the number of entries in `BROKERS`; tests use mocks and synthetic fixtures. **Real APIs, paper accounts, and live trading have not been validated.** See the [support matrix](BROKER_MATRIX.md). This is an alpha, unpublished source checkout.
 
 ## 30-second example: KIS stock quote
 
@@ -52,8 +52,8 @@ Queries return shared models. Orders and cancellations pass through **dry-run �
 | Component | Responsibility |
 | --- | --- |
 | `base` | Shared query, order, cancellation, and shutdown contracts |
-| `brokers` | KIS/DBFI/Toss conversions and default-locked LS; offline contract tests |
-| `experimental` | LS compatibility alias and other unverified mappings/skeletons; writes stay locked |
+| `brokers` | Registered KIS/DBFI/Toss/Kiwoom/LS/NH adapters; offline contract tests |
+| `experimental` | LS compatibility alias, KB skeleton and legacy mappings; writes stay locked |
 | `safety` | Caller-injected limits, idempotency, dry-run, and halt decisions |
 | `mcp` | Default read-only tools; order tools registered only through configuration |
 
@@ -89,7 +89,7 @@ The code is provided under [Apache-2.0](https://github.com/STOA-company/pykbroke
 
 ### Are LS, Kiwoom, NH Investment, and KB Securities supported?
 
-LS is registered in `brokers/ls.py` and the factory, with **live-binding writes locked**. An injected client with an explicit host is required. The mock address contract and detailed specifications remain unverified. Locked quantity, filled quantity, and execution price remain `None`; `fill_price` stays unmapped pending average-price evidence. `experimental.ls` aliases the same module. See the support matrix for other adapters.
+Kiwoom, LS and NH are registered in the factory and checked with fake response contracts. LS writes are limited to verified mock instances; **live-binding orders and cancellations remain locked**. An injected client with an explicit host is required. The mock address contract and detailed specifications remain unverified. Locked quantity, filled quantity and execution price remain `None`; `fill_price` stays unmapped pending average-price evidence. `experimental.ls` aliases the same module. NH implements KRX/NXT cash limit orders and single-order cancellation; **live orders are SDK-locked by default**. Order-to-ledger reconciliation, real APIs and mock-account round trips remain unverified. Only KB remains outside the factory as an offline skeleton.
 
 ## Related projects
 
@@ -121,7 +121,7 @@ The planned documentation address is `https://stoa-company.github.io/pykbroker/`
     "@type": "Organization",
     "name": "Quantus Technologies"
   },
-  "description": "pykbroker unifies KIS, DB Securities and Toss APIs in a Python SDK and read-only-by-default MCP server. Installation, support limits and safety.",
+  "description": "pykbroker unifies KIS, DB Securities, Toss, Kiwoom and NH APIs in a Python SDK and read-only-by-default MCP server. Installation, support limits and safety.",
   "inLanguage": "en"
 }
 </script>

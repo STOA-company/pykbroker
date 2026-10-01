@@ -1,4 +1,4 @@
-"""NH PLUG domestic reads and guarded cash limit orders; not registered in the broker factory.
+"""NH PLUG domestic reads and guarded cash limit orders.
 
 Specifications: https://www.nhplug.com/openapi-docs/common/openapi.json and
 https://www.nhplug.com/openapi-docs/krstock/openapi.json (read 2026-09-27).
@@ -13,24 +13,26 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping, MutableMapping
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
+from pykbroker._http import urlopen
 from pykbroker.exceptions import (
     BrokerError,
     BrokerRejectedError,
     ConfigurationError,
     InvalidResponseError,
     NotSupportedError,
+    SafetyError,
     TransportError,
 )
-from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote
-from pykbroker.rules.kr import KST
+from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
+from pykbroker.rules.kr import KST, equity_rules
 from pykbroker.safety.gate import OrderSafety
 from pykbroker.safety.rate_limit import RateLimiter, credential_rate_limiter
 
-from ._common import BaseBroker, decimal, whole
+from ._common import BaseBroker, decimal, optional_price, whole
 
 NH_API_BASE_URL = "https://api.nhplug.com:8443"
 NH_MOCK_BASE_URL = "https://moapi.nhplug.com:8443"
@@ -59,9 +61,11 @@ class _NhRestClient:
     ) -> tuple[int, Mapping[str, Any], Mapping[str, str]]:
         request = urllib.request.Request(self.base_url + path, data=data, headers=dict(headers), method="POST")
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            with urlopen(request, timeout=self.timeout) as response:
                 return response.status, _json_object(response.read()), dict(response.headers)
         except urllib.error.HTTPError as exc:
+            if 300 <= exc.code < 400:
+                raise TransportError("NH redirect refused") from None
             # A 4xx/5xx body may contain customer or credential data. Classify by status only.
             return exc.code, {}, dict(exc.headers)
         except Exception:
@@ -132,17 +136,22 @@ class NH(BaseBroker):
         market: str = "KR",
         venue: str = "KRX",
         virtual: bool = False,
+        allow_live_orders: bool = False,
         client_factory: Callable[..., Any] | None = None,
         token_cache: MutableMapping[str, dict[str, str]] | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         rate_limiter: RateLimiter | None = None,
         safety: OrderSafety | None = None,
+        halt_provider: Callable[[str], bool] | None = None,
     ) -> None:
-        super().__init__(account=account, market=market, virtual=virtual, safety=safety)
+        super().__init__(account=account, market=market, virtual=virtual, safety=safety, halt_provider=halt_provider)
         if market != "KR":
             raise NotSupportedError("NH overseas reads are not implemented")
         if venue not in _VENUES:
             raise ConfigurationError("NH venue must be KRX, NXT or UNT")
+        if type(allow_live_orders) is not bool:
+            raise ConfigurationError("allow_live_orders must be a boolean")
+        self._allow_live_orders = allow_live_orders
         options = dict(client_options)
         if not set(options) <= _OPTIONS:
             raise ConfigurationError("Unknown NH client option")
@@ -156,7 +165,9 @@ class NH(BaseBroker):
         if str(options.get("token_type", "Bearer")).lower() != "bearer":
             raise ConfigurationError("NH token_type must be Bearer")
         account_type = options.get("acct_type")
-        if account_type is not None and account_type not in ({"03"} if virtual else {"01", "02"}):
+        if virtual and account_type != "03":
+            raise ConfigurationError("NH mock account type must be explicitly 03")
+        if account_type not in ({"03"} if virtual else {"01", "02"}):
             raise ConfigurationError("NH account type does not match the selected host")
         self.venue = venue
         self._app_key = app_key
@@ -167,11 +178,24 @@ class NH(BaseBroker):
         self._clock = clock
         self._limiter = rate_limiter or credential_rate_limiter("nh", app_key, NH_READ_RATES)
         factory = client_factory or _NhRestClient
-        self._client = factory(base_url=NH_MOCK_BASE_URL if virtual else NH_API_BASE_URL)
+        order_host = NH_MOCK_BASE_URL if virtual else NH_API_BASE_URL
+        self._client = factory(base_url=order_host)
+        self._verify_host(self._client, order_host)
+        self._order_host = order_host
         # Token issuance is always on the live host, including for mock accounts.
         self._auth_client = factory(base_url=NH_API_BASE_URL)
-        if token_cache is not None and token and self._expires_at:
-            token_cache[app_key] = self.token_state()
+        self._verify_host(self._auth_client, NH_API_BASE_URL)
+        self._publish_token_if_fresher()
+
+    @property
+    def virtual(self) -> bool:
+        """Account mode follows the verified order host and cannot be reassigned."""
+        return self._order_host == NH_MOCK_BASE_URL
+
+    @staticmethod
+    def _verify_host(client: Any, expected: str) -> None:
+        if getattr(client, "base_url", None) != expected:
+            raise ConfigurationError("NH client host does not match the requested mode")
 
     def token_state(self) -> dict[str, str]:
         """Return only the issued token and expiry for caller controlled persistence."""
@@ -199,19 +223,34 @@ class NH(BaseBroker):
     def _token_valid(self) -> bool:
         return bool(self._token) and (self._expires_at is None or self._clock() < self._expires_at - TOKEN_MARGIN)
 
-    def _ensure_token(self) -> str:
-        if self._token_valid():
-            return self._token  # type: ignore[return-value]
+    def _cached_token(self) -> tuple[str, datetime] | None:
         if self._cache is not None:
             cached = self._cache.get(self._app_key)
             if isinstance(cached, Mapping):
-                token, expiry = (
-                    cached.get("token"),
-                    _expiry(cached.get("expires_at")) if cached.get("expires_at") else None,
-                )
+                token = cached.get("token")
+                try:
+                    expiry = _expiry(cached.get("expires_at")) if cached.get("expires_at") else None
+                except ConfigurationError:
+                    return None
                 if isinstance(token, str) and token and expiry and self._clock() < expiry - TOKEN_MARGIN:
-                    self._token, self._expires_at = token, expiry
-                    return token
+                    return token, expiry
+        return None
+
+    def _publish_token_if_fresher(self) -> None:
+        if self._cache is None or not self._token_valid() or self._expires_at is None:
+            return
+        cached = self._cached_token()
+        if cached is None or self._expires_at > cached[1]:
+            self._cache[self._app_key] = self.token_state()
+
+    def _ensure_token(self) -> str:
+        cached = self._cached_token()
+        if cached is not None and (not self._token_valid() or self._expires_at is None or cached[1] > self._expires_at):
+            self._token, self._expires_at = cached
+            return cached[0]
+        if self._token_valid():
+            self._publish_token_if_fresher()
+            return self._token  # type: ignore[return-value]
         if not self._app_secret:
             raise ConfigurationError("NH token is absent or expired; supply app_secret or a fresh stored token")
         return self.issue_token()["token"]
@@ -265,8 +304,7 @@ class NH(BaseBroker):
         self._token = token
         self._expires_at = self._clock() + timedelta(seconds=ttl)
         state = self.token_state()
-        if self._cache is not None:
-            self._cache[self._app_key] = state
+        self._publish_token_if_fresher()
         return state
 
     def _read_response(
@@ -292,9 +330,7 @@ class NH(BaseBroker):
         if status == 401 or (status == 200 and str(body.get("rsp_cd", "")).strip() == "IGW40043"):
             # HTTP 401 and this business code both mean an invalid access token.
             self._discard_token()
-            if not self._app_secret:
-                raise ConfigurationError("NH token was rejected; supply app_secret to renew")
-            self.issue_token()
+            self._ensure_token()
             headers["authorization"] = f"Bearer {self._token}"
             self._limiter.wait("read")
             status, body, response_headers = self._post_raw(client or self._client, path, headers, data)
@@ -312,12 +348,9 @@ class NH(BaseBroker):
         message = body.get("rsp_msg") or (nested.get("usr_msg") if nested is not None else None)
         if message is not None and not isinstance(message, str):
             raise InvalidResponseError("NH response message is malformed")
-        # Match an affirmative completion at the end, not the word inside
-        # "완료되지 않았습니다". Known successful codes may omit a message.
-        completed = bool(message and _COMPLETED.search(message))
-        if code not in NH_SUCCESS_CODES | NH_CONTINUATION_CODES and not completed:
+        if code not in NH_SUCCESS_CODES | NH_CONTINUATION_CODES:
             raise BrokerRejectedError("NH read rejected")
-        if code in NH_SUCCESS_CODES and message and "완료" in message and not completed:
+        if message and re.search(r"완료되지|미완료|불완료|실패|오류|에러", message):
             raise BrokerRejectedError("NH read rejected")
         # Documented blocks are optional in the wire schema, but a money/price read
         # without the expected block cannot be interpreted as zero or success.
@@ -326,7 +359,7 @@ class NH(BaseBroker):
         return body, response_headers
 
     def _read(
-        self, path: str, payload: Mapping[str, Any], expected: str, *, client: Any | None = None
+        self, path: str, payload: Mapping[str, Any], expected: str | None, *, client: Any | None = None
     ) -> Mapping[str, Any]:
         body, headers = self._read_response(path, payload, expected, client=client)
         page_headers = {str(key).lower(): value for key, value in headers.items()}
@@ -374,13 +407,7 @@ class NH(BaseBroker):
         code = self._symbol(symbol, market)
 
         def read() -> Quote:
-            row = self._read("/krstock/quote/v1/currentPrice", {"market_cd": self.venue, "iem_cd": code}, "Output_0")[
-                "Output_0"
-            ]
-            if not isinstance(row, Mapping):
-                raise InvalidResponseError("NH quote block is invalid")
-            if row.get("iem_cd") is not None and row["iem_cd"] != code:
-                raise InvalidResponseError("NH quote symbol does not match request")
+            row = self._quote_row(code)
             bid = decimal(row["bidp"]) if row.get("bidp") not in (None, "", 0, "0") else None
             ask = decimal(row["askp"]) if row.get("askp") not in (None, "", 0, "0") else None
             if bid is not None and ask is not None and bid > ask:
@@ -390,7 +417,48 @@ class NH(BaseBroker):
 
         return self._call(read)
 
-    def _balance(self) -> Mapping[str, Any]:
+    def _quote_row(self, code: str) -> Mapping[str, Any]:
+        row = self._read(
+            "/krstock/quote/v1/currentPrice",
+            {"market_cd": self.venue, "iem_cd": code},
+            "Output_0",
+            client=self._auth_client,
+        )["Output_0"]
+        if not isinstance(row, Mapping):
+            raise InvalidResponseError("NH quote block is invalid")
+        if row.get("iem_cd") is not None and row["iem_cd"] != code:
+            raise InvalidResponseError("NH quote symbol does not match request")
+        return row
+
+    def get_rules(
+        self, symbol: str, *, now: datetime | None = None, trading_day: Callable[[date], bool] | None = None
+    ) -> Rules:
+        code = self._symbol(symbol, "KR")
+
+        def read() -> Rules:
+            row = self._quote_row(code)
+            last = _positive(row["stck_prpr"], "last price")
+            # Official currentPrice Output_0: stck_mxpr=상한가, stck_llam=하한가.
+            # Missing/zero sides stay unknown; never derive a band from the previous close.
+            upper, lower = optional_price(row.get("stck_mxpr")), optional_price(row.get("stck_llam"))
+            previous = optional_price(row.get("stck_prdy_clpr"))
+            if upper is None or lower is None:
+                upper = lower = None
+            elif not lower <= last <= upper or (previous is not None and not lower <= previous <= upper):
+                raise InvalidResponseError("NH daily band does not contain the reference and last prices")
+            return equity_rules(
+                code,
+                last,
+                halted=self._halt_from_provider(code),
+                now=now,
+                trading_day=trading_day,
+                limit_up=upper,
+                limit_down=lower,
+            )
+
+        return self._call(read)
+
+    def _balance(self, *, allow_empty_positions: bool = False) -> Mapping[str, Any]:
         payload = {
             "act_no": self._account,
             "bnc_bse_cd": "5",
@@ -417,6 +485,8 @@ class NH(BaseBroker):
             more = flag == "Y" or (flag is None and code in NH_CONTINUATION_CODES)
             if not more:
                 if not isinstance(body.get("Output_0"), Mapping):
+                    if allow_empty_positions and code == "13578" and not rows and body.get("Output_0") is None:
+                        return {**body, "Output_1": []}
                     raise InvalidResponseError("NH balance final summary is missing")
                 return {**body, "Output_1": rows}
             if not next_cts or next_cts in seen:
@@ -438,7 +508,7 @@ class NH(BaseBroker):
 
     def get_positions(self) -> list[Position]:
         def read() -> list[Position]:
-            body = self._balance()
+            body = self._balance(allow_empty_positions=True)
             rows = body.get("Output_1", [])
             if not isinstance(rows, list):
                 raise InvalidResponseError("NH positions block is invalid")
@@ -479,16 +549,25 @@ class NH(BaseBroker):
         return self._call(read)
 
     def _sellable_quantity(self, code: str) -> int:
-        row = self._read(
+        body = self._read(
             "/krstock/inquiry/v1/sellableQuantity",
             {
                 "act_no": self._account,
                 "iem_cd": code,
                 "cfd_lon_cd": "00",
             },
-            "Output_0",
-        )["Output_0"]
-        if not isinstance(row, Mapping) or row.get("iem_cd") != code:
+            None,
+        )
+        row = body.get("Output_0")
+        if row is None and str(body.get("rsp_cd", "")).strip() == "13578":
+            return 0
+        if not isinstance(row, Mapping):
+            raise InvalidResponseError("NH sellable quantity block is missing")
+        try:
+            response_code = self._symbol(row["iem_cd"], "KR")
+        except (ConfigurationError, KeyError):
+            raise InvalidResponseError("NH sellable quantity symbol is invalid") from None
+        if response_code != code:
             raise InvalidResponseError("NH sellable quantity does not match symbol")
         return whole(row["sll_pbl_qty"])
 
@@ -524,6 +603,8 @@ class NH(BaseBroker):
 
     def _validate_order(self, request: OrderRequest | CancelRequest) -> None:
         super()._validate_order(request)
+        if self._order_host == NH_API_BASE_URL and self._allow_live_orders is not True:
+            raise SafetyError("NH live orders are locked until order-to-ledger reconciliation is verified")
         if request.venue is not None and request.venue != self.venue:
             raise NotSupportedError("NH order venue must match the configured venue")
         if isinstance(request, OrderRequest):
@@ -562,9 +643,8 @@ class NH(BaseBroker):
         if message is not None and not isinstance(message, str):
             raise InvalidResponseError("NH order message is invalid; reconcile before retrying")
         completed = bool(message and _COMPLETED.search(message))
-        # NH documents several success codes; an unknown code needs both a
-        # positive completion and the actual market order number.
-        if (code is None or code.strip() not in NH_SUCCESS_CODES) and not completed:
+        # Only known success codes plus a valid market order number acknowledge a write.
+        if code is None or code.strip() not in NH_SUCCESS_CODES:
             raise InvalidResponseError("NH order outcome is unknown; reconcile before retrying")
         if message and "완료" in message and not completed:
             raise InvalidResponseError("NH order outcome is unknown; reconcile before retrying")
@@ -628,6 +708,8 @@ class NH(BaseBroker):
         cts: str | None = None
         for _ in range(NH_MAX_BALANCE_PAGES):
             body, headers = self._read_response("/krstock/inquiry/v1/dailyOrderExecution", payload, None, cts=cts)
+            if body.get("Output_1") is None and str(body.get("rsp_cd", "")).strip() != "13578":
+                raise InvalidResponseError("NH read missing Output_1")
             page = body.get("Output_1", [])
             if not isinstance(page, list) or any(not isinstance(row, Mapping) for row in page):
                 raise InvalidResponseError("NH daily order rows are invalid")

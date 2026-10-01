@@ -11,6 +11,7 @@ import pykbroker
 from pykbroker.base import BrokerAdapter
 from pykbroker.brokers.dbfi import DBFI
 from pykbroker.brokers.kis import KIS
+from pykbroker.brokers.nh import NH
 from pykbroker.brokers.toss import Toss
 from pykbroker.exceptions import ConfigurationError, NotSupportedError, SpecUnverifiedError
 from pykbroker.factory import BROKERS, create_broker
@@ -21,7 +22,7 @@ def _locked_client(module_name):
     return {"client": SimpleNamespace(base_url="https://openapi.ls-sec.co.kr:8080")} if module_name == "ls" else {}
 
 
-SHIPPED = [KIS, DBFI, Toss]
+SHIPPED = [KIS, DBFI, Toss, NH]
 LOCKED = [("ls", "LS"), ("kiwoom", "Kiwoom"), ("nh", "NH"), ("kb", "KB")]
 # Every question the settlement-aware executor asks a broker, whatever the asset class.
 CONTRACT = (
@@ -34,6 +35,14 @@ CONTRACT = (
 def _built(broker_type, **kwargs):
     client, api = Mock(), Mock()
     client.key = SimpleNamespace(virtual_account=False)
+    if broker_type is NH:
+        return NH(
+            account="fixture",
+            client_options={"app_key": "fixture-key", "token": "fixture", "acct_type": "01"},
+            client_factory=lambda **options: SimpleNamespace(**options),
+            allow_live_orders=True,
+            **kwargs,
+        )
     if broker_type is Toss:
         return Toss(account="fixture", account_seq=1, sdk_factory=Mock(), **kwargs)
     return broker_type(account="fixture", client=client, api=api, **kwargs)
@@ -132,7 +141,7 @@ def test_experimental_brokers_are_not_reachable_through_the_factory(module_name,
 
 
 def test_the_factory_ships_exactly_the_registered_adapters():
-    assert set(BROKERS) == {"kis", "dbfi", "toss", "kiwoom", "ls"}
+    assert set(BROKERS) == {"kis", "dbfi", "toss", "kiwoom", "ls", "nh"}
 
 
 # --- B′-0: 거래소 선언 정합 --------------------------------------------------
@@ -207,6 +216,8 @@ def _for_market(broker_type, market, **kwargs):
     client.key = SimpleNamespace(virtual_account=False)
     if broker_type is Toss:
         return Toss(account="fixture", account_seq=1, sdk_factory=Mock(), market=market, **kwargs)
+    if broker_type is NH:
+        return _built(NH, market=market, **kwargs)
     return broker_type(account="fixture", market=market, client=client, api=api, **kwargs)
 
 
@@ -294,6 +305,10 @@ def test_a_broker_either_routes_a_market_or_locks_it(broker_type, market, live_s
     """
     takes_venue = "venue" in inspect.signature(broker_type.__init__).parameters
     kwargs = {"venue": "NASDAQ"} if market == "US" and takes_venue else {}
+    if broker_type is NH and market == "US":
+        with pytest.raises(NotSupportedError):
+            _for_market(broker_type, market, safety=live_safety, **kwargs)
+        return
     try:
         caps = _for_market(broker_type, market, safety=live_safety, **kwargs).capabilities()
     except SpecUnverifiedError:
