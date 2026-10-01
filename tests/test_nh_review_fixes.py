@@ -40,9 +40,16 @@ def test_injected_transport_must_disclose_exact_host(virtual, client_index, bad_
             return reply({"Output_0": {"mkt_orr_no": 123}, "rsp_cd": "00000"})
 
     with pytest.raises(ConfigurationError, match="host"):
-        NH(account="fixture", virtual=virtual, client_options={
-            "app_key": KEY, "token": "fixture-token", "acct_type": "03" if virtual else "01",
-        }, client_factory=IgnoringFactory)
+        NH(
+            account="fixture",
+            virtual=virtual,
+            client_options={
+                "app_key": KEY,
+                "token": "fixture-token",
+                "acct_type": "03" if virtual else "01",
+            },
+            client_factory=IgnoringFactory,
+        )
     assert posts == []
 
 
@@ -58,9 +65,11 @@ def test_mock_account_quote_and_rules_use_live_host(operation):
 def test_factory_live_safety_cannot_unlock_nh(operation, secret_only, live_safety):
     options = {"app_key": KEY, "acct_type": "01", "app_secret" if secret_only else "token": "fixture-value"}
     broker, calls, _ = make_sdk(factory=True, options=options, safety=live_safety)
-    request = (OrderRequest(symbol="005930", side="buy", quantity=1, price=70000, client_key="lock")
-               if operation.startswith("place") else
-               CancelRequest(symbol="005930", order_id="mkt:123", quantity=1, client_key="lock"))
+    request = (
+        OrderRequest(symbol="005930", side="buy", quantity=1, price=70000, client_key="lock")
+        if operation.startswith("place")
+        else CancelRequest(symbol="005930", order_id="mkt:123", quantity=1, client_key="lock")
+    )
     with pytest.raises(SafetyError, match="NH live orders"):
         getattr(broker, operation)(request)
     assert calls == []  # Includes token issuance: no POST of any kind.
@@ -82,8 +91,13 @@ async def test_mcp_live_limits_cannot_unlock_nh(tmp_path, monkeypatch, tool):
 
     def factory(name, *, safety):
         assert name == "nh"
-        return create_broker(name, account="fixture", safety=safety, client_factory=Fake,
-                             client_options={"app_key": KEY, "app_secret": SECRET, "acct_type": "01"})
+        return create_broker(
+            name,
+            account="fixture",
+            safety=safety,
+            client_factory=Fake,
+            client_options={"app_key": KEY, "app_secret": SECRET, "acct_type": "01"},
+        )
 
     monkeypatch.setenv("PYKBROKER_BROKER", "nh")
     monkeypatch.setattr("pykbroker.mcp.server.create_broker", factory)
@@ -102,8 +116,12 @@ def test_older_valid_token_cannot_overwrite_newer_cache(token_kind):
     options = {"app_key": KEY, "app_secret": SECRET, "acct_type": "01"}
     if token_kind == "stored":
         options.update(token="fixture-older", expires_at=(NOW + timedelta(hours=1)).isoformat())
-    broker, calls = make({"/oauth2/token": reply({"access_token": "fixture-issued", "expires_in": 86400})},
-                         options=options, cache=cache, rate_limiter=RateLimiter({"read": 10000}))
+    broker, calls = make(
+        {"/oauth2/token": reply({"access_token": "fixture-issued", "expires_in": 86400})},
+        options=options,
+        cache=cache,
+        rate_limiter=RateLimiter({"read": 10000}),
+    )
     if token_kind == "issued":
         broker.issue_token()
     assert cache[KEY] == fresh
@@ -112,10 +130,17 @@ def test_older_valid_token_cannot_overwrite_newer_cache(token_kind):
 
 def test_valid_local_token_yields_to_newer_shared_token():
     cache = {}
-    broker, calls = make({QUOTE: reply({"rsp_cd": "00000", "Output_0": {"stck_prpr": 1}})}, options={
-        "app_key": KEY, "token": "fixture-local", "expires_at": (NOW + timedelta(hours=1)).isoformat(),
-        "acct_type": "01",
-    }, cache=cache, rate_limiter=RateLimiter({"read": 10000}))
+    broker, calls = make(
+        {QUOTE: reply({"rsp_cd": "00000", "Output_0": {"stck_prpr": 1}})},
+        options={
+            "app_key": KEY,
+            "token": "fixture-local",
+            "expires_at": (NOW + timedelta(hours=1)).isoformat(),
+            "acct_type": "01",
+        },
+        cache=cache,
+        rate_limiter=RateLimiter({"read": 10000}),
+    )
     fresh = {"token": "fixture-shared", "expires_at": (NOW + timedelta(hours=2)).isoformat()}
     cache[KEY] = fresh.copy()  # Another worker refreshes after this instance was created.
     assert broker.get_quote("005930").last == 1
@@ -130,12 +155,23 @@ def test_absent_sellable_block_is_not_zero_for_other_success_codes(code):
         broker.available_qty("005930")
 
 
-@pytest.mark.parametrize("message", ["조회가 정상적으로 완료되었습니다.", "조회 완료하였습니다.",
-                                    "조회 처리가 완료되었습니다.", "조회 정상완료"])
+@pytest.mark.parametrize(
+    "message",
+    ["조회가 정상적으로 완료되었습니다.", "조회 완료하였습니다.", "조회 처리가 완료되었습니다.", "조회 정상완료"],
+)
 def test_success_code_with_required_block_accepts_success_wording(message):
-    broker, _ = make({"/krstock/inquiry/v1/balance": reply({
-        "rsp_cd": "00000", "rsp_msg": message, "Output_0": BALANCE["Output_0"],
-    })}, rate_limiter=RateLimiter({"read": 10000}))
+    broker, _ = make(
+        {
+            "/krstock/inquiry/v1/balance": reply(
+                {
+                    "rsp_cd": "00000",
+                    "rsp_msg": message,
+                    "Output_0": BALANCE["Output_0"],
+                }
+            )
+        },
+        rate_limiter=RateLimiter({"read": 10000}),
+    )
     assert broker.get_balance().cash_available == 40000
 
 
@@ -155,10 +191,15 @@ def test_malformed_shared_expiry_is_replaced_by_fresh_token(expiry, stored):
     options = {"app_key": KEY, "app_secret": SECRET, "acct_type": "01"}
     if stored:
         options.update(token="fixture-good", expires_at=(NOW + timedelta(hours=1)).isoformat())
-    broker, calls = make({
-        "/oauth2/token": reply({"access_token": "fixture-good", "expires_in": 86400}),
-        QUOTE: reply({"rsp_cd": "00000", "Output_0": {"stck_prpr": 1}}),
-    }, options=options, cache=cache, rate_limiter=RateLimiter({"read": 10000}))
+    broker, calls = make(
+        {
+            "/oauth2/token": reply({"access_token": "fixture-good", "expires_in": 86400}),
+            QUOTE: reply({"rsp_cd": "00000", "Output_0": {"stck_prpr": 1}}),
+        },
+        options=options,
+        cache=cache,
+        rate_limiter=RateLimiter({"read": 10000}),
+    )
     assert broker.get_quote("005930").last == 1
     assert cache[KEY] == broker.token_state()
     assert sum(path == "/oauth2/token" for _, path, _, _ in calls) == (not stored)
@@ -183,7 +224,7 @@ def test_redirect_never_resends_authorization_to_second_server(monkeypatch):
             hits[1].append(self.headers.get("authorization"))
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b'{}')
+            self.wfile.write(b"{}")
 
         do_POST = do_GET
 
@@ -191,6 +232,7 @@ def test_redirect_never_resends_authorization_to_second_server(monkeypatch):
             pass
 
     with LocalServer(("127.0.0.1", 0), Sink) as sink:
+
         class Redirect(Sink):
             def do_POST(self):
                 hits[0].append(self.headers.get("authorization"))
@@ -199,6 +241,7 @@ def test_redirect_never_resends_authorization_to_second_server(monkeypatch):
                 self.end_headers()
 
         with LocalServer(("127.0.0.1", 0), Redirect) as source:
+
             def loopback_connection(address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, source_address=None):
                 assert address[0] == "127.0.0.1" and address[1] in {source.server_port, sink.server_port}
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -218,7 +261,7 @@ def test_redirect_never_resends_authorization_to_second_server(monkeypatch):
             try:
                 client = _NhRestClient(base_url=f"http://127.0.0.1:{source.server_port}")
                 with pytest.raises(TransportError, match="redirect"):
-                    client.post("/start", headers={"authorization": "Bearer fixture-token"}, data=b'{}')
+                    client.post("/start", headers={"authorization": "Bearer fixture-token"}, data=b"{}")
                 assert hits == [["Bearer fixture-token"], []]
             finally:
                 for server in (source, sink):
@@ -232,9 +275,11 @@ def test_redirect_never_resends_authorization_to_second_server(monkeypatch):
 @pytest.mark.parametrize("operation", ["place_order", "cancel_order"])
 def test_explicit_live_unlock_still_uses_the_bound_host(virtual, operation, live_safety):
     broker, calls, _ = make_sdk(virtual=virtual, safety=live_safety, allow_live_orders=True)
-    request = (OrderRequest(symbol="005930", side="buy", quantity=1, price=70000, client_key="explicit")
-               if operation == "place_order" else
-               CancelRequest(symbol="005930", order_id="mkt:123", quantity=1, client_key="explicit"))
+    request = (
+        OrderRequest(symbol="005930", side="buy", quantity=1, price=70000, client_key="explicit")
+        if operation == "place_order"
+        else CancelRequest(symbol="005930", order_id="mkt:123", quantity=1, client_key="explicit")
+    )
     assert getattr(broker, operation)(request).status == "accepted"
     assert len(calls) == 1
     assert calls[0][0] == (NH_MOCK_BASE_URL if virtual else NH_API_BASE_URL)

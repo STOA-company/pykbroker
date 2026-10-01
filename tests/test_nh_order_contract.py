@@ -187,7 +187,7 @@ def test_daily_list_and_status_use_integrated_number_without_guessing_market_num
         "tot_cns_qty": 1,
         "ny_cns_qty": 1,
     }
-    page = reply([], message="조회완료", code=None)
+    page = reply([], message="조회완료", code="00000")
     page[1]["Output_1"] = [row]
     broker, calls = make({DAILY: [page, page]})
     (listed,) = broker.list_orders("005930")
@@ -202,7 +202,7 @@ def test_daily_list_and_status_use_integrated_number_without_guessing_market_num
 
 
 def test_empty_daily_ledger_with_affirmative_envelope_is_empty():
-    empty = reply(message="조회완료", code=None)
+    empty = reply(message="조회완료", code="00000")
     empty[1]["Output_1"] = []
     broker, _ = make({DAILY: [empty]})
     assert broker.list_orders() == []
@@ -228,7 +228,7 @@ def test_daily_changed_rejected_or_zero_quantity_rows_stay_unknown(changes):
         "ny_cns_qty": 2,
         **changes,
     }
-    page = reply([], message="조회완료", code=None)
+    page = reply([], message="조회완료", code="00000")
     page[1]["Output_1"] = [row]
     broker, _ = make({DAILY: [page]})
     (listed,) = broker.list_orders()
@@ -240,19 +240,19 @@ def test_daily_changed_rejected_or_zero_quantity_rows_stay_unknown(changes):
 def test_daily_child_row_makes_parent_state_unknown(reference_field, reference_value):
     parent = {"itg_orr_no": 456, "iem_cd": "005930", "orr_qty": 2, "orr_pr": 70000, "tot_cns_qty": 0, "ny_cns_qty": 2}
     child = {**parent, "itg_orr_no": 789, reference_field: reference_value, "cor_can_dit_cd_nm": "취소"}
-    page = reply([], message="조회완료", code=None)
+    page = reply([], message="조회완료", code="00000")
     page[1]["Output_1"] = [parent, child]
     broker, _ = make({DAILY: [page]})
     assert [item.status for item in broker.list_orders()] == ["unknown", "unknown"]
 
 
-def test_cts_flag_normalizes_and_schema_envelope_without_rsp_cd_is_accepted():
-    first = reply(message="조회완료", code=None, headers={"cts_flag": " y ", "cts": " next "})
+def test_cts_flag_normalizes_with_known_success_code():
+    first = reply(message="조회완료", code="00000", headers={"cts_flag": " y ", "cts": " next "})
     first[1]["Output_1"] = []
     last = reply(
         {"dca": 0, "orr_pbl_amt": 0, "tot_eal_amt": 0},
         message="정상처리되었습니다",
-        code=None,
+        code="00000",
         headers={"cts_flag": " n "},
     )
     last[1]["Output_1"] = []

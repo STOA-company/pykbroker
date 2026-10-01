@@ -57,6 +57,6 @@
     "spec_label": "🔴 운영 — 모의투자 미제공",
     "quote_host": "https://api.nhplug.com:8443",
     "applies_to": "currentPrice and all 11 quote endpoints in this snapshot",
-    "live_response_verification": "UNVERIFIED — H-NH not performed"
+    "live_response_verification": "UNVERIFIED — actual API responses not checked"
   }
 }

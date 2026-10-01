@@ -17,6 +17,7 @@ KEY = "fixture-key"
 SECRET = "fixture-secret&=한글"
 TOKEN = "fixture-token"
 BALANCE = {
+    "rsp_cd": "00000",
     "Output_0": {"dca": 50000, "orr_pbl_amt": "40000", "tot_eal_amt": 30000},
     "Output_1": [
         {

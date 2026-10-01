@@ -91,10 +91,18 @@ class BaseBroker:
             raise ConfigurationError("halt_provider must be callable")
         self._account = account
         self.market = market
-        self.virtual = virtual
+        self._virtual = virtual
         self._halt_provider = halt_provider
         self.safety = safety if safety is not None else OrderSafety()
         self._closed = False
+
+    @property
+    def virtual(self) -> bool:
+        return self._virtual
+
+    @virtual.setter
+    def virtual(self, value: bool) -> None:
+        self._virtual = value
 
     def _call(self, function: Callable[[], T]) -> T:
         if self._closed:

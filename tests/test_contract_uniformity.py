@@ -31,8 +31,13 @@ def _built(broker_type, **kwargs):
     client, api = Mock(), Mock()
     client.key = SimpleNamespace(virtual_account=False)
     if broker_type is NH:
-        return NH(account="fixture", client_options={"app_key": "fixture-key", "token": "fixture", "acct_type": "01"},
-                  client_factory=lambda **options: SimpleNamespace(**options), allow_live_orders=True, **kwargs)
+        return NH(
+            account="fixture",
+            client_options={"app_key": "fixture-key", "token": "fixture", "acct_type": "01"},
+            client_factory=lambda **options: SimpleNamespace(**options),
+            allow_live_orders=True,
+            **kwargs,
+        )
     if broker_type is Toss:
         return Toss(account="fixture", account_seq=1, sdk_factory=Mock(), **kwargs)
     return broker_type(account="fixture", client=client, api=api, **kwargs)
@@ -110,7 +115,7 @@ def test_a_mock_flag_does_not_unlock_an_experimental_broker(module_name, class_n
         broker_type(account="fixture", safety=live_safety).place_order(request_order)
 
 
-@pytest.mark.parametrize("module_name,class_name", [pair for pair in LOCKED if pair[0] not in {"kiwoom", "nh"}])
+@pytest.mark.parametrize("module_name,class_name", LOCKED)
 @pytest.mark.parametrize("case", [str.lower, str.upper, str.title])
 def test_experimental_brokers_are_not_reachable_through_the_factory(module_name, class_name, case):
     """The factory never selects an experimental class; registered REST adapters require credentials."""

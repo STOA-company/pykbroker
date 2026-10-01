@@ -17,6 +17,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
+from pykbroker._http import urlopen
 from pykbroker.exceptions import (
     BrokerError,
     BrokerRejectedError,
@@ -48,25 +49,19 @@ _COMPLETED = re.compile(
 )
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
-
-
 class _NhRestClient:
     """Small injectable HTTP boundary; HTTP errors never expose response bodies."""
 
     def __init__(self, *, base_url: str, timeout: float = 10.0) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
-        self._opener = urllib.request.build_opener(_NoRedirect)
 
     def post(
         self, path: str, *, headers: Mapping[str, str], data: bytes
     ) -> tuple[int, Mapping[str, Any], Mapping[str, str]]:
         request = urllib.request.Request(self.base_url + path, data=data, headers=dict(headers), method="POST")
         try:
-            with self._opener.open(request, timeout=self.timeout) as response:
+            with urlopen(request, timeout=self.timeout) as response:
                 return response.status, _json_object(response.read()), dict(response.headers)
         except urllib.error.HTTPError as exc:
             if 300 <= exc.code < 400:
@@ -186,10 +181,16 @@ class NH(BaseBroker):
         order_host = NH_MOCK_BASE_URL if virtual else NH_API_BASE_URL
         self._client = factory(base_url=order_host)
         self._verify_host(self._client, order_host)
+        self._order_host = order_host
         # Token issuance is always on the live host, including for mock accounts.
         self._auth_client = factory(base_url=NH_API_BASE_URL)
         self._verify_host(self._auth_client, NH_API_BASE_URL)
         self._publish_token_if_fresher()
+
+    @property
+    def virtual(self) -> bool:
+        """Account mode follows the verified order host and cannot be reassigned."""
+        return self._order_host == NH_MOCK_BASE_URL
 
     @staticmethod
     def _verify_host(client: Any, expected: str) -> None:
@@ -347,18 +348,9 @@ class NH(BaseBroker):
         message = body.get("rsp_msg") or (nested.get("usr_msg") if nested is not None else None)
         if message is not None and not isinstance(message, str):
             raise InvalidResponseError("NH response message is malformed")
-        # Unknown codes still need affirmative wording; known failures always close the read.
-        completed = bool(
-            message
-            and re.fullmatch(
-                r"(?:(?:(?:정상\s+)?조회(?:가)?\s*)?완료(?:되었습니다|됐습니다|했습니다|됨)?"
-                r"(?:\s*\(\d+건\))?|정상\s*처리되었습니다)[.!]?",
-                message.strip(),
-            )
-        )
-        if code not in NH_SUCCESS_CODES | NH_CONTINUATION_CODES and not completed:
+        if code not in NH_SUCCESS_CODES | NH_CONTINUATION_CODES:
             raise BrokerRejectedError("NH read rejected")
-        if message and re.search(r"실패|오류|에러|불완료|미완료|않|못", message):
+        if message and re.search(r"완료되지|미완료|불완료|실패|오류|에러", message):
             raise BrokerRejectedError("NH read rejected")
         # Documented blocks are optional in the wire schema, but a money/price read
         # without the expected block cannot be interpreted as zero or success.
@@ -427,8 +419,10 @@ class NH(BaseBroker):
 
     def _quote_row(self, code: str) -> Mapping[str, Any]:
         row = self._read(
-            "/krstock/quote/v1/currentPrice", {"market_cd": self.venue, "iem_cd": code},
-            "Output_0", client=self._auth_client
+            "/krstock/quote/v1/currentPrice",
+            {"market_cd": self.venue, "iem_cd": code},
+            "Output_0",
+            client=self._auth_client,
         )["Output_0"]
         if not isinstance(row, Mapping):
             raise InvalidResponseError("NH quote block is invalid")
@@ -609,8 +603,8 @@ class NH(BaseBroker):
 
     def _validate_order(self, request: OrderRequest | CancelRequest) -> None:
         super()._validate_order(request)
-        if not self.virtual and self._allow_live_orders is not True:
-            raise SafetyError("NH live orders are locked pending BS-25")
+        if self._order_host == NH_API_BASE_URL and self._allow_live_orders is not True:
+            raise SafetyError("NH live orders are locked until order-to-ledger reconciliation is verified")
         if request.venue is not None and request.venue != self.venue:
             raise NotSupportedError("NH order venue must match the configured venue")
         if isinstance(request, OrderRequest):
@@ -649,9 +643,8 @@ class NH(BaseBroker):
         if message is not None and not isinstance(message, str):
             raise InvalidResponseError("NH order message is invalid; reconcile before retrying")
         completed = bool(message and _COMPLETED.search(message))
-        # NH documents several success codes; an unknown code needs both a
-        # positive completion and the actual market order number.
-        if (code is None or code.strip() not in NH_SUCCESS_CODES) and not completed:
+        # Only known success codes plus a valid market order number acknowledge a write.
+        if code is None or code.strip() not in NH_SUCCESS_CODES:
             raise InvalidResponseError("NH order outcome is unknown; reconcile before retrying")
         if message and "완료" in message and not completed:
             raise InvalidResponseError("NH order outcome is unknown; reconcile before retrying")
@@ -714,7 +707,9 @@ class NH(BaseBroker):
         seen: set[str] = set()
         cts: str | None = None
         for _ in range(NH_MAX_BALANCE_PAGES):
-            body, headers = self._read_response("/krstock/inquiry/v1/dailyOrderExecution", payload, "Output_1", cts=cts)
+            body, headers = self._read_response("/krstock/inquiry/v1/dailyOrderExecution", payload, None, cts=cts)
+            if body.get("Output_1") is None and str(body.get("rsp_cd", "")).strip() != "13578":
+                raise InvalidResponseError("NH read missing Output_1")
             page = body.get("Output_1", [])
             if not isinstance(page, list) or any(not isinstance(row, Mapping) for row in page):
                 raise InvalidResponseError("NH daily order rows are invalid")

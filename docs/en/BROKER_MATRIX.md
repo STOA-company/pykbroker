@@ -21,7 +21,7 @@ KIS provides orders eligible for revision/cancellation; Toss provides open order
 
 KIS/DB US orderable cash varies by account type and requires an injected `cash_provider`. US buy/sell orders expose limit orders only. The library does not infer NXT, product, or market capabilities for an account.
 
-TODO: LS US request mappings lacked verified enum values in the source; only domestic mappings were carried over. Kiwoom US is not implemented. Expansion requires official specifications and fixtures. NH US queries/orders remain unimplemented; H-NH measurements and the BS-25 order-number link are pending. KB requires endpoints and TR definitions. LS query results remain unverified reference data.
+TODO: LS US request mappings lacked verified enum values in the source; only domestic mappings were carried over. Kiwoom US is not implemented. Expansion requires official specifications and fixtures. NH US queries/orders remain unimplemented; actual API response checks and order-to-ledger reconciliation remain unverified. KB requires endpoints and TR definitions. LS query results remain unverified reference data.
 
 ## Kiwoom — BS-07 (2026-10-01)
 
@@ -33,14 +33,14 @@ The existing `examples/kiwoom_mock_roundtrip.py` is dry-run by default. With `--
 
 See [BS-07 evidence pack](../status/2026-10-01-pack-kiwoom-bs07.md).
 
-## NH — BS-08 (2026-10-01)
+## NH (2026-10-01)
 
-`create_broker("nh", ...)` accepts a stored token or app key/secret. Declare `acct_type`: `03` for mock, `01`/`02` for live accounts. The adapter checks injected client hosts immediately after construction. Mock order/cancel and account data use moapi; token issuance, account verification, quotes and rules use api. The official specification marks quotes as production-only; this remains **UNVERIFIED** until H-NH measurements.
+`create_broker("nh", ...)` accepts a stored token or app key/secret. Declare `acct_type`: `03` for mock, `01`/`02` for live accounts. The adapter checks injected client hosts immediately after construction. Mock order/cancel and account data use moapi; token issuance, account verification, quotes and rules use api. The official specification marks quotes as production-only; this remains **UNVERIFIED** until actual API responses are checked.
 
-Live orders/cancellations are locked by default (`allow_live_orders=False`). Enabling `OrderSafety` or MCP limits alone cannot unlock NH. The explicit constructor override is reserved for use after the BS-25 number link and separate authorization, and existing safety gates still apply. Mandatory account ownership verification (`verify_account`) belongs to BS-25.
+Live orders/cancellations are locked by default (`allow_live_orders=False`). Enabling `OrderSafety` or MCP limits alone cannot unlock NH. The explicit constructor override is reserved for use after order-to-ledger reconciliation is verified and separately authorized, and existing safety gates still apply. Mandatory account ownership verification (`verify_account`) will be addressed with order-to-ledger reconciliation.
 
-Successful reads require the relevant data block and reject known failure wording. Corrupt shared expiry is ignored and replaced by a fresh token; newer shared tokens are preserved and reused. HTTP redirects are refused. Placement `mkt:` IDs remain unlinked to ledger `itg:` IDs, so post-placement status is unknown.
+Account mode `virtual` is read-only; the verified order host determines the live lock and order mode. Reads require a known success code and the relevant data block; failed-completion wording is rejected. A blockless `13578` response means empty positions/order history or zero sellable quantity, while cash reads still require a summary. Unknown codes are rejected even with completion wording. Corrupt shared expiry is ignored and replaced by a fresh token; newer shared tokens are preserved and reused. HTTP redirects are refused. Placement `mkt:` IDs remain unlinked to ledger `itg:` IDs, so post-placement status is unknown.
 
-See the [BS-08 evidence pack](../status/2026-10-01-pack-nh.md) and [official quote field excerpt](../contracts/nh-current-price-fields.json). No broker API was called.
+See the [NH evidence pack](../status/2026-10-01-pack-nh.md) and [official quote field excerpt](../contracts/nh-current-price-fields.json). No broker API was called.
 
 [한국어](../BROKER_MATRIX.md)

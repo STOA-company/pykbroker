@@ -89,7 +89,7 @@ The code is provided under [Apache-2.0](https://github.com/STOA-company/pykbroke
 
 ### Are LS, Kiwoom, NH Investment, and KB Securities supported?
 
-Kiwoom and NH are registered domestic REST adapters, verified with fake response contracts. NH implements KRX/NXT cash limit orders and single-order cancellation; **live orders are locked by default**. The market-to-integrated order number link belongs to BS-25, and real APIs and mock-account round trips remain unverified. LS has locked, unverified mappings; KB is an offline skeleton. Neither is registered.
+Kiwoom and NH are registered domestic REST adapters, verified with fake response contracts. NH implements KRX/NXT cash limit orders and single-order cancellation; **live orders are locked by default**. The market-to-integrated order number link remains unverified, and real APIs and mock-account round trips remain unverified. LS has locked, unverified mappings; KB is an offline skeleton. Neither is registered.
 
 ## Related projects
 
