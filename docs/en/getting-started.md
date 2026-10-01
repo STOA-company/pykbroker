@@ -34,7 +34,7 @@ Place reviewed source trees named `Pykis/` and `Pydb/` under a separate parent d
 
 | Variable | Meaning |
 | --- | --- |
-| `PYKBROKER_BROKER` | `kis`, `dbfi`, or `toss`; `ls` is registered but locked and requires an injected client; CLI/MCP default to `kis` |
+| `PYKBROKER_BROKER` | `kis`, `dbfi`, `toss`, or `kiwoom`; `ls` is registered but locked and requires an injected client; CLI/MCP default to `kis` |
 | `PYKBROKER_ACCOUNT` | Caller-owned account identifier; KIS requires the vendor's actual account format |
 | `PYKBROKER_CLIENT_OPTIONS` | JSON object of authentication constructor arguments |
 | `PYKBROKER_TOSS_ACCOUNT_SEQ` | Toss-issued accountSeq, distinct from the account number |

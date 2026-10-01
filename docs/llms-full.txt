@@ -5,7 +5,7 @@
 한국어 기본 문서와 영어 번역 / Korean documentation with English translations.
 KIS, DBFI and Toss are implemented adapters with offline mock/fixture validation only.
 Real APIs, paper accounts and live trading have not been validated. LS is registered
-with default-locked writes and UNVERIFIED candidate fill fields; other unverified
+with default-locked writes and UNVERIFIED candidate fill fields; Kiwoom is registered; experimental NH/KB
 adapters remain outside the factory. See the broker support matrix.
 Dry-run blocks order/cancellation transmission; it does not simulate successful orders.
 Vendor source SDKs and authentication must be supplied separately.
@@ -894,7 +894,7 @@ Queries return shared models. Orders and cancellations pass through **dry-run �
 | --- | --- |
 | `base` | Shared query, order, cancellation, and shutdown contracts |
 | `brokers` | KIS/DBFI/Toss conversions and default-locked LS; offline contract tests |
-| `experimental` | LS compatibility alias and other unverified mappings/skeletons; writes stay locked |
+| `experimental` | LS compatibility alias and Kiwoom is registered; experimental NH/KB mappings/skeletons; writes stay locked |
 | `safety` | Caller-injected limits, idempotency, dry-run, and halt decisions |
 | `mcp` | Default read-only tools; order tools registered only through configuration |
 

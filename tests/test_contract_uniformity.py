@@ -108,22 +108,23 @@ def test_a_mock_flag_does_not_unlock_an_experimental_broker(module_name, class_n
 
 @pytest.mark.parametrize("module_name,class_name", LOCKED)
 @pytest.mark.parametrize("case", [str.lower, str.upper, str.title])
-def test_locked_brokers_are_not_reachable_through_the_factory(module_name, class_name, case):
-    """Bypass 2: the public entry point ships three brokers, and case folding adds none."""
+def test_experimental_brokers_are_not_reachable_through_the_factory(module_name, class_name, case):
+    """Registered REST adapters require credentials; the LS compatibility alias stays locked."""
+    experimental = getattr(import_module("pykbroker.experimental." + module_name), class_name)
     if module_name == "ls":
-        # BS-17 promotes the import/factory path, while keeping the write lock closed.
+        assert BROKERS["ls"] is experimental
         broker = create_broker(case(module_name), account="fixture")
         with pytest.raises(SpecUnverifiedError):
             broker.place_order(_kr_order())
         return
-    assert module_name not in BROKERS and class_name not in BROKERS
+    assert BROKERS.get(module_name) is not experimental and class_name not in BROKERS
     assert class_name not in pykbroker.__all__
     with pytest.raises(ConfigurationError):
         create_broker(case(module_name), account="fixture")
 
 
-def test_the_factory_registers_three_verified_brokers_and_locked_ls():
-    assert set(BROKERS) == {"kis", "dbfi", "toss", "ls"}
+def test_the_factory_ships_exactly_the_registered_adapters():
+    assert set(BROKERS) == {"kis", "dbfi", "toss", "kiwoom", "ls"}
 
 
 # --- B′-0: 거래소 선언 정합 --------------------------------------------------
@@ -138,9 +139,7 @@ KR_DEFAULT_VENUE = "KRX"
 
 
 def _kr_order(**kwargs):
-    return OrderRequest(
-        symbol="005930", side="buy", quantity=1, price="70000", client_key="venue-uniformity", **kwargs
-    )
+    return OrderRequest(symbol="005930", side="buy", quantity=1, price="70000", client_key="venue-uniformity", **kwargs)
 
 
 @pytest.mark.parametrize("broker_type", SHIPPED)

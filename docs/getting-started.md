@@ -34,7 +34,7 @@ pip install -e '.[mcp,dev]'
 
 | 변수 | 뜻 |
 | --- | --- |
-| `PYKBROKER_BROKER` | `kis`, `dbfi`, `toss`, `ls`(기본 잠금·클라이언트 주입 필요); CLI/MCP 기본 `kis` |
+| `PYKBROKER_BROKER` | `kis`, `dbfi`, `toss`, `kiwoom`, `ls`(기본 잠금·클라이언트 주입 필요); CLI/MCP 기본 `kis` |
 | `PYKBROKER_ACCOUNT` | 호출자 소유 계좌 식별자; KIS에는 실제 벤더 계좌 형식 |
 | `PYKBROKER_CLIENT_OPTIONS` | JSON 객체; 인증 생성자 인자를 환경에서 주입 |
 | `PYKBROKER_TOSS_ACCOUNT_SEQ` | Toss가 발급한 accountSeq, 계좌번호와 구분 |

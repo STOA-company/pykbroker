@@ -35,6 +35,9 @@ Required environment for --execute (read by name only; never printed, logged, or
                              account field (the account is implied by the token) -- used only for this
                              SDK's own idempotency/rate-limit scoping, and only ever shown masked.
 
+Missing or blank keys return status="missing_keys" (키 없음), exit code 0 and no API calls.
+This is a skipped execution, not evidence of a successful mock round trip.
+
 Guards (see ~/coding/q-gateway-main-0925/plans/kiwoom_roundtrip_report.md for the full write-up):
     host       Refuses to build a client unless the target host is exactly the documented mock host
                (mockapi.kiwoom.com); refuses outright if it is the documented real host
@@ -222,8 +225,11 @@ def run(
             return result
 
         app_key, secret_key = env.get(APP_KEY_ENV), env.get(SECRET_KEY_ENV)
-        if not app_key or not secret_key:
-            raise RoundTripAbort(f"{APP_KEY_ENV} / {SECRET_KEY_ENV} are not set", manual_check=True)
+        if not app_key or not app_key.strip() or not secret_key or not secret_key.strip():
+            result["status"] = "missing_keys"
+            result["reason"] = "키 없음 — 모의 왕복을 실행하지 않았습니다 (호출 0)"
+            result["required_env"] = [APP_KEY_ENV, SECRET_KEY_ENV]
+            return result
         account = env.get(ACCOUNT_ENV) or DEFAULT_ACCOUNT
         result["account"] = _mask(account)
         factory = client_factory or _guarded_client_factory
@@ -394,7 +400,7 @@ def main(
         return 2
     if result["status"] == "rejected":
         return 3
-    return 0 if result["status"] in ("ok", "dry_run") else 1
+    return 0 if result["status"] in ("ok", "dry_run", "missing_keys") else 1
 
 
 if __name__ == "__main__":

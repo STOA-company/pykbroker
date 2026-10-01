@@ -75,7 +75,7 @@ def generate():
         "한국어 기본 문서와 영어 번역 / Korean documentation with English translations.\n"
         "KIS, DBFI and Toss are implemented adapters with offline mock/fixture validation only.\n"
         "Real APIs, paper accounts and live trading have not been validated. LS is registered\n"
-        "with default-locked writes and UNVERIFIED candidate fill fields; other unverified\n"
+        "with default-locked writes and UNVERIFIED candidate fill fields; Kiwoom is registered; experimental NH/KB\n"
         "adapters remain outside the factory. See the broker support matrix.\n"
         "Dry-run blocks order/cancellation transmission; it does not simulate successful orders.\n"
         "Vendor source SDKs and authentication must be supplied separately.\n"
