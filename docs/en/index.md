@@ -52,8 +52,8 @@ Queries return shared models. Orders and cancellations pass through **dry-run â†
 | Component | Responsibility |
 | --- | --- |
 | `base` | Shared query, order, cancellation, and shutdown contracts |
-| `brokers` | KIS/DBFI/Toss conversions; verified with offline contract tests |
-| `experimental` | Unverified LS/Kiwoom mappings and NH/KB skeletons; order locks remain closed |
+| `brokers` | KIS/DBFI/Toss conversions and default-locked LS; offline contract tests |
+| `experimental` | LS compatibility alias and other unverified mappings/skeletons; writes stay locked |
 | `safety` | Caller-injected limits, idempotency, dry-run, and halt decisions |
 | `mcp` | Default read-only tools; order tools registered only through configuration |
 
@@ -89,7 +89,7 @@ The code is provided under [Apache-2.0](https://github.com/STOA-company/pykbroke
 
 ### Are LS, Kiwoom, NH Investment, and KB Securities supported?
 
-All four are **unverified experimental** adapters and are excluded from the three registered adapters. LS/Kiwoom contain domestic request mappings with locked orders and unverified queries; NH/KB are skeletons without network transport. They are absent from the top-level factory, and changing a lock alone does not make them ready for use.
+LS is registered in `brokers/ls.py` and the factory, with **live-binding writes locked**. An injected client with an explicit host is required. The mock address contract and detailed specifications remain unverified. Locked quantity, filled quantity, and execution price remain `None`; `fill_price` stays unmapped pending average-price evidence. `experimental.ls` aliases the same module. See the support matrix for other adapters.
 
 ## Related projects
 

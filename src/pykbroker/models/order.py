@@ -37,6 +37,9 @@ class Order(Model):
     order_type: OrderType | None = None
     quantity: Quantity | None = None
     price: Money | None = None
+    # Broker-reported average execution price; never the submitted limit price.
+    # None when execution pricing has not been supplied by the broker.
+    fill_price: PositiveMoney | None = None
     filled: Quantity | None = None
     remaining: Quantity | None = None
     status: OrderStatus = "unknown"

@@ -36,3 +36,9 @@ Confirm that mutations such as removing locks, swapping buy/sell codes, or bypas
 Check source, documentation, and examples for secrets, company-specific addresses, and account storage schemas. Review the license and NOTICE, record only checks actually executed, and leave unfinished work in TODOs and the support matrix.
 
 [한국어](../BROKER_ADAPTER_RECIPE.md)
+
+LS task instructions (2026-10-01): promote LS to `brokers/ls.py` and the
+factory using legacy mappings with explicit `UNVERIFIED` annotations even though
+detailed guides were inaccessible. Keep `LS_SPEC_VERIFIED=False`, disabled order
+capabilities, and no default enum values. LS additionally requires explicit instance
+verification for mock writes; live-binding writes stay locked.

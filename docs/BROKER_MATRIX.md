@@ -1,5 +1,5 @@
 ---
-description: "KIS·DBFI·Toss의 오프라인 검증 범위와 키움 등록과 LS·NH·KB experimental 상태, KR·US 시장과 취소 제약."
+description: "KIS·DBFI·Toss 오프라인 계약, 키움 등록·LS 기본 잠금·NH·KB experimental 상태와 KR·US 시장·취소 제약."
 lang: ko
 ---
 
@@ -12,7 +12,7 @@ lang: ko
 | KIS | KR / US | 미지원 | KR, 별도 세션·평가 승인 필요 | 미지원 | 변환 구현·오프라인 테스트 |
 | DBFI | KR / US | 지원 | KR, 별도 세션·평가 승인 필요 | KR | 변환 구현·오프라인 테스트 |
 | Toss | KR | 전체 미체결분 | KR, 별도 세션·평가 승인 필요 | 미지원 | SDK 브리지 mock 검사 |
-| LS | KR | 잠금 상태 | 미검증 | 미지원 | `LS_SPEC_VERIFIED = False` |
+| LS | KR | 매핑 구현·잠금 | 매핑 구현·잠금 | 미지원 | 정식 모듈·factory 등록, `LS_SPEC_VERIFIED = False` |
 | Kiwoom | KR(KRX) 지정가 | 지원(접수 응답만) | 미지원 | 미지원 | REST 어댑터 등록·오프라인 계약 |
 | NH | KR 스켈레톤 | 미구현 | 미구현 | 미지원 | `NH_SPEC_VERIFIED = False` |
 | KB | KR 스켈레톤 | 미구현 | 미구현 | 미지원 | `KB_SPEC_VERIFIED = False` |
@@ -23,14 +23,24 @@ KIS/DB US 잔고의 주문 가능 현금은 계좌 유형별로 달라 `cash_pro
 
 TODO: LS 해외 요청 매핑은 원본에도 열거값 검증이 없으며 이번 패키지에는 국내 매핑만 옮겼습니다. 키움 US는 구현하지 않았습니다. 공식 스펙과 fixture 확보 후 확장해야 합니다. NH·KB는 엔드포인트/TR 확보부터 필요하며 잠금만 바꿔도 실행되지 않습니다. LS 조회 결과는 여전히 미검증 참고 데이터입니다.
 
-## 키움 — BS-07 (2026-10-01)
+## 키움 (2026-10-01)
 
 `create_broker("kiwoom", ...)`은 기존 REST 어댑터를 저장 토큰·앱키로 만듭니다. 생성만으로 토큰을 발급하지 않습니다. 주문·취소 전송은 기존 `OrderSafety` 기본 dry-run으로 꺼져 있으며 이를 켜는 새 환경변수는 없습니다. `virtual=True`일 때 모의 호스트를 고릅니다. 직접 정정은 공통 SDK 계약에 없습니다. 가짜 정정 원장을 읽으면 완전 체결 외에는 원주문을 ‘모름’으로 남깁니다.
 
 가격 부호 증거는 오프라인입니다. `+` 가격은 크기를 유지하고, `-` 가격은 시세·호가·상하한가·잔고·미체결 주문 모두 `SpecUnverifiedError`로 거부합니다. 음수 현금·수량은 계속 잘못된 응답입니다. 공식 샘플만으로 `-` 의미가 확정되지 않아 절댓값으로 추정하지 않습니다.
 
-기존 `examples/kiwoom_mock_roundtrip.py`의 기본은 dry-run입니다. `--execute`여도 모의 키가 없거나 공백이면 ‘키 없음’, `missing_keys`, 종료코드 0으로 끝나며 클라이언트 생성도 없습니다. 이는 실행 생략이지 왕복 성공이 아닙니다. 주문·조회·취소 왕복은 가짜 응답으로 시험했습니다. 증권사 실제 호출은 하지 않았습니다. H-KIWOOM 발급 뒤 실제 모의 왕복과 독립 검수는 메인이 수행합니다.
+기존 `examples/kiwoom_mock_roundtrip.py`의 기본은 dry-run입니다. `--execute`여도 모의 키가 없거나 공백이면 ‘키 없음’, `missing_keys`, 종료코드 0으로 끝나며 클라이언트 생성도 없습니다. 이는 실행 생략이지 왕복 성공이 아닙니다. 주문·조회·취소 왕복은 가짜 응답으로 시험했습니다. 증권사 실제 호출은 하지 않았습니다. 모의 키 발급 뒤 실제 모의 왕복과 독립 검수가 필요합니다.
 
-근거: [BS-07 현황 팩](status/2026-10-01-pack-kiwoom-bs07.md).
+근거: [키움 검증 기록](status/2026-10-01-pack-kiwoom-bs07.md).
+
+## LS (2026-10-01)
+
+`brokers/ls.py`와 `create_broker("ls", ...)`에 등록되어 있으며, 기존 `experimental.ls`는 같은 모듈의 호환 경로입니다. 생성 시 명시적인 `base_url`을 가진 클라이언트가 필요합니다. 기본 클라이언트·키·요청 예산·코드 기본값은 없습니다.
+
+**실 바인딩의 주문·취소는 계속 잠겨 있습니다.** `virtual`은 bool만 받으며 생성 직후와 요청 전에 호스트를 검사합니다. `LS_SPEC_VERIFIED=False`는 전체 주문 금지 스위치입니다. 이를 바꿔도 실 바인딩은 열리지 않습니다. 별도 모의 주소 계약은 **UNVERIFIED**로 비어 있어 `virtual=True` 생성도 거절됩니다. 모의 주소를 실 주소로 추정하지 않습니다.
+
+시험에서는 가짜 모의 호스트와 `spec_verified=True`를 인스턴스별로 명시해 기존 안전 게이트를 검증합니다. 기본값은 `False`이며 다른 인스턴스에 전파되지 않습니다. 반환 주문의 `virtual`은 생성 때 검사한 바인딩을 따릅니다.
+
+`t0425.qty/cheqty/cheprice`는 **UNVERIFIED(명세 미확인)**입니다. 잠금 중에는 `quantity`·`filled`·`fill_price`가 `None`, `status`는 `unknown`입니다. `cheprice`가 평균 체결가인지 확인되기 전에는 잠금을 바꿔도 `fill_price`를 채우지 않습니다. 실시간 미체결·주문 이력·모의계좌 지원은 선언하지 않습니다. 모든 LS fixture는 합성입니다.
 
 [English](en/BROKER_MATRIX.md)

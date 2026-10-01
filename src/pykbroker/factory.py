@@ -8,10 +8,11 @@ from .brokers._common import BaseBroker
 from .brokers.dbfi import DBFI
 from .brokers.kis import KIS
 from .brokers.kiwoom import Kiwoom
+from .brokers.ls import LS
 from .brokers.toss import Toss
 from .exceptions import ConfigurationError
 
-BROKERS: dict[str, type[BaseBroker]] = {"kis": KIS, "dbfi": DBFI, "toss": Toss, "kiwoom": Kiwoom}
+BROKERS: dict[str, type[BaseBroker]] = {"kis": KIS, "dbfi": DBFI, "toss": Toss, "kiwoom": Kiwoom, "ls": LS}
 
 
 def _options() -> dict[str, Any]:
@@ -37,6 +38,8 @@ def create_broker(name: str, *, account: str | None = None, **kwargs: Any) -> Ba
                 raise ConfigurationError("PYKBROKER_TOSS_ACCOUNT_SEQ is required") from None
         if "credentials_options" not in kwargs and "sdk_factory" not in kwargs:
             kwargs["credentials_options"] = _options()
-    elif "client_options" not in kwargs and (key == "kiwoom" or not {"client", "client_factory"} & kwargs.keys()):
+    elif key != "ls" and "client_options" not in kwargs and (
+        key in {"kiwoom", "nh"} or not {"client", "client_factory"} & kwargs.keys()
+    ):
         kwargs["client_options"] = _options()
     return BROKERS[key](account=account, **kwargs)

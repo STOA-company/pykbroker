@@ -4,8 +4,9 @@
 
 한국어 기본 문서와 영어 번역 / Korean documentation with English translations.
 KIS, DBFI and Toss are implemented adapters with offline mock/fixture validation only.
-Real APIs, paper accounts and live trading have not been validated. LS/Kiwoom are
-unverified locked mappings; NH/KB are offline skeletons, excluded from the registry.
+Real APIs, paper accounts and live trading have not been validated. LS is registered
+with default-locked writes and unmapped UNVERIFIED fill fields. Kiwoom is registered; NH/KB
+adapters remain outside the factory. See the broker support matrix.
 Dry-run blocks order/cancellation transmission; it does not simulate successful orders.
 Vendor source SDKs and authentication must be supplied separately.
 The execution SDK contains contracts only, without an execution engine.
@@ -19,7 +20,7 @@ These files do not publish the site or guarantee crawling or AI citations.
 ## Documentation
 
 - [Adding a broker adapter](https://stoa-company.github.io/pykbroker/BROKER_ADAPTER_RECIPE/): 한국 증권사 어댑터 추가 절차: 공식 응답 증거, 클라이언트 주입, 주문 안전 게이트와 오프라인 테스트.
-- [Broker support matrix](https://stoa-company.github.io/pykbroker/BROKER_MATRIX/): KIS·DBFI·Toss의 오프라인 검증 범위와 LS·키움·NH·KB experimental 상태, KR·US 시장과 취소 제약.
+- [Broker support matrix](https://stoa-company.github.io/pykbroker/BROKER_MATRIX/): KIS·DBFI·Toss 오프라인 계약, 키움 등록·LS 기본 잠금·NH·KB experimental 상태와 KR·US 시장·취소 제약.
 - [Brokers](https://stoa-company.github.io/pykbroker/api/brokers/): KIS·DBFI·Toss와 create_broker의 조회·주문 계약, 인스턴스 수명과 experimental 어댑터 제한.
 - [Models](https://stoa-company.github.io/pykbroker/api/models/): pykbroker의 불변 Pydantic 모델: 잔고·시세·주문·취소·거래 규칙 필드와 Decimal·미확인 값 처리.
 - [Korean cash-equity rules](https://stoa-company.github.io/pykbroker/api/rules/): KRX 현물 주식 기본 호가 단위와 정규장 규칙 도우미, 거래일 콜백과 미지원 상품 범위.
@@ -28,7 +29,7 @@ These files do not publish the site or guarantee crawling or AI citations.
 - [CLI](https://stoa-company.github.io/pykbroker/cli/): pykbroker CLI로 시세·잔고·보유 종목·주문 상태·규칙을 조회하는 명령과 오류 종료 코드.
 - [Contributing](https://stoa-company.github.io/pykbroker/contributing/): pykbroker 기여 절차, 안전 변경 리뷰, 오프라인 테스트와 어댑터 문서·라이선스 갱신 기준.
 - [Adding a broker adapter](https://stoa-company.github.io/pykbroker/en/BROKER_ADAPTER_RECIPE/): Add a Korean broker adapter with documented response evidence, client injection, order safety gates and offline tests.
-- [Broker support matrix](https://stoa-company.github.io/pykbroker/en/BROKER_MATRIX/): Offline verification scope for KIS, DBFI and Toss, experimental LS/Kiwoom/NH/KB status, KR/US markets and cancellation limits.
+- [Broker support matrix](https://stoa-company.github.io/pykbroker/en/BROKER_MATRIX/): Offline contracts for KIS, DBFI and Toss, registered Kiwoom, locked LS and experimental NH/KB; KR/US markets and cancellation limits.
 - [Brokers](https://stoa-company.github.io/pykbroker/en/api/brokers/): Query and order contracts for KIS, DBFI, Toss and create_broker, instance lifetimes and experimental adapter restrictions.
 - [Models](https://stoa-company.github.io/pykbroker/en/api/models/): Immutable Pydantic models for balances, quotes, orders, cancellations and trading rules, including Decimal and unknown-value semantics.
 - [Korean cash-equity rules](https://stoa-company.github.io/pykbroker/en/api/rules/): Basic KRX cash-equity tick and regular-session helpers, trading-day callbacks and unsupported product scope.

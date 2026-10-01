@@ -22,7 +22,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src" / "pykbroker"
-EXPERIMENTAL = SRC / "experimental"
 
 
 @dataclass(frozen=True)
@@ -41,6 +40,27 @@ MUTATIONS = (
         SRC / "_http.py",
         "_OPENER = build_opener(_NoRedirect())",
         "_OPENER = build_opener()",
+    ),
+    Mutation(
+        "L27",
+        "LS accepts error codes with normal blocks",
+        SRC / "brokers/ls.py",
+        '        if code not in ("00000", "0000", "0"):',
+        "        if False:",
+    ),
+    Mutation(
+        "L6",
+        "LS accepts reads without a response code",
+        SRC / "brokers/ls.py",
+        '        code = result.get("rsp_cd")',
+        '        code = result.get("rsp_cd", "00000")',
+    ),
+    Mutation(
+        "L3",
+        "LS exposes cheprice with zero filled quantity",
+        SRC / "brokers/ls.py",
+        "            fill_price=None,",
+        '            fill_price=self._price(row.get("cheprice")),',
     ),
     Mutation(
         "A'-1",
@@ -157,10 +177,10 @@ MUTATIONS = (
     ),
     Mutation(
         "A'2-5",
-        "the locked REST mapping grows a mock-account argument again",
-        EXPERIMENTAL / "_rest.py",
-        '        market: str = "KR",\n    ) -> None:',
-        '        market: str = "KR",\n        virtual: bool = False,\n    ) -> None:',
+        "LS instance verification enables live writes",
+        SRC / "brokers/ls.py",
+        " and self._bound_virtual is True",
+        "",
     ),
     # --- B′2: the second-round conditions on the Toss venue regression
     Mutation(
@@ -239,7 +259,7 @@ MUTATIONS = (
         SRC / "models/capabilities.py",
         (
             "        if any(not v.strip() for v in self.venues):\n"
-            "            raise ValueError(\"venues must not contain empty or whitespace-only names\")\n"
+            '            raise ValueError("venues must not contain empty or whitespace-only names")\n'
             "        return self"
         ),
         "        return self",
