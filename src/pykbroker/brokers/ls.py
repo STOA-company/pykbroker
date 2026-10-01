@@ -3,7 +3,7 @@
 UNVERIFIED (명세 미확인): detailed official guides were inaccessible on 2026-10-01.
 Paths/TRs/request blocks reuse experimental/ls.py and trader traders/ls_order.py.
 Enum values, rsp_cd meanings, continuation, and t0425 qty/price/cheqty/cheprice
-semantics require official comparison and H-LS before any live enablement.
+semantics and account-mode binding require official specification comparison.
 No default client, credentials, rate budget, or environment unlock is provided.
 """
 
@@ -18,15 +18,42 @@ from pykbroker.exceptions import (
 from pykbroker.experimental._rest import RestBroker
 from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote
 
-LS_SPEC_VERIFIED = False
+LS_SPEC_VERIFIED = False  # Global veto only; True never enables live orders.
+# UNVERIFIED: legacy live URL, no local official address/account-mode contract.
+LS_API_BASE_URL = "https://openapi.ls-sec.co.kr:8080"
+# UNVERIFIED: no distinct mock host established; do not invent one or reuse live.
+LS_MOCK_BASE_URL: str | None = None
 
 
 class LS(RestBroker):
     broker_code = "ls"
+    supports_virtual = True  # Accept explicit mode; missing mock contract still fails closed.
+
+    def __init__(self, *, virtual: bool = False, spec_verified: bool = False, **kwargs) -> None:
+        if not isinstance(spec_verified, bool):
+            raise ConfigurationError("spec_verified must be a boolean")
+        super().__init__(virtual=virtual, **kwargs)
+        if self._client is None:
+            raise ConfigurationError("Supply an LS REST client with an explicit base_url")
+        self._bound_virtual = self.virtual
+        self._spec_verified = spec_verified
+        self._verify_mode(self._client)
+
+    def _verify_mode(self, client) -> None:
+        expected = LS_MOCK_BASE_URL if self._bound_virtual else LS_API_BASE_URL
+        if not isinstance(expected, str) or not expected or expected == LS_API_BASE_URL and self._bound_virtual:
+            raise ConfigurationError("LS mock address/account-mode contract is UNVERIFIED")
+        host = getattr(client, "base_url", None)
+        if self.virtual is not self._bound_virtual or not isinstance(host, str) or host.rstrip("/") != expected:
+            raise ConfigurationError("LS client host must match the explicit account mode")
+
+    def _mock_verified(self) -> bool:
+        return LS_SPEC_VERIFIED is True and self._spec_verified is True and self._bound_virtual is True
 
     def capabilities(self) -> Capabilities:
-        verified = LS_SPEC_VERIFIED is True
+        verified = self._mock_verified()
         return Capabilities(
+            virtual=self._bound_virtual,
             supports_spot=verified,
             supports_limit_order=verified,
             supports_market_order=verified,
@@ -46,13 +73,15 @@ class LS(RestBroker):
             self._order_id(request.order_id, request=True)
 
     def place_order(self, request: OrderRequest) -> Order:
-        if LS_SPEC_VERIFIED is not True:
-            raise SpecUnverifiedError("LS_SPEC_VERIFIED is not True")
+        if not self._mock_verified():
+            raise SpecUnverifiedError("LS writes require a verified mock instance; live writes are locked")
+        self._verify_mode(self._client)
         return super().place_order(request)
 
     def cancel_order(self, request: CancelRequest) -> Order:
-        if LS_SPEC_VERIFIED is not True:
-            raise SpecUnverifiedError("LS_SPEC_VERIFIED is not True")
+        if not self._mock_verified():
+            raise SpecUnverifiedError("LS writes require a verified mock instance; live writes are locked")
+        self._verify_mode(self._client)
         return super().cancel_order(request)
 
     def _code(self, name: str) -> str:
@@ -74,6 +103,7 @@ class LS(RestBroker):
         return optional_price(value)
 
     def _response(self, path, tr, body, *, write=False):
+        self._verify_mode(self._client)
         result = self._request(path, tr, body)
         if not isinstance(result, dict):
             raise InvalidResponseError("Invalid LS response; reconcile writes before retrying")
@@ -178,19 +208,21 @@ class LS(RestBroker):
 
         return self._call(read)
 
+    def status(self, order: Order) -> Order:
+        return super().status(order).model_copy(update={"virtual": self._bound_virtual})
+
     def _order(self, row) -> Order:
         # UNVERIFIED (명세 미확인): candidate t0425 fields. Missing fill data stays None.
-        quantity = whole(row["qty"]) if "qty" in row else None
-        filled = whole(row["cheqty"]) if "cheqty" in row else None
+        quantity = whole(row["qty"]) if self._mock_verified() and "qty" in row else None
+        filled = whole(row["cheqty"]) if self._mock_verified() and "cheqty" in row else None
         remaining = whole(row["ordrem"])
         price = self._price(row.get("price"))
-        fill_price = self._price(row.get("cheprice"))
         if quantity is not None:
             if quantity <= 0 or remaining > quantity or (filled is not None and filled + remaining > quantity):
                 raise InvalidResponseError("Inconsistent LS order quantities")
         status = "unknown"
         # No quantity subtraction, zero-remainder inference, or unverified state interpretation.
-        if LS_SPEC_VERIFIED is True and quantity is not None and filled is not None:
+        if self._mock_verified() and quantity is not None and filled is not None:
             if filled == quantity and remaining == 0:
                 status = "filled"
             elif filled > 0 and remaining > 0:
@@ -203,9 +235,11 @@ class LS(RestBroker):
             quantity=quantity,
             price=price,
             filled=filled,
-            fill_price=fill_price if filled is not None and filled > 0 else None,
+            # UNVERIFIED: cheprice is not established as the average execution price.
+            fill_price=None,
             remaining=remaining,
             status=status,
+            virtual=self._bound_virtual,
         )
 
     def _place_order(self, request: OrderRequest) -> Order:
@@ -229,6 +263,7 @@ class LS(RestBroker):
             quantity=request.quantity,
             price=request.price,
             status="accepted",
+            virtual=self._bound_virtual,
         )
 
     def _cancel_order(self, request: CancelRequest) -> Order:
@@ -236,4 +271,9 @@ class LS(RestBroker):
         response = self._response("/stock/order", "CSPAT00801", {"CSPAT00801InBlock1": body}, write=True)
         # UNVERIFIED: ack block; accepted does not prove the original order closed.
         self._order_id(response["CSPAT00801OutBlock2"]["OrdNo"])
-        return Order(id=request.order_id, symbol=self._symbol(request.symbol, "KR"), status="accepted")
+        return Order(
+            id=request.order_id,
+            symbol=self._symbol(request.symbol, "KR"),
+            status="accepted",
+            virtual=self._bound_virtual,
+        )

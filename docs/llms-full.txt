@@ -5,7 +5,7 @@
 한국어 기본 문서와 영어 번역 / Korean documentation with English translations.
 KIS, DBFI and Toss are implemented adapters with offline mock/fixture validation only.
 Real APIs, paper accounts and live trading have not been validated. LS is registered
-with default-locked writes and UNVERIFIED candidate fill fields; Kiwoom is registered; experimental NH/KB
+with default-locked writes and unmapped UNVERIFIED fill fields. Kiwoom is registered; NH/KB
 adapters remain outside the factory. See the broker support matrix.
 Dry-run blocks order/cancellation transmission; it does not simulate successful orders.
 Vendor source SDKs and authentication must be supplied separately.
@@ -31,9 +31,10 @@ Source: https://stoa-company.github.io/pykbroker/BROKER_ADAPTER_RECIPE/
 
 미검증 어댑터는 `experimental/`에 두고 모듈의 `*_SPEC_VERIFIED = False`를 유지합니다. 공개 주문 메서드는 값이 정확히 `True`일 때만 다음 단계로 갑니다. 미확인 열거값은 caller `codes`로 주입되기 전까지 오류로 처리합니다. 잠금만 바꾸는 것으로 미확인 요청이 전송되어서는 안 됩니다.
 
-BS-17 예외(2026-10-01 재발주): 대표 발주서가 상세 문서 접근 실패로 작업을 멈추지 말고
+LS 작업 지시서(2026-10-01)는 상세 문서 접근 실패로 작업을 멈추지 말고
 기존 LS 코드와 `UNVERIFIED` 표시로 진행하도록 지시했습니다. 따라서 LS는 `brokers/ls.py`
-및 factory에 승격하되 `LS_SPEC_VERIFIED=False`와 기본 꺼짐 capability를 유지합니다.
+및 factory에 등록하되 `LS_SPEC_VERIFIED=False`와 기본 꺼짐 capability를 유지합니다.
+LS는 모의 인스턴스별 검증도 필요하며 실 바인딩 주문은 계속 잠깁니다.
 정식 경로 등록과 실제 거래 지원을 구분하며, 미확인 코드에는 기본값을 넣지 않습니다.
 
 ## 4. 수명과 응답
@@ -54,7 +55,6 @@ BS-17 예외(2026-10-01 재발주): 대표 발주서가 상세 문서 접근 실
 
 [English](https://stoa-company.github.io/pykbroker/en/BROKER_ADAPTER_RECIPE/)
 
-
 -----
 
 Source: https://stoa-company.github.io/pykbroker/BROKER_MATRIX/
@@ -69,7 +69,7 @@ Source: https://stoa-company.github.io/pykbroker/BROKER_MATRIX/
 | DBFI | KR / US | 지원 | KR, 별도 세션·평가 승인 필요 | KR | 변환 구현·오프라인 테스트 |
 | Toss | KR | 전체 미체결분 | KR, 별도 세션·평가 승인 필요 | 미지원 | SDK 브리지 mock 검사 |
 | LS | KR | 매핑 구현·잠금 | 매핑 구현·잠금 | 미지원 | 정식 모듈·factory 등록, `LS_SPEC_VERIFIED = False` |
-| Kiwoom | KR | 미구현 | 미검증 | 미지원 | `KIWOOM_SPEC_VERIFIED = False` |
+| Kiwoom | KR(KRX) 지정가 | 지원(접수 응답만) | 미지원 | 미지원 | REST 어댑터 등록·오프라인 계약 |
 | NH | KR 스켈레톤 | 미구현 | 미구현 | 미지원 | `NH_SPEC_VERIFIED = False` |
 | KB | KR 스켈레톤 | 미구현 | 미구현 | 미지원 | `KB_SPEC_VERIFIED = False` |
 
@@ -77,18 +77,29 @@ KIS는 정정·취소 가능 주문 목록을, Toss는 열린 주문 목록을 �
 
 KIS/DB US 잔고의 주문 가능 현금은 계좌 유형별로 달라 `cash_provider` 주입을 요구합니다. US 매수·매도는 지정가만 노출합니다. 계좌에 없는 NXT·상품·시장 기능을 유추하지 않습니다.
 
-TODO: LS·키움 해외 요청 매핑은 원본에도 열거값 검증이 없으며 이번 패키지에는 국내 매핑만 옮겼습니다. 공식 스펙과 fixture 확보 후 확장해야 합니다. NH·KB는 엔드포인트/TR 확보부터 필요하며 잠금만 바꿔도 실행되지 않습니다. LS·키움의 조회 결과도 미검증 참고 데이터이며, 실사용 지원 수에 포함하지 않습니다.
+TODO: LS 해외 요청 매핑은 원본에도 열거값 검증이 없으며 이번 패키지에는 국내 매핑만 옮겼습니다. 키움 US는 구현하지 않았습니다. 공식 스펙과 fixture 확보 후 확장해야 합니다. NH·KB는 엔드포인트/TR 확보부터 필요하며 잠금만 바꿔도 실행되지 않습니다. LS 조회 결과는 여전히 미검증 참고 데이터입니다.
 
-LS BS-17(2026-10-01): `brokers/ls.py`로 경로를 승격하고 `factory`에 등록했습니다.
-**등록은 실사용 잠금 해제가 아닙니다.** 기본 클라이언트·키·요청 예산은 없고 주문·취소는
-잠겨 있습니다. 기존 `experimental.ls`는 같은 모듈/잠금의 호환 경로입니다.
-`t0425.cheqty/cheprice`의 체결 수량·평균 체결가 후보 매핑은 **UNVERIFIED(명세 미확인)**입니다.
-명세 잠금 상태에서는 체결 상태를 `unknown`으로 유지하며 체결가 누락은 `None`입니다.
-상세 명세 대조와 H-LS 왕복 전에는 실시간 미체결·주문 이력·모의계좌 지원을 선언하지 않습니다.
-합성 fixture 출처와 미확인 목록: `tests/fixtures/ls/README.md`.
+## 키움 (2026-10-01)
+
+`create_broker("kiwoom", ...)`은 기존 REST 어댑터를 저장 토큰·앱키로 만듭니다. 생성만으로 토큰을 발급하지 않습니다. 주문·취소 전송은 기존 `OrderSafety` 기본 dry-run으로 꺼져 있으며 이를 켜는 새 환경변수는 없습니다. `virtual=True`일 때 모의 호스트를 고릅니다. 직접 정정은 공통 SDK 계약에 없습니다. 가짜 정정 원장을 읽으면 완전 체결 외에는 원주문을 ‘모름’으로 남깁니다.
+
+가격 부호 증거는 오프라인입니다. `+` 가격은 크기를 유지하고, `-` 가격은 시세·호가·상하한가·잔고·미체결 주문 모두 `SpecUnverifiedError`로 거부합니다. 음수 현금·수량은 계속 잘못된 응답입니다. 공식 샘플만으로 `-` 의미가 확정되지 않아 절댓값으로 추정하지 않습니다.
+
+기존 `examples/kiwoom_mock_roundtrip.py`의 기본은 dry-run입니다. `--execute`여도 모의 키가 없거나 공백이면 ‘키 없음’, `missing_keys`, 종료코드 0으로 끝나며 클라이언트 생성도 없습니다. 이는 실행 생략이지 왕복 성공이 아닙니다. 주문·조회·취소 왕복은 가짜 응답으로 시험했습니다. 증권사 실제 호출은 하지 않았습니다. 모의 키 발급 뒤 실제 모의 왕복과 독립 검수가 필요합니다.
+
+근거: [키움 검증 기록](https://stoa-company.github.io/pykbroker/status/2026-10-01-pack-kiwoom-bs07/).
+
+## LS (2026-10-01)
+
+`brokers/ls.py`와 `create_broker("ls", ...)`에 등록되어 있으며, 기존 `experimental.ls`는 같은 모듈의 호환 경로입니다. 생성 시 명시적인 `base_url`을 가진 클라이언트가 필요합니다. 기본 클라이언트·키·요청 예산·코드 기본값은 없습니다.
+
+**실 바인딩의 주문·취소는 계속 잠겨 있습니다.** `virtual`은 bool만 받으며 생성 직후와 요청 전에 호스트를 검사합니다. `LS_SPEC_VERIFIED=False`는 전체 주문 금지 스위치입니다. 이를 바꿔도 실 바인딩은 열리지 않습니다. 별도 모의 주소 계약은 **UNVERIFIED**로 비어 있어 `virtual=True` 생성도 거절됩니다. 모의 주소를 실 주소로 추정하지 않습니다.
+
+시험에서는 가짜 모의 호스트와 `spec_verified=True`를 인스턴스별로 명시해 기존 안전 게이트를 검증합니다. 기본값은 `False`이며 다른 인스턴스에 전파되지 않습니다. 반환 주문의 `virtual`은 생성 때 검사한 바인딩을 따릅니다.
+
+`t0425.qty/cheqty/cheprice`는 **UNVERIFIED(명세 미확인)**입니다. 잠금 중에는 `quantity`·`filled`·`fill_price`가 `None`, `status`는 `unknown`입니다. `cheprice`가 평균 체결가인지 확인되기 전에는 잠금을 바꿔도 `fill_price`를 채우지 않습니다. 실시간 미체결·주문 이력·모의계좌 지원은 선언하지 않습니다. 모든 LS fixture는 합성입니다.
 
 [English](https://stoa-company.github.io/pykbroker/en/BROKER_MATRIX/)
-
 
 -----
 
@@ -131,10 +142,9 @@ Source: https://stoa-company.github.io/pykbroker/api/brokers/
 
 실행기는 `capabilities()`를 보고 계획을 세웁니다. 미국 경로는 두 증권사 모두 **시장가가 없고** 거래소를 반드시 지정해야 하므로 `supports_market_order=False`, `requires_venue=True`, `venues=("NASDAQ","NYSE","AMEX")`로 선언합니다. 선언 목록 밖 거래소나 설정과 다른 거래소로 나가는 주문은 안전 게이트 이전에 거절됩니다.
 
-`experimental` 어댑터는 모듈을 직접 import하며 기본 주문 잠금이 닫혀 있습니다. BS-17 LS는 예외로 `pykbroker.brokers.ls.LS`와 `create_broker("ls")`에 등록했습니다. 클라이언트·코드·요청 제한은 명시적으로 주입하며 등록만으로 주문 잠금이 열리지 않습니다.
+`experimental` 어댑터는 모듈을 직접 import하며 기본 주문 잠금이 닫혀 있습니다. LS는 예외로 `pykbroker.brokers.ls.LS`와 `create_broker("ls")`에 등록했습니다. 명시적인 `base_url`을 가진 클라이언트·코드·요청 제한을 주입해야 합니다. 실 주문은 계속 잠겨 있고, 모의 주소 계약도 미확인입니다.
 
 [English](https://stoa-company.github.io/pykbroker/en/api/brokers/)
-
 
 -----
 
@@ -161,14 +171,13 @@ Pydantic v2의 불변 모델이며 알 수 없는 필드는 거절합니다. 금
 
 [English](https://stoa-company.github.io/pykbroker/en/api/models/)
 
-
 -----
 
 Source: https://stoa-company.github.io/pykbroker/api/rules/
 
 # Korean cash-equity rules
 
-`rules.kr`은 KRX 현물 주식의 기본 호가 표와 정규장 시간만 제공합니다. ETF·ETN·다른 거래소·특별 개장일은 호출자가 별도 규칙을 제공해야 합니다. 상품 구분이 없는 `get_rules()`는 `tick=None`을 반환합니다.
+`rules.kr`은 KRX 현물 주식의 호가 표, 정규장 시간, 일일 상하한가, 단주 단위를 제공합니다. ETF·ETN·다른 거래소·특별 개장일은 호출자가 별도 규칙을 제공해야 합니다. 상품 구분이 없는 `get_rules()`는 `tick=None`을 반환합니다.
 
 | 가격 (원) | 호가 단위 (원) |
 | --- | --- |
@@ -185,6 +194,34 @@ Source: https://stoa-company.github.io/pykbroker/api/rules/
 정규장 기본 시간은 KST 09:00~15:30입니다. [KRX 거래 시간·휴장 안내](https://global.krx.co.kr/contents/GLB/06/0602/0602010201/GLB0602010201T1.jsp)를 대조했습니다. `regular_session_open()`은 휴장일을 직접 추측하지 않으며 거래일 판정 콜백이 없으면 False입니다. 단순 요일 검사는 거래일 달력을 대체하지 않습니다.
 
 `normalize_symbol()`은 6자리 영숫자 단축코드와 DB식 A 접두사를 처리합니다. `round_price()`는 매수 내림·매도 올림을 제공하지만 실제 주문에서 몰래 호출하지 않습니다. 호출자가 정한 가격을 소수점 절삭해서 전송하지 않습니다.
+
+## 일일 상하한가
+
+밴드는 **거래소가 말한 값이 먼저**입니다. KIS 국내 현재가 응답은 같은 행에 상한가(`stck_mxpr`)와 하한가(`stck_llam`)를 실어 보내며, `rules(symbol)`은 그 값을 그대로 씁니다 (`Rules.limits_source == "venue"`).
+
+거래소가 밴드를 말하지 않았을 때만 `price_limits(prev_close)`로 내려갑니다 (`limits_source == "derived"`). `price_limits(prev_close)`는 전일 종가 ±30%를 돌려줍니다. 두 경계는 그 가격대의 호가 단위로 **안쪽으로** 반올림합니다. 바깥으로 올리면 거래소가 거절하는 가격이 나오므로 밴드가 넓어지는 일은 없습니다. ±30%는 KRX 현물 주식 기본값이라 ETF·ETN·정리매매·신규상장일에는 맞지 않습니다. 그래서 파생된 밴드인지 거래소가 말한 밴드인지를 `limits_source`로 구분해 알려줍니다 — 모르면 `None`입니다.
+
+한쪽만 온 밴드는 반대쪽을 몰래 계산해 채우지 않고 거절합니다. 아무도 말한 적 없는 밴드가 되기 때문입니다.
+
+## 세 가지 상태 — 열림·닫힘·모름
+
+`session_state(now, trading_day)`는 `True`(열림)·`False`(닫힘)·`None`(모름)을 돌려줍니다. 시계에 시간대가 없거나 거래일 판정 콜백이 없으면 «닫힘»이 아니라 «모름»입니다. `regular_session_open()`은 그 위의 fail-closed 뷰로, 모르면 False입니다.
+
+`Rules.halted`도 같은 3상태입니다. KIS 국내 현재가 응답은 정지 신호를 **두 개** 실어 보냅니다 — 임시정지 여부(`temp_stop_yn`)와 종목상태구분코드(`iscd_stat_cls_code`).
+
+- 둘 중 하나라도 정지(`temp_stop_yn` 참 · 코드 `58`)라고 하면 **정지**입니다.
+- 벤더가 보낸 신호가 **전부** «정상»(`temp_stop_yn` 거짓 · 코드 `00`)일 때만 **거래중**입니다.
+- 그 밖의 코드(51 관리·52 위험·53 경고 등)는 정지도 «이상 없음»도 아닙니다. **모름**으로 답합니다. 정지가 아니라고 답하면 실행기가 그 종목에 주문을 내보냅니다.
+
+생성자 인자 `halt_provider`는 정지 **통보**입니다. 통보가 정지라고 하면 거래소 행이 «정상»이어도 정지이고, 반대로 통보가 아니라고 해서 거래소가 선언한 정지를 지우지도 못합니다. 양쪽 모두 «정지»가 이깁니다.
+
+`Rules.tradable`은 «열린 세션 × 정지 아님»이 **둘 다 확정**일 때만 True입니다. 실행기는 이 한 필드만 보면 되고, 모르는 것은 닫힌 것과 똑같이 취급됩니다.
+
+## 단주
+
+KRX 현물은 1주 단위이므로 `lot=1`이고, 가격을 알면 `min_notional`이 1주 값입니다. «이 종목은 최소 1주 7만원입니다»가 여기서 나옵니다.
+
+미국 경로는 호가 단위가 가격·거래소별이고 밴드가 장중(LULD)이라 `tick`·`limit_up`·`limit_down`을 «모름»으로 둡니다.
 
 [English](https://stoa-company.github.io/pykbroker/en/api/rules/)
 
@@ -371,11 +408,11 @@ Check source, documentation, and examples for secrets, company-specific addresse
 
 [한국어](https://stoa-company.github.io/pykbroker/BROKER_ADAPTER_RECIPE/)
 
-BS-17 exception (2026-10-01 task brief): promote LS to `brokers/ls.py` and the
+LS task instructions (2026-10-01): promote LS to `brokers/ls.py` and the
 factory using legacy mappings with explicit `UNVERIFIED` annotations even though
 detailed guides were inaccessible. Keep `LS_SPEC_VERIFIED=False`, disabled order
-capabilities, and no default enum values. Registration does not enable trading.
-
+capabilities, and no default enum values. LS additionally requires explicit instance
+verification for mock writes; live-binding writes stay locked.
 
 -----
 
@@ -391,7 +428,7 @@ This describes the extracted implementation as of 2026-09-09. All validation use
 | DBFI | KR / US | Supported | KR, separate session and valuation authorization required | KR | Conversion implementation and offline tests |
 | Toss | KR | Entire unfilled remainder | KR, separate session and valuation authorization required | Unsupported | SDK bridge checked with mocks |
 | LS | KR | Mapped, locked | Mapped, locked | Unsupported | Formal module/factory, `LS_SPEC_VERIFIED = False` |
-| Kiwoom | KR | Unimplemented | Unverified | Unsupported | `KIWOOM_SPEC_VERIFIED = False` |
+| Kiwoom | KR (KRX), limit orders | Supported (acknowledgement only) | Unsupported | Unsupported | Registered REST adapter; offline contracts |
 | NH | KR skeleton | Unimplemented | Unimplemented | Unsupported | `NH_SPEC_VERIFIED = False` |
 | KB | KR skeleton | Unimplemented | Unimplemented | Unsupported | `KB_SPEC_VERIFIED = False` |
 
@@ -399,19 +436,29 @@ KIS provides orders eligible for revision/cancellation; Toss provides open order
 
 KIS/DB US orderable cash varies by account type and requires an injected `cash_provider`. US buy/sell orders expose limit orders only. The library does not infer NXT, product, or market capabilities for an account.
 
-TODO: LS/Kiwoom US request mappings lacked verified enum values in the source; only domestic mappings were carried over. Expansion requires official specifications and fixtures. NH/KB require endpoints and TR definitions and cannot run merely by changing the lock. LS/Kiwoom query results are also unverified reference data and are excluded from the registered implementation count.
+TODO: LS US request mappings lacked verified enum values in the source; only domestic mappings were carried over. Kiwoom US is not implemented. Expansion requires official specifications and fixtures. NH/KB require endpoints and TR definitions and cannot run merely by changing the lock. LS query results remain unverified reference data.
+
+## Kiwoom (2026-10-01)
+
+`create_broker("kiwoom", ...)` uses the existing REST adapter with a stored token and app key. Construction never issues a token. Order/cancel transmission remains disabled by default (`OrderSafety` dry run); no new environment toggle enables it. `virtual=True` selects the mock host. Direct amendment is absent from the common SDK contract; amendment ledger fixtures leave an affected original order unknown unless fully executed.
+
+Price evidence is offline: a `+` prefix keeps the magnitude; a `-` prefix raises `SpecUnverifiedError` for quote, book, band, position and open-order prices. Negative cash and quantities remain invalid. The official samples do not establish the meaning of `-`; this change does not infer it or take an absolute value.
+
+The existing `examples/kiwoom_mock_roundtrip.py` is dry-run by default. With `--execute` and missing/blank mock keys it prints “키 없음”, returns `missing_keys` and exits 0 without constructing a client. That status means skipped, not successful. The mocked order/query/cancel round trip is tested; no broker API was called. The actual mock round trip and independent review remain pending mock-key issuance.
+
+See [Kiwoom evidence pack](https://stoa-company.github.io/pykbroker/status/2026-10-01-pack-kiwoom-bs07/).
 
 [한국어](https://stoa-company.github.io/pykbroker/BROKER_MATRIX/)
 
-LS BS-17 (2026-10-01): `brokers/ls.py` and the factory are registered, with writes
-locked by default. No transport, credentials, or TR budgets are supplied automatically.
-`experimental.ls` aliases the same module and lock. Candidate `t0425.cheqty/cheprice`
-fill quantity/average price semantics are **UNVERIFIED**. Locked responses retain
-`unknown` status; missing execution price is `None`, never the order limit price.
-Realtime orders, history, and virtual-account support remain unclaimed pending
-specification comparison and H-LS. All LS fixtures are synthetic; see
-`tests/fixtures/ls/README.md` for provenance and unverified fields.
+## LS (2026-10-01)
 
+`brokers/ls.py` and `create_broker("ls", ...)` are registered; `experimental.ls` aliases the same module. Construction requires an injected client with an explicit `base_url`. No default client, credentials, TR budgets, or enum values are provided.
+
+**Orders and cancellations on live bindings remain locked.** `virtual` accepts only booleans; the host is checked immediately after construction and before requests. `LS_SPEC_VERIFIED=False` is a global veto. Changing it never unlocks a live binding. The distinct mock address contract is **UNVERIFIED** and unset, so `virtual=True` construction is also rejected. The adapter does not infer a mock address from the live address.
+
+Offline tests supply a fictitious mock host and explicit instance `spec_verified=True` to exercise the existing safety gate. The default is `False` and verification never spreads to other instances. Returned orders use the account mode checked at construction.
+
+`t0425.qty/cheqty/cheprice` semantics are **UNVERIFIED**. Locked reads keep `quantity`, `filled`, and `fill_price` as `None` and `status` as `unknown`. Even mock verification leaves `fill_price` unmapped until `cheprice` is established as the average execution price. Realtime orders, history, and virtual-account support remain unclaimed. All LS fixtures are synthetic.
 
 -----
 
@@ -423,10 +470,9 @@ Import `KIS`, `DBFI`, `Toss`, and `create_broker()` from the top level. Public q
 
 Clients, accounts, and safety are explicitly bound per instance. Callers coordinate concurrent access per account; MCP serializes adapter access. See the [support matrix](https://stoa-company.github.io/pykbroker/en/BROKER_MATRIX/) and [installation guide](https://stoa-company.github.io/pykbroker/en/getting-started/).
 
-`experimental` adapters are imported directly with writes locked by default. BS-17 LS is registered as `pykbroker.brokers.ls.LS` and `create_broker("ls")`; transport, enum codes, and rate budgets must be injected. Registration never unlocks writes.
+`experimental` adapters are imported directly with writes locked by default. LS is registered as `pykbroker.brokers.ls.LS` and `create_broker("ls")`; transport, enum codes, and rate budgets must be injected. Clients must expose an explicit `base_url`. Live writes remain locked and the mock address contract is unverified.
 
 [한국어](https://stoa-company.github.io/pykbroker/api/brokers/)
-
 
 -----
 
@@ -452,7 +498,6 @@ Models are immutable Pydantic v2 objects that reject unknown fields. Amounts rem
 `Order.fill_price` is the broker-reported average execution price, defaulting to `None`. It is never derived from the submitted `price` or holding cost. LS `cheprice` remains an UNVERIFIED candidate mapping.
 
 [한국어](https://stoa-company.github.io/pykbroker/api/models/)
-
 
 -----
 
@@ -802,7 +847,7 @@ Place reviewed source trees named `Pykis/` and `Pydb/` under a separate parent d
 
 | Variable | Meaning |
 | --- | --- |
-| `PYKBROKER_BROKER` | `kis`, `dbfi`, or `toss`; `ls` is registered but locked and requires an injected client; CLI/MCP default to `kis` |
+| `PYKBROKER_BROKER` | `kis`, `dbfi`, `toss`, or `kiwoom`; `ls` is registered but locked and requires an injected client; CLI/MCP default to `kis` |
 | `PYKBROKER_ACCOUNT` | Caller-owned account identifier; KIS requires the vendor's actual account format |
 | `PYKBROKER_CLIENT_OPTIONS` | JSON object of authentication constructor arguments |
 | `PYKBROKER_TOSS_ACCOUNT_SEQ` | Toss-issued accountSeq, distinct from the account number |
@@ -838,7 +883,6 @@ Construct KIS/DB US adapters with `market="US"` and `venue="NASDAQ" | "NYSE" | "
 Supply all vendor clients with **order retries disabled**. This package does not retry failed submissions or cancellations; callers must inspect retries inside the vendor SDK separately.
 
 [한국어](https://stoa-company.github.io/pykbroker/getting-started/)
-
 
 -----
 
@@ -894,7 +938,7 @@ Queries return shared models. Orders and cancellations pass through **dry-run �
 | --- | --- |
 | `base` | Shared query, order, cancellation, and shutdown contracts |
 | `brokers` | KIS/DBFI/Toss conversions and default-locked LS; offline contract tests |
-| `experimental` | LS compatibility alias and Kiwoom is registered; experimental NH/KB mappings/skeletons; writes stay locked |
+| `experimental` | LS compatibility alias and other unverified mappings/skeletons; writes stay locked |
 | `safety` | Caller-injected limits, idempotency, dry-run, and halt decisions |
 | `mcp` | Default read-only tools; order tools registered only through configuration |
 
@@ -930,7 +974,7 @@ The code is provided under [Apache-2.0](https://github.com/STOA-company/pykbroke
 
 ### Are LS, Kiwoom, NH Investment, and KB Securities supported?
 
-As of 2026-10-01, LS is registered in `brokers/ls.py` and the factory, with **writes locked by default**. Registration does not enable trading: detailed specifications, candidate fill-price semantics, and H-LS round trips remain unverified. `experimental.ls` aliases the same module. See the support matrix for the other experimental adapters.
+LS is registered in `brokers/ls.py` and the factory, with **live-binding writes locked**. An injected client with an explicit host is required. The mock address contract and detailed specifications remain unverified. Locked quantity, filled quantity, and execution price remain `None`; `fill_price` stays unmapped pending average-price evidence. `experimental.ls` aliases the same module. See the support matrix for other adapters.
 
 ## Related projects
 
@@ -949,7 +993,6 @@ Documentation and contribution:
 The planned documentation address is `https://stoa-company.github.io/pykbroker/`. This change does not publish it, and its public availability is unverified. [llms.txt](https://stoa-company.github.io/pykbroker/llms.txt) contains a summary and key links; [llms-full.txt](https://stoa-company.github.io/pykbroker/llms-full.txt) combines the complete Korean and English Markdown documentation as plain text. These files do not guarantee crawling or AI citations.
 
 [한국어](https://stoa-company.github.io/pykbroker/)
-
 
 -----
 
@@ -1001,11 +1044,7 @@ The daily cap is the **sum of submitted value per account, broker, and KST date*
 from pykbroker import DBFI
 from pykbroker.mcp.server import create_server
 
-app = create_server(
-    broker_factory=lambda safety: DBFI(
-        account=caller_account, client=caller_client, safety=safety
-    )
-)
+app = create_server(broker_factory=lambda safety: DBFI(account=caller_account, client=caller_client, safety=safety))
 app.run(transport="stdio")
 ```
 
@@ -1267,7 +1306,7 @@ pip install -e '.[mcp,dev]'
 
 | 변수 | 뜻 |
 | --- | --- |
-| `PYKBROKER_BROKER` | `kis`, `dbfi`, `toss`, `ls`(기본 잠금·클라이언트 주입 필요); CLI/MCP 기본 `kis` |
+| `PYKBROKER_BROKER` | `kis`, `dbfi`, `toss`, `kiwoom`, `ls`(기본 잠금·클라이언트 주입 필요); CLI/MCP 기본 `kis` |
 | `PYKBROKER_ACCOUNT` | 호출자 소유 계좌 식별자; KIS에는 실제 벤더 계좌 형식 |
 | `PYKBROKER_CLIENT_OPTIONS` | JSON 객체; 인증 생성자 인자를 환경에서 주입 |
 | `PYKBROKER_TOSS_ACCOUNT_SEQ` | Toss가 발급한 accountSeq, 계좌번호와 구분 |
@@ -1302,7 +1341,6 @@ KIS/DB US 생성 시 `market="US"`, `venue="NASDAQ" | "NYSE" | "AMEX"`를 명시
 모든 벤더 클라이언트는 **주문 재시도를 끈 상태**로 공급해야 합니다. 이 패키지는 실패한 제출·취소를 재시도하지 않습니다. 벤더 SDK 안의 재시도 동작은 호출자가 확인해야 합니다.
 
 [English](https://stoa-company.github.io/pykbroker/en/getting-started/)
-
 
 -----
 
@@ -1394,7 +1432,7 @@ pykbroker 코드는 [Apache-2.0](https://github.com/STOA-company/pykbroker/blob/
 
 ### LS증권·키움증권·NH투자증권·KB증권도 지원하나요?
 
-LS는 2026-10-01부터 `brokers/ls.py`와 factory에 등록됐으나 **기본 주문 잠금은 닫혀 있습니다**. 실사용 지원을 뜻하지 않으며 상세 명세와 H-LS 왕복은 미확인입니다. 체결가 후보값도 `UNVERIFIED`로 표시합니다. 기존 `experimental.ls`는 같은 모듈의 호환 경로입니다. 다른 experimental 어댑터의 상태는 지원 표를 확인하세요.
+LS는 `brokers/ls.py`와 factory에 등록되어 있으며 **실 바인딩 주문은 잠겨 있습니다**. 명시적인 호스트를 가진 클라이언트가 필요합니다. 모의 주소 계약과 상세 명세는 미확인이고, 잠금 중 수량·체결수량·체결가는 `None`으로 남습니다. 평균 체결가 정의를 확인하기 전에는 `fill_price`를 채우지 않습니다. `experimental.ls`는 같은 모듈의 호환 경로입니다. 다른 어댑터 상태는 지원 표를 확인하세요.
 
 ## 관련 프로젝트
 
@@ -1413,7 +1451,6 @@ LS는 2026-10-01부터 `brokers/ls.py`와 factory에 등록됐으나 **기본 �
 문서의 계획 주소는 `https://stoa-company.github.io/pykbroker/`입니다. 이 변경은 게시를 수행하지 않으며 주소의 공개 가용성은 검증되지 않았습니다. [llms.txt](https://stoa-company.github.io/pykbroker/llms.txt)는 요약과 주요 링크, [llms-full.txt](https://stoa-company.github.io/pykbroker/llms-full.txt)는 한국어·영어 문서 전체를 결합한 평문입니다. 파일 제공이 검색 수집이나 AI 인용을 보장하지는 않습니다.
 
 [English](https://stoa-company.github.io/pykbroker/en/)
-
 
 -----
 
@@ -1465,11 +1502,7 @@ dry_run = true
 from pykbroker import DBFI
 from pykbroker.mcp.server import create_server
 
-app = create_server(
-    broker_factory=lambda safety: DBFI(
-        account=caller_account, client=caller_client, safety=safety
-    )
-)
+app = create_server(broker_factory=lambda safety: DBFI(account=caller_account, client=caller_client, safety=safety))
 app.run(transport="stdio")
 ```
 

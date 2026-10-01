@@ -14,9 +14,14 @@ trader `quantus_backend/traders/ls_order.py`(8e3b7d43)에서 재사용했다.
   기존 코드는 `ordno/expcode/ordrem`만 사용했다. 새 필드는 후보 계약이다.
 - 조회 범위가 당일 체결 전부를 담는지, 실시간성, 모의 도메인/왕복.
 
-`fill_price`는 `cheprice` 후보값만 담는다. 주문 지정가 `price`나 보유 평균가에서
-만들지 않는다. 체결가 누락/0은 None이다. 명세 잠금이 닫혀 있으면 주문 상태는
-체결 수량이 있어도 unknown이며 capability는 전부 꺼짐이다.
+`quantity`·`filled`는 모의 인스턴스별 검증과 전역 금지 해제가 모두 있을 때만 후보
+매핑을 시험한다. 기본 잠금에서는 None이며 status는 unknown이다.
+`fill_price`는 평균 체결가 정의가 확인될 때까지 항상 None이다. 주문 지정가나
+보유 평균가에서 추정하지 않는다. 체결수량 0과 cheprice가 함께 있어도 None이다.
+`virtual`은 bool만 받는다. 실제 모의 주소는 미확인으로 비워 두었고, 시험에서만
+`https://ls-mock.invalid:8080`을 주입한다. 실 바인딩은 전역 상수를 켜도 주문 불가다.
+UNVERIFIED 추가 확인: 성공 코드 00000/0000/0, OrgOrdNo 문자열,
+cts 본문만으로 이어짐 판단, 마지막 페이지 cursor 필수, 모의/실 주소·키 바인딩.
 
 공식 출처(상세 확인 실패, 이번 조회는 1회만):
 - https://openapi.ls-sec.co.kr/apiservice

@@ -60,7 +60,10 @@ def document_text(path, base):
 
 def generate():
     base = site_url()
-    pages = sorted(DOCS.rglob("*.md"), key=lambda p: p.relative_to(DOCS).as_posix())
+    pages = sorted(
+        (p for p in DOCS.rglob("*.md") if re.search(r'^description: "', p.read_text(), re.M)),
+        key=lambda p: p.relative_to(DOCS).as_posix(),
+    )
     sections = []
     summaries = []
     for path in pages:
@@ -75,7 +78,7 @@ def generate():
         "한국어 기본 문서와 영어 번역 / Korean documentation with English translations.\n"
         "KIS, DBFI and Toss are implemented adapters with offline mock/fixture validation only.\n"
         "Real APIs, paper accounts and live trading have not been validated. LS is registered\n"
-        "with default-locked writes and UNVERIFIED candidate fill fields; Kiwoom is registered; experimental NH/KB\n"
+        "with default-locked writes and unmapped UNVERIFIED fill fields. Kiwoom is registered; NH/KB\n"
         "adapters remain outside the factory. See the broker support matrix.\n"
         "Dry-run blocks order/cancellation transmission; it does not simulate successful orders.\n"
         "Vendor source SDKs and authentication must be supplied separately.\n"

@@ -89,7 +89,7 @@ pykbroker 코드는 [Apache-2.0](https://github.com/STOA-company/pykbroker/blob/
 
 ### LS증권·키움증권·NH투자증권·KB증권도 지원하나요?
 
-LS는 2026-10-01부터 `brokers/ls.py`와 factory에 등록됐으나 **기본 주문 잠금은 닫혀 있습니다**. 실사용 지원을 뜻하지 않으며 상세 명세와 H-LS 왕복은 미확인입니다. 체결가 후보값도 `UNVERIFIED`로 표시합니다. 기존 `experimental.ls`는 같은 모듈의 호환 경로입니다. 다른 experimental 어댑터의 상태는 지원 표를 확인하세요.
+LS는 `brokers/ls.py`와 factory에 등록되어 있으며 **실 바인딩 주문은 잠겨 있습니다**. 명시적인 호스트를 가진 클라이언트가 필요합니다. 모의 주소 계약과 상세 명세는 미확인이고, 잠금 중 수량·체결수량·체결가는 `None`으로 남습니다. 평균 체결가 정의를 확인하기 전에는 `fill_price`를 채우지 않습니다. `experimental.ls`는 같은 모듈의 호환 경로입니다. 다른 어댑터 상태는 지원 표를 확인하세요.
 
 ## 관련 프로젝트
 

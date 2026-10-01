@@ -89,7 +89,7 @@ The code is provided under [Apache-2.0](https://github.com/STOA-company/pykbroke
 
 ### Are LS, Kiwoom, NH Investment, and KB Securities supported?
 
-As of 2026-10-01, LS is registered in `brokers/ls.py` and the factory, with **writes locked by default**. Registration does not enable trading: detailed specifications, candidate fill-price semantics, and H-LS round trips remain unverified. `experimental.ls` aliases the same module. See the support matrix for the other experimental adapters.
+LS is registered in `brokers/ls.py` and the factory, with **live-binding writes locked**. An injected client with an explicit host is required. The mock address contract and detailed specifications remain unverified. Locked quantity, filled quantity, and execution price remain `None`; `fill_price` stays unmapped pending average-price evidence. `experimental.ls` aliases the same module. See the support matrix for other adapters.
 
 ## Related projects
 

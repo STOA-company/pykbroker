@@ -2,7 +2,8 @@
 
 All enum values are deliberately fictitious, injected only for offline requests.
 cheqty/cheprice/qty/price are candidate t0425 fields, not verified LS semantics.
-The module lock is changed by monkeypatch solely to exercise the fake transport.
+The global veto and fictitious mock host are patched only for offline transport tests.
+Instance verification is separately explicit; average execution price stays unmapped.
 """
 
 from copy import deepcopy
@@ -56,6 +57,7 @@ CODES = {
 
 class FakeClient:
     def __init__(self, responses):
+        self.base_url = module.LS_API_BASE_URL
         self.responses = {tr: list(pages) for tr, pages in responses.items()}
         self.calls = []
 
@@ -69,9 +71,15 @@ class FakeClient:
 
 def make(responses=None, **kwargs):
     client = FakeClient(responses or {})
+    if kwargs.get("virtual") is True:
+        client.base_url = module.LS_MOCK_BASE_URL
     limiter = Mock(spec=RateLimiter)
     broker = LS(account="fixture-account", client=client, codes=CODES, rate_limiter=limiter, **kwargs)
     return broker, client, limiter
+
+
+def make_mock(responses=None, **kwargs):
+    return make(responses, virtual=True, spec_verified=True, **kwargs)
 
 
 def buy(**changes):
@@ -106,10 +114,11 @@ def page(tr, **changes):
 @pytest.fixture
 def unlocked(monkeypatch):
     monkeypatch.setattr(module, "LS_SPEC_VERIFIED", True)
+    monkeypatch.setattr(module, "LS_MOCK_BASE_URL", "https://ls-mock.invalid:8080")
 
 
 def test_ls_is_factory_constructible_but_remains_locked():
-    broker = create_broker("LS", account="fixture-account")
+    broker = create_broker("LS", account="fixture-account", client=FakeClient({}))
     assert type(broker) is LS
     assert module.LS_SPEC_VERIFIED is False
     assert import_module("pykbroker.experimental.ls") is module
@@ -145,11 +154,11 @@ def test_candidate_t0425_fields_keep_fill_price_separate_from_limit_price():
     orders = broker.list_orders()
     assert orders[0].id == "42" and orders[0].symbol == "005930"
     assert orders[0].price == Decimal("70000")
-    assert orders[0].fill_price == Decimal("69000.25")
-    assert (orders[0].quantity, orders[0].filled, orders[0].remaining, orders[0].status) == (3, 1, 2, "unknown")
-    assert orders[1].filled == 3 and orders[1].fill_price == Decimal("68900")
+    assert orders[0].fill_price is None
+    assert (orders[0].quantity, orders[0].filled, orders[0].remaining, orders[0].status) == (None, None, 2, "unknown")
+    assert orders[1].filled is None and orders[1].fill_price is None
     assert orders[1].status == "unknown"  # UNVERIFIED semantics cannot arm a chain
-    assert orders[2].remaining == 0 and orders[2].filled == 0 and orders[2].fill_price is None
+    assert orders[2].remaining == 0 and orders[2].filled is None and orders[2].fill_price is None
     assert orders[2].status == "unknown"
     path, headers, body = client.calls[0]
     assert path == "/stock/accno" and headers["tr_cd"] == "t0425"
@@ -212,7 +221,8 @@ def test_quote_balance_and_positions_reuse_existing_fields():
         ("t0425", "list_orders", "t0425OutBlock1"),
     ],
 )
-def test_empty_account_pages_are_empty_lists(tr, method, block):
+def test_unverified_body_cursor_only_empty_account_pages_are_empty_lists(tr, method, block):
+    """UNVERIFIED: response-body cts fields alone currently represent page completion."""
     broker, _, _ = make({tr: [page(tr, **{block: []})]})
     assert getattr(broker, method)() == []
 
@@ -246,7 +256,8 @@ def test_unverified_or_unreadable_pagination_never_returns_partial_data(tr, meth
         ("t0425", "list_orders", "t0425OutBlock"),
     ],
 )
-def test_missing_pagination_evidence_does_not_mean_last_page(tr, method, block):
+def test_unverified_last_page_requires_cursor_evidence(tr, method, block):
+    """UNVERIFIED: a final page must carry the cts cursor under the candidate contract."""
     body = page(tr)
     del body[block]
     with pytest.raises(InvalidResponseError):
@@ -315,10 +326,10 @@ def test_missing_candidate_order_fields_remain_unknown(missing):
 
 
 @pytest.mark.parametrize("value", [None, "", "0", 0])
-def test_missing_or_zero_fill_price_never_falls_back_to_order_price(value):
+def test_missing_or_zero_fill_price_never_falls_back_to_order_price(unlocked, value):
     body = page("t0425")
     body["t0425OutBlock1"][0]["cheprice"] = value
-    order = make({"t0425": [body]})[0].list_orders()[0]
+    order = make_mock({"t0425": [body]})[0].list_orders()[0]
     assert order.filled == 1 and order.fill_price is None and order.price == Decimal(70000)
 
 
@@ -333,20 +344,17 @@ def test_missing_or_zero_fill_price_never_falls_back_to_order_price(value):
         ("cheqty", "-1"),
         ("ordrem", "4"),
         ("ordrem", None),
-        ("cheprice", "NaN"),
-        ("cheprice", "-1"),
-        ("cheprice", False),
         ("price", False),
         ("ordno", "0"),
         ("ordno", True),
         ("expcode", "bad-symbol"),
     ],
 )
-def test_bad_order_fields_fail_the_entire_page_even_before_symbol_filter(field, value):
+def test_bad_order_fields_fail_the_entire_page_even_before_symbol_filter(unlocked, field, value):
     body = page("t0425")
     body["t0425OutBlock1"][2][field] = value
     with pytest.raises(InvalidResponseError):
-        make({"t0425": [body]})[0].list_orders("005930")
+        make_mock({"t0425": [body]})[0].list_orders("005930")
 
 
 def test_normalized_symbol_filter_and_missing_status_never_infer_a_fill():
@@ -369,17 +377,24 @@ def test_candidate_status_is_only_interpreted_after_explicit_spec_verification(u
             "ordrem": "3",
         }
     )
-    orders = make({"t0425": [body]})[0].list_orders()
+    orders = make_mock({"t0425": [body]})[0].list_orders()
     assert [order.status for order in orders] == ["partial", "filled", "unknown", "open"]
     assert orders[3].fill_price is None
 
 
 @pytest.mark.parametrize("side", ["buy", "sell"])
 def test_order_request_reuses_legacy_tr_and_injected_enum_values(unlocked, live_safety, side):
-    broker, client, limiter = make({"CSPAT00601": [page("CSPAT00601")]}, safety=live_safety)
+    broker, client, limiter = make_mock({"CSPAT00601": [page("CSPAT00601")]}, safety=live_safety)
     result = broker.place_order(buy(symbol="A005930", side=side))
     assert result == Order(
-        id="42", symbol="005930", side=side, quantity=1, order_type="limit", price=Decimal(70000), status="accepted"
+        id="42",
+        symbol="005930",
+        side=side,
+        quantity=1,
+        order_type="limit",
+        price=Decimal(70000),
+        status="accepted",
+        virtual=True,
     )
     path, headers, body = client.calls[0]
     assert path == "/stock/order" and headers["tr_cd"] == "CSPAT00601"
@@ -400,10 +415,11 @@ def test_order_request_reuses_legacy_tr_and_injected_enum_values(unlocked, live_
     assert result.filled is None and result.fill_price is None
 
 
-def test_exact_single_cancel_never_lists_or_expands_other_orders(unlocked, live_safety):
-    broker, client, limiter = make({"CSPAT00801": [page("CSPAT00801")]}, safety=live_safety)
+def test_unverified_string_orgordno_exact_single_cancel_never_expands_other_orders(unlocked, live_safety):
+    """UNVERIFIED: OrgOrdNo is sent as a string; official type confirmation is pending."""
+    broker, client, limiter = make_mock({"CSPAT00801": [page("CSPAT00801")]}, safety=live_safety)
     result = broker.cancel_order(cancel(symbol="A005930", quantity=2))
-    assert result == Order(id="42", symbol="005930", status="accepted")
+    assert result == Order(id="42", symbol="005930", status="accepted", virtual=True)
     path, headers, body = client.calls[0]
     assert path == "/stock/order" and headers["tr_cd"] == "CSPAT00801"
     assert body == {"CSPAT00801InBlock1": {"OrgOrdNo": "42", "IsuNo": "005930", "OrdQty": 2}}
@@ -413,7 +429,7 @@ def test_exact_single_cancel_never_lists_or_expands_other_orders(unlocked, live_
 
 @pytest.mark.parametrize("operation", ["place_order", "cancel_order"])
 def test_default_dry_run_remains_closed_even_with_spec_flag(unlocked, operation):
-    broker, client, limiter = make()
+    broker, client, limiter = make_mock()
     with pytest.raises(DryRunError):
         getattr(broker, operation)(buy() if operation.startswith("place") else cancel())
     assert client.calls == []
@@ -422,7 +438,7 @@ def test_default_dry_run_remains_closed_even_with_spec_flag(unlocked, operation)
 
 @pytest.mark.parametrize("code", ["buy", "sell", "limit", "cash", "condition", "member"])
 def test_spec_flag_alone_never_fills_missing_order_enums(unlocked, live_safety, code):
-    broker, client, limiter = make(safety=live_safety)
+    broker, client, limiter = make_mock(safety=live_safety)
     del broker._codes[code]
     with pytest.raises(ConfigurationError, match="code"):
         broker.place_order(buy(side="sell" if code == "sell" else "buy"))
@@ -441,12 +457,12 @@ def test_unusable_read_codes_never_reach_the_wire(code, value):
 
 
 def test_supplied_rate_budget_is_mandatory_and_precedes_post(unlocked, live_safety):
-    broker, client, _ = make(safety=live_safety)
+    broker, client, _ = make_mock(safety=live_safety)
     broker._limiter = RateLimiter({})
     with pytest.raises(ConfigurationError, match="rate"):
         broker.place_order(buy())
     assert client.calls == []
-    broker, client, limiter = make({"CSPAT00601": [page("CSPAT00601")]}, safety=live_safety)
+    broker, client, limiter = make_mock({"CSPAT00601": [page("CSPAT00601")]}, safety=live_safety)
     events = []
     limiter.wait.side_effect = lambda tr: events.append(("wait", tr))
     post = client.post
@@ -457,7 +473,7 @@ def test_supplied_rate_budget_is_mandatory_and_precedes_post(unlocked, live_safe
 
 @pytest.mark.parametrize("operation,tr", [("place_order", "CSPAT00601"), ("cancel_order", "CSPAT00801")])
 def test_duplicate_client_key_is_one_post(unlocked, live_safety, operation, tr):
-    broker, client, _ = make({tr: [page(tr), page(tr)]}, safety=live_safety)
+    broker, client, _ = make_mock({tr: [page(tr), page(tr)]}, safety=live_safety)
     request = buy() if operation.startswith("place") else cancel()
     getattr(broker, operation)(request)
     with pytest.raises(DuplicateOrderError):
@@ -466,7 +482,7 @@ def test_duplicate_client_key_is_one_post(unlocked, live_safety, operation, tr):
 
 
 def test_risk_cap_refuses_before_post_and_accepts_exact_boundary(unlocked, live_safety):
-    broker, client, _ = make({"CSPAT00601": [page("CSPAT00601")]}, safety=live_safety)
+    broker, client, _ = make_mock({"CSPAT00601": [page("CSPAT00601")]}, safety=live_safety)
     with pytest.raises(RiskCapError):
         broker.place_order(buy(price="100001"))
     assert client.calls == []
@@ -494,7 +510,7 @@ def test_risk_cap_refuses_before_post_and_accepts_exact_boundary(unlocked, live_
 def test_uncertain_writes_never_retry_or_release_the_client_key(
     unlocked, live_safety, operation, tr, response, expected
 ):
-    broker, client, _ = make({tr: [response, page(tr)]}, safety=live_safety)
+    broker, client, _ = make_mock({tr: [response, page(tr)]}, safety=live_safety)
     request = buy() if operation.startswith("place") else cancel()
     with pytest.raises(expected) as raised:
         getattr(broker, operation)(request)
@@ -514,7 +530,7 @@ def test_uncertain_writes_never_retry_or_release_the_client_key(
 )
 @pytest.mark.parametrize("order_id", [None, "", " ", "0", "0000", -1, True, 42.1, "１２", "abc"])
 def test_missing_or_invalid_write_acknowledgement_is_unknown(unlocked, live_safety, operation, tr, block, order_id):
-    broker, client, _ = make({tr: [page(tr, **{block: {"OrdNo": order_id}})]}, safety=live_safety)
+    broker, client, _ = make_mock({tr: [page(tr, **{block: {"OrdNo": order_id}})]}, safety=live_safety)
     with pytest.raises(InvalidResponseError):
         getattr(broker, operation)(buy() if operation.startswith("place") else cancel())
     assert len(client.calls) == 1
@@ -522,7 +538,7 @@ def test_missing_or_invalid_write_acknowledgement_is_unknown(unlocked, live_safe
 
 @pytest.mark.parametrize("order_id", ["", " ", "0", "0000", "-1", "１２", "abc"])
 def test_bad_original_order_number_is_refused_before_cancel(unlocked, live_safety, order_id):
-    broker, client, _ = make(safety=live_safety)
+    broker, client, _ = make_mock(safety=live_safety)
     with pytest.raises((ConfigurationError, ValidationError)):
         broker.cancel_order(cancel(order_id=order_id))
     assert client.calls == []
@@ -539,14 +555,14 @@ def test_bad_original_order_number_is_refused_before_cancel(unlocked, live_safet
     ],
 )
 def test_unsupported_order_routes_are_refused_before_post(unlocked, live_safety, changes):
-    broker, client, _ = make(safety=live_safety)
+    broker, client, _ = make_mock(safety=live_safety)
     with pytest.raises((NotSupportedError, ConfigurationError)):
         broker.place_order(buy(**changes))
     assert client.calls == []
 
 
 def test_market_order_still_needs_existing_safety_authorization(unlocked, live_safety):
-    broker, client, _ = make({"CSPAT00601": [page("CSPAT00601")]}, safety=live_safety)
+    broker, client, _ = make_mock({"CSPAT00601": [page("CSPAT00601")]}, safety=live_safety)
     request = buy(order_type="market", price=None)
     with pytest.raises(RiskCapError):
         broker.place_order(request)
@@ -562,7 +578,7 @@ def test_market_order_still_needs_existing_safety_authorization(unlocked, live_s
 def test_factory_never_infers_an_unlock_from_environment(monkeypatch, live_safety):
     monkeypatch.setenv("LS_SPEC_VERIFIED", "True")
     monkeypatch.setenv("PYKBROKER_CLIENT_OPTIONS", '{"LS_SPEC_VERIFIED": true}')
-    broker = create_broker("ls", account="fixture-account", safety=live_safety)
+    broker = create_broker("ls", account="fixture-account", safety=live_safety, client=FakeClient({}))
     with pytest.raises(SpecUnverifiedError):
         broker.place_order(buy())
     with pytest.raises(ConfigurationError):
@@ -584,6 +600,7 @@ def test_close_blocks_reads_without_owning_the_injected_client():
 def test_us_and_virtual_are_not_advertised_or_constructible():
     with pytest.raises(NotSupportedError):
         LS(account="fixture-account", market="US")
-    with pytest.raises((TypeError, NotSupportedError)):
-        LS(account="fixture-account", virtual=True)
-    assert not LS(account="fixture-account").capabilities().supports_virtual_account
+    # UNVERIFIED: no official distinct mock address in this repository.
+    with pytest.raises(ConfigurationError, match="UNVERIFIED"):
+        LS(account="fixture-account", virtual=True, client=FakeClient({}))
+    assert not make()[0].capabilities().supports_virtual_account
