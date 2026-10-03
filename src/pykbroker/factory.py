@@ -6,15 +6,17 @@ from typing import Any
 
 from .brokers._common import BaseBroker
 from .brokers.dbfi import DBFI
-from .brokers.kis import KIS
 from .brokers.kb import KB
+from .brokers.kis import KIS
 from .brokers.kiwoom import Kiwoom
 from .brokers.ls import LS
 from .brokers.nh import NH
 from .brokers.toss import Toss
 from .exceptions import ConfigurationError
 
-BROKERS: dict[str, type[BaseBroker]] = {"kis": KIS, "dbfi": DBFI, "toss": Toss, "kiwoom": Kiwoom, "ls": LS, "nh": NH, "kb": KB}
+BROKERS: dict[str, type[BaseBroker]] = {
+    "kis": KIS, "dbfi": DBFI, "toss": Toss, "kiwoom": Kiwoom, "ls": LS, "nh": NH, "kb": KB
+}
 
 
 def _options() -> dict[str, Any]:

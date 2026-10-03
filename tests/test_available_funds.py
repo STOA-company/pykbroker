@@ -179,10 +179,11 @@ def test_kb_repeated_ledger_cursor_never_returns_partial_snapshot():
 
 @pytest.mark.parametrize("broker_type", ["kis", "dbfi"])
 def test_us_native_balance_excludes_integrated_buying_power(broker_type):
-    from unittest.mock import Mock
     from types import SimpleNamespace
-    from pykbroker.brokers.kis import KIS
+    from unittest.mock import Mock
+
     from pykbroker.brokers.dbfi import DBFI
+    from pykbroker.brokers.kis import KIS
     client, api, scope = Mock(), Mock(), Mock()
     if broker_type == "kis":
         client.key = SimpleNamespace(virtual_account=False)
@@ -201,8 +202,8 @@ def test_us_native_balance_excludes_integrated_buying_power(broker_type):
 
 def test_kb_us_cancel_does_not_require_a_new_integrated_buy_policy():
     from pykbroker.brokers.kb import KB
-    from pykbroker.models import CancelRequest, OrderRequest
     from pykbroker.exceptions import SpecUnverifiedError
+    from pykbroker.models import CancelRequest, OrderRequest
     broker = KB(account="fixture", bound_account="fixture", market="US", venue="NASDAQ",
                 app_key="fake-app", token="fake-token", is_integrated=False, writes_enabled=True)
     broker._validate_order(CancelRequest(order_id="42", symbol="AAPL", market="US", venue="NASDAQ",

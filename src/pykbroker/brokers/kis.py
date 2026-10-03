@@ -292,7 +292,8 @@ class KIS(BaseBroker):
                     raise ConfigurationError("US mock cash requires a caller-supplied cash_provider")
                 return Balance(
                     currency="USD",
-                    cash_available=decimal(self._cash_provider(scope)) if self._cash_provider else self._us_native_cash(scope),
+                    cash_available=(decimal(self._cash_provider(scope))
+                                    if self._cash_provider else self._us_native_cash(scope)),
                     position_value=sum((p.market_value for p in self.get_positions()), Decimal(0)),
                 )
             balance, amount = scope.balance_all(), scope.amount(code=None)
