@@ -327,7 +327,7 @@ def test_cancel_refusal_and_transport_failure_are_classified_once(live_safety):
 def test_amend_and_market_orders_stay_unsupported():
     source = inspect.getsource(module)
     code = "\n".join(line.split("#")[0] for line in source.splitlines())
-    assert "kt10002" not in code and "mdfy_qty" not in code and "ust2" not in code and "kt00010" not in code
+    assert "kt10002" not in code and "ust20002" not in code and "kt00010" not in code
     assert not hasattr(Kiwoom, "modify_order") and not hasattr(Kiwoom, "amend_order")
     assert BROKERS["kiwoom"] is Kiwoom
 
@@ -527,3 +527,107 @@ def test_status_refuses_another_market_and_a_closed_broker():
     with pytest.raises(ConfigurationError):
         broker.status(held())
     assert client.calls == []
+
+
+# US REST fields: Kiwoom-Securities/Kiwoom-REST-API kiwoom/_data/kiwoom_api_spec.json,
+# read 2026-10-04. Values below are synthetic; this is never a live account response.
+US_ROW = {
+    "ord_no": "000000282",
+    "stk_cd": "NVDA",
+    "ord_cntr_tp": "10",
+    "crnc_code": "USD",
+    "slby_tp": "2",
+    "frgn_trde_tp": "00",
+    "ord_qty": "5",
+    "cntr_qty": "0",
+    "ord_remnq": "5",
+    "mdfy_qty": "0",
+    "cncl_qty": "0",
+    "ord_uv": "200.0000",
+    "cntr_uv": "0.0000",
+}
+
+
+def us_make(responses=None, **kwargs):
+    # Synthetic offline safety valuation only; the production factory owns currency policy.
+    if kwargs.get("safety") is not None:
+        kwargs["safety"].valuation = lambda request: request.price * request.quantity
+    return make(responses, market="US", venue="NASDAQ", **kwargs)
+
+
+@pytest.mark.parametrize("side,tr", [("buy", "ust20000"), ("sell", "ust20001")])
+def test_us_limit_order_uses_official_tr_and_decimal_price_once(live_safety, side, tr):
+    broker, client = us_make({tr: [{"return_code": 0, "ord_no": "000000282"}]}, safety=live_safety)
+    order = broker.place_order(buy(symbol="NVDA", market="US", venue="NASDAQ", side=side, price="200.0001"))
+    assert len(client.calls) == 1
+    assert client.calls[0]["headers"]["api-id"] == tr
+    assert client.calls[0]["path"] == "/api/us/ordr"
+    assert client.calls[0]["json"] == {
+        "stex_tp": "ND",
+        "stk_cd": "NVDA",
+        "ord_qty": "1",
+        "ord_uv": "200.0001",
+        "trde_tp": "00",
+    }
+    assert (order.id, order.status, order.market, order.side) == ("000000282", "accepted", "US", side)
+
+
+@pytest.mark.parametrize("failure", [TimeoutError("uncertain"), {"return_code": 1999}, {"return_code": "0"}])
+def test_us_uncertain_send_never_retries(live_safety, failure):
+    broker, client = us_make({"ust20000": [failure, {"return_code": 0, "ord_no": "000000282"}]}, safety=live_safety)
+    with pytest.raises((InvalidResponseError, TransportError)):
+        broker.place_order(buy(symbol="NVDA", market="US", venue="NASDAQ", price="200"))
+    assert len(client.calls) == 1
+
+
+def test_us_partial_cancel_is_refused_before_write(live_safety):
+    broker, client = us_make({"ust21050": [{"return_code": 0, "result_list": [US_ROW]}]}, safety=live_safety)
+    with pytest.raises(NotSupportedError, match="full confirmed"):
+        broker.cancel_order(cancel(symbol="NVDA", market="US", venue="NASDAQ", order_id="000000282", quantity=1))
+    assert [c["headers"]["api-id"] for c in client.calls] == ["ust21050"]
+
+
+def test_us_full_cancel_verifies_remainder_and_never_names_a_cancel_ack_as_final(live_safety):
+    broker, client = us_make(
+        {
+            "ust21050": [{"return_code": 0, "result_list": [US_ROW]}],
+            "ust20003": [{"return_code": 0, "ord_no": "000000285", "cncl_ord_qty": "5"}],
+        },
+        safety=live_safety,
+        virtual=True,
+    )
+    order = broker.cancel_order(cancel(symbol="NVDA", market="US", venue="NASDAQ", order_id="000000282", quantity=5))
+    assert client.base_url == KIWOOM_MOCK_BASE_URL
+    assert client.calls[-1]["json"] == {"stex_tp": "ND", "stk_cd": "NVDA", "orig_ord_no": "000000282"}
+    assert (order.id, order.status, order.market) == ("000000282", "accepted", "US")
+
+
+@pytest.mark.parametrize(
+    "changes,status",
+    [
+        ({"cntr_qty": "5", "ord_remnq": "0"}, "filled"),
+        ({"cntr_qty": "2", "ord_remnq": "3"}, "partial"),
+        ({"cntr_qty": "2", "ord_remnq": "4"}, "unknown"),
+        ({"cncl_qty": "5", "ord_remnq": "0"}, "unknown"),
+    ],
+)
+def test_us_ledger_quantities_determine_status_without_fabricated_average(changes, status):
+    row = {**US_ROW, **changes, "cntr_uv": "199.7700"}
+    broker, _ = us_make({"ust21150": [{"return_code": 0, "result_list": [row]}]})
+    order = broker.status(Order(id="000000282", symbol="NVDA", market="US"))
+    assert order.status == status
+    assert order.fill_price is None
+
+
+def test_us_absent_or_ambiguous_ledger_row_stays_unknown():
+    for rows in ([], [US_ROW, US_ROW]):
+        broker, _ = us_make({"ust21150": [{"return_code": 0, "result_list": rows}]})
+        assert broker.status(Order(id="000000282", symbol="NVDA", market="US")).status == "unknown"
+
+
+def test_one_share_fill_preserves_the_broker_execution_unit_price_in_both_markets():
+    broker, _ = make({"kt00007": [ledger(ord_qty="1", cntr_qty="1", ord_remnq="0", cntr_uv="70050")]})
+    assert broker.status(held()).fill_price == Decimal("70050")
+    row = {**US_ROW, "ord_qty": "1", "cntr_qty": "1", "ord_remnq": "0", "cntr_uv": "199.77"}
+    broker, _ = us_make({"ust21150": [{"return_code": 0, "result_list": [row]}]})
+    assert broker.status(Order(id="000000282", symbol="NVDA", market="US")).fill_price == Decimal("199.77")
