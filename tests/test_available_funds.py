@@ -72,3 +72,24 @@ def test_more_sellable_than_held_is_refused_not_believed(kis):
 def test_available_qty_rejects_a_symbol_from_another_market(kis):
     with pytest.raises(Exception):
         kis[0].available_qty("AAPL")
+
+
+
+def test_kb_uses_broker_integrated_amount_without_local_fx():
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from pykbroker.brokers.kb import KB, KB_API_BASE_URL
+    client = Mock(base_url=KB_API_BASE_URL)
+    client.post.return_value = {"dataHeader": {"resultCode": "200", "processFlag": "A"},
+                              "dataBody": {"fcrncy_unty_ordr_psbl_amt_p2": "123.45"}}
+    broker = KB(account="fixture", bound_account="fixture", market="US", venue="NASDAQ",
+                app_key="fake-app", token="fake-token", is_integrated=True, client=client)
+    broker._limiter = SimpleNamespace(wait=lambda _: None)
+    assert broker.orderable_cash("TSLA") == Decimal("123.45")
+    assert client.post.call_args.kwargs["body"]["dataBody"] == {"stnd_is_cd": "TSLA"}
+    broker._is_integrated = False
+    from pykbroker.exceptions import SpecUnverifiedError
+    with pytest.raises(SpecUnverifiedError):
+        broker.orderable_cash("TSLA")
+    assert client.post.call_count == 1
