@@ -120,3 +120,36 @@ def test_kb_uncertain_write_is_not_retried(request_order, live_safety):
         broker.place_order(request_order)
     assert client.post.call_count == 1
     assert client.post.call_args.args == ("/api/v1/ssam1802",)
+
+
+
+def test_kb_us_cancel_refuses_partial_quantity_before_write(live_safety):
+    from pykbroker.brokers.kb import KB, KB_API_BASE_URL
+    from pykbroker.models import Order
+    client = Mock(base_url=KB_API_BASE_URL)
+    broker = KB(account="fixture", bound_account="fixture", app_key="fake-app", token="fake-token", market="US",
+                venue="NASDAQ", is_integrated=True, writes_enabled=True, client=client, safety=live_safety)
+    broker.list_orders = Mock(return_value=[Order(id="42", symbol="TSLA", market="US", price="10", remaining=2)])
+    request = CancelRequest(order_id="42", symbol="TSLA", market="US", venue="NASDAQ", quantity=1,
+                            client_key="kb-us-partial-cancel")
+    with pytest.raises(SpecUnverifiedError, match="full remainder"):
+        broker.cancel_order(request)
+    client.post.assert_not_called()
+
+
+def test_kb_us_exact_cancel_ack_remains_unknown(live_safety):
+    from pykbroker.brokers.kb import KB, KB_API_BASE_URL
+    from pykbroker.models import Order
+    client = Mock(base_url=KB_API_BASE_URL)
+    client.post.return_value = {"dataHeader": {"resultCode": "200", "processFlag": "A"},
+                              "dataBody": {"ordr_no": "43"}}
+    broker = KB(account="fixture", bound_account="fixture", app_key="fake-app", token="fake-token", market="US",
+                venue="NASDAQ", is_integrated=True, writes_enabled=True, client=client, safety=live_safety)
+    broker.list_orders = Mock(return_value=[Order(id="42", symbol="TSLA", market="US", price="10", remaining=2)])
+    request = CancelRequest(order_id="42", symbol="TSLA", market="US", venue="NASDAQ", quantity=2,
+                            client_key="kb-us-full-cancel")
+    answer = broker.cancel_order(request)
+    assert answer.id == "42" and answer.status == "unknown"
+    assert client.post.call_count == 1
+    assert client.post.call_args.kwargs["body"]["dataBody"] == {
+        "crct_cncl_clsf": "2", "is_cd": "TSLA", "orgn_ordr_no": "42", "frgn_ordr_prc_p4": "10"}
