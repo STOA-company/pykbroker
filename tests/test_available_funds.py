@@ -93,3 +93,85 @@ def test_kb_uses_broker_integrated_amount_without_local_fx():
     with pytest.raises(SpecUnverifiedError):
         broker.orderable_cash("TSLA")
     assert client.post.call_count == 1
+
+
+
+def test_kb_us_balance_preserves_native_integrated_usd_and_empty_positions():
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from pykbroker.brokers.kb import KB, KB_API_BASE_URL
+    client = Mock(base_url=KB_API_BASE_URL)
+    header = {"resultCode": "200", "processFlag": "A"}
+    client.post.side_effect = [
+        {"dataHeader": header, "dataBody": {"grid_cnt": "1", "Record1": [
+            {"crncy_cd": "USD", "fcrncy_unty_ordr_psbl_amt_p2": "123.45"}]}},
+        {"dataHeader": header, "dataBody": {"grid_cnt2": "0", "Record2": [], "nxt_key": ""}},
+    ]
+    broker = KB(account="fixture", bound_account="fixture", market="US", venue="NASDAQ",
+                app_key="fake-app", token="fake-token", is_integrated=True, client=client)
+    broker._limiter = SimpleNamespace(wait=lambda _: None)
+    balance = broker.get_balance()
+    assert balance.currency == "USD"
+    assert balance.cash_available == Decimal("123.45")
+    assert balance.position_value == 0
+    assert client.post.call_count == 2
+
+
+def test_kb_truncated_domestic_holdings_never_become_empty():
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from pykbroker.brokers.kb import KB, KB_API_BASE_URL
+    from pykbroker.exceptions import SpecUnverifiedError
+    client = Mock(base_url=KB_API_BASE_URL)
+    client.post.return_value = {"dataHeader": {"resultCode": "200", "processFlag": "A"},
+                              "dataBody": {"tl_data_cnt": "21", "grid_cnt1": "0", "Record1": []}}
+    broker = KB(account="fixture", bound_account="fixture", app_key="fake-app", token="fake-token", client=client)
+    broker._limiter = SimpleNamespace(wait=lambda _: None)
+    with pytest.raises(SpecUnverifiedError, match="truncated"):
+        broker.get_positions()
+
+
+
+def test_kb_exact_us_ledger_preserves_partial_fill_and_continuation():
+    from datetime import date
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from pykbroker.brokers.kb import KB, KB_API_BASE_URL
+    from pykbroker.models import Order
+    header = {"resultCode": "200", "processFlag": "A"}
+    row = {"ordr_no": "42", "crncy_cd": "USD", "frex_ccd": "NAS", "shrt_is_cd": "TSLA",
+           "frgn_ordr_q_p6": "3.000000", "ccls_q_p6": "1.000000", "nccls_q_p6": "2.000000",
+           "frgn_ordr_prc_p6": "10.500000", "frgn_ccls_prc_p6": "10.450000", "etc_trd_ccd": "02"}
+    client = Mock(base_url=KB_API_BASE_URL)
+    client.post.side_effect = [
+        {"dataHeader": header, "dataBody": {"grid_cnt": "1", "Record1": [row], "nxt_key": "next"}},
+        {"dataHeader": header, "dataBody": {"grid_cnt": "0", "Record1": [], "nxt_key": ""}},
+    ]
+    broker = KB(account="fixture", bound_account="fixture", market="US", venue="NASDAQ",
+                app_key="fake-app", token="fake-token", client=client, order_date=date(2026, 10, 2))
+    broker._limiter = SimpleNamespace(wait=lambda _: None)
+    answer = broker.status(Order(id="42", symbol="TSLA", market="US"))
+    assert answer.status == "partial"
+    assert answer.filled == 1 and answer.remaining == 2
+    assert answer.price == Decimal("10.5") and answer.fill_price == Decimal("10.45")
+    assert client.post.call_args.kwargs["body"]["dataBody"]["nxt_key"] == "next"
+    assert client.post.call_args.kwargs["body"]["dataBody"]["strt_ordr_dt"] == "20261002"
+
+
+def test_kb_repeated_ledger_cursor_never_returns_partial_snapshot():
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from pykbroker.brokers.kb import KB, KB_API_BASE_URL
+    client = Mock(base_url=KB_API_BASE_URL)
+    client.post.return_value = {"dataHeader": {"resultCode": "200", "processFlag": "A"},
+                              "dataBody": {"grid_cnt": "0", "Record1": [], "nxt_key": "loop"}}
+    broker = KB(account="fixture", bound_account="fixture", market="US", venue="NASDAQ",
+                app_key="fake-app", token="fake-token", client=client)
+    broker._limiter = SimpleNamespace(wait=lambda _: None)
+    with pytest.raises(InvalidResponseError, match="repeated"):
+        broker.list_orders()
+    assert client.post.call_count == 2
