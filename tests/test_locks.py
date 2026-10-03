@@ -94,3 +94,29 @@ def test_reviewed_fixture_codes_choose_exact_tr(
     else:
         assert kwargs["json"]["ord_qty"] == "1"
         assert kwargs["json"]["trde_tp"] == "fixture-limit"
+
+
+@pytest.mark.parametrize("operation", ["place_order", "cancel_order"])
+def test_kb_official_adapter_defaults_closed(operation, request_order, live_safety):
+    from pykbroker.brokers.kb import KB, KB_API_BASE_URL
+    client = Mock(base_url=KB_API_BASE_URL)
+    broker = KB(account="fixture", bound_account="fixture", app_key="fake-app", token="fake-token",
+                client=client, safety=live_safety)
+    request = request_order if operation == "place_order" else CancelRequest(
+        order_id="42", symbol="005930", quantity=1, client_key="kb-cancel")
+    with pytest.raises(SpecUnverifiedError, match="disabled"):
+        getattr(broker, operation)(request)
+    client.post.assert_not_called()
+
+
+def test_kb_uncertain_write_is_not_retried(request_order, live_safety):
+    from pykbroker.brokers.kb import KB, KB_API_BASE_URL
+    from pykbroker.exceptions import InvalidResponseError
+    client = Mock(base_url=KB_API_BASE_URL)
+    client.post.return_value = {"dataHeader": {"resultCode": "200", "processFlag": "B"}, "dataBody": {}}
+    broker = KB(account="fixture", bound_account="fixture", app_key="fake-app", token="fake-token",
+                client=client, safety=live_safety, writes_enabled=True)
+    with pytest.raises(InvalidResponseError):
+        broker.place_order(request_order)
+    assert client.post.call_count == 1
+    assert client.post.call_args.args == ("/api/v1/ssam1802",)
