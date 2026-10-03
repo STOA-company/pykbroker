@@ -12,7 +12,7 @@ from unittest.mock import Mock
 import pytest
 
 from pykbroker.brokers.kis import KIS
-from pykbroker.exceptions import NotSupportedError
+from pykbroker.exceptions import DryRunError, NotSupportedError
 from pykbroker.models import CancelRequest
 
 from .conftest import load_fixture
@@ -143,12 +143,12 @@ def test_a_capability_claim_is_never_wider_than_the_behaviour():
                 broker.list_orders()
 
 
-def test_single_order_cancel_is_not_claimed_on_either_kis_mode():
-    """Bypass 3: KIS has no single-order cancel; a mock account does not invent one."""
+def test_kr_single_cancel_is_declared_but_stays_behind_dry_run():
+    """Verified KR exact cancellation still cannot bypass the safety boundary."""
     for virtual in (True, False):
         broker, client, _ = _kr(virtual)
-        assert broker.capabilities().supports_single_order_cancel is False
-        with pytest.raises(NotSupportedError):
+        assert broker.capabilities().supports_single_order_cancel is True
+        with pytest.raises(DryRunError):
             broker.cancel_order(CancelRequest(order_id="42", symbol="005930", quantity=1, client_key="cancel-key"))
         assert client.scope.tr_ids == []
 

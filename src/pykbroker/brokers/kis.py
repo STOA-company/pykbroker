@@ -7,11 +7,12 @@ from contextlib import contextmanager
 from datetime import date, datetime
 from decimal import Decimal
 from importlib import import_module
+from types import SimpleNamespace
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from pykbroker.exceptions import ConfigurationError, InvalidResponseError, MissingDependencyError, NotSupportedError
-from pykbroker.models import Balance, Capabilities, Order, OrderRequest, Position, Quote, Rules
+from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
 from pykbroker.rules.kr import equity_rules
 from pykbroker.safety.gate import OrderSafety
 
@@ -135,11 +136,15 @@ class KIS(BaseBroker):
         venue: str | None = None,
         cash_provider: Callable[[Any], Decimal] | None = None,
         virtual: bool = False,
+        is_integrated: bool = False,
         halt_provider: Callable[[str], bool] | None = None,
     ) -> None:
         super().__init__(account=account, safety=safety, market=market, virtual=virtual, halt_provider=halt_provider)
         if market == "US" and venue not in VENUES:
             raise ConfigurationError("US KIS requires NASDAQ, NYSE, or AMEX venue")
+        if not isinstance(is_integrated, bool):
+            raise ConfigurationError("is_integrated must be a boolean")
+        self.is_integrated = is_integrated
         self.venue = venue
         self._cash_provider = cash_provider
         self._client, self._api = client, api
@@ -186,6 +191,7 @@ class KIS(BaseBroker):
             supports_spot=True,
             # KIS overseas has no market order; the executor must plan a limit price itself.
             supports_market_order=self.market == "KR",
+            supports_single_order_cancel=not (self.market == "US" and self.virtual),
             supports_virtual_account=True,
             virtual=self.virtual,
             # A US mock account has no open-order TR; a KR one has the delayed daily ledger.
@@ -282,11 +288,11 @@ class KIS(BaseBroker):
         def read() -> Balance:
             scope, _ = self._connect()
             if self.market == "US":
-                if self._cash_provider is None:
-                    raise ConfigurationError("US cash requires a caller-supplied cash_provider")
+                if self._cash_provider is None and self.virtual:
+                    raise ConfigurationError("US mock cash requires a caller-supplied cash_provider")
                 return Balance(
                     currency="USD",
-                    cash_available=decimal(self._cash_provider(scope)),
+                    cash_available=decimal(self._cash_provider(scope)) if self._cash_provider else self._us_cash(scope),
                     position_value=sum((p.market_value for p in self.get_positions()), Decimal(0)),
                 )
             balance, amount = scope.balance_all(), scope.amount(code=None)
@@ -296,6 +302,30 @@ class KIS(BaseBroker):
             )
 
         return self._call(read)
+
+    def _us_cash(self, scope: Any) -> Decimal:
+        # Official domestic_stock/intgr_margin (TTTC0869R): foreign-currency basis.
+        # usd_itgr_ord_psbl_amt is broker-computed unified buying power, never total assets/FX.
+        # Keep normal accounts on usd_gnrl_ord_psbl_amt. Mode comes from existing account policy.
+        response = scope.client.request(
+            "get", "/uapi/domestic-stock/v1/trading/intgr-margin",
+            headers={"tr_id": "TTTC0869R"},
+            params=scope.account.build_body({
+                "CMA_EVLU_AMT_ICLD_YN": "N", "WCRC_FRCR_DVSN_CD": "01",
+                "FWEX_CTRT_FRCR_DVSN_CD": "01",
+            }), response=None,
+        )
+        # Pykis response=None returns requests.Response, not its usual normalized helper envelope.
+        if not isinstance(response, Mapping):
+            if field(response, "status_code") != 200:
+                raise InvalidResponseError("KIS buying-power HTTP request failed")
+            response = response.json()
+        envelope = check_response(response, "kis")
+        if str(field(envelope, "rt_cd")) != "0":
+            raise InvalidResponseError("KIS buying-power response lacks a success status")
+        output = field(envelope, "output")
+        key = "usd_itgr_ord_psbl_amt" if self.is_integrated else "usd_gnrl_ord_psbl_amt"
+        return decimal(field(output, key))
 
     def get_positions(self) -> list[Position]:
         def read() -> list[Position]:
@@ -399,6 +429,86 @@ class KIS(BaseBroker):
                 )
             )
         return result
+
+    def status(self, order: Order) -> Order:
+        """Read the broker ledger, including filled orders absent from the open-order snapshot."""
+        symbol = self._symbol(order.symbol, order.market)
+        if order.market != self.market:
+            raise ConfigurationError("Order market disagrees with the adapter")
+        if self.market == "US" and self.virtual:
+            raise NotSupportedError("KIS has no verified US mock ledger helper")
+
+        def read() -> Order:
+            scope, api = self._connect()
+            if self.market == "KR":
+                today = datetime.now(KST)
+                rows = field(scope.daily_order_all(start_date=today, end_date=today, code=symbol), "orders")
+            else:
+                rows = check_response(api.get_orders_overseas_all(kis_account=scope, code=symbol), "kis")["output"]
+            for row in rows:
+                if str(field(row, "odno")) != order.id or field(row, "pdno") != symbol:
+                    continue
+                kr = self.market == "KR"
+                quantity = whole(field(row, "ord_qty" if kr else "ft_ord_qty"))
+                filled = whole(field(row, "tot_ccld_qty" if kr else "ft_ccld_qty"))
+                remaining = whole(field(row, "rmn_qty" if kr else "nccs_qty"))
+                if filled + remaining > quantity:
+                    raise InvalidResponseError("KIS ledger quantities exceed the order")
+                cancelled = field(row, "cncl_yn") if kr else field(row, "rvse_cncl_dvsn") == "02"
+                state = _ledger_status(cancelled, filled, remaining)
+                # Partial fills plus zero remaining can be a cancellation/rejection: no invented full fill.
+                if state == "filled" and filled != quantity:
+                    state = "unknown"
+                average = optional_price(field(row, "avg_prvs" if kr else "ft_ccld_unpr3")) if filled else None
+                return Order.model_validate({**order.model_dump(), "quantity": quantity, "filled": filled,
+                    "remaining": remaining, "fill_price": average, "status": state})
+            return order.model_copy(update={"status": "unknown"})
+
+        return self._call(read)
+
+    def _cancel_order(self, request: CancelRequest) -> Order:
+        """Resolve one ID and symbol, then cancel precisely that order and requested quantity once."""
+        scope, api = self._connect()
+        symbol = self._symbol(request.symbol, request.market)
+        if self.market == "KR":
+            if self.virtual:
+                today = datetime.now(KST)
+                rows = field(scope.daily_order_all(start_date=today, end_date=today,
+                    code=symbol, ccld=UNFILLED), "orders")
+            else:
+                rows = field(api.get_open_orders_domestic(kis_account=scope), "orders")
+        else:
+            rows = check_response(api.get_open_orders_overseas_all(
+                kis_account=scope, market=VENUES[self.venue][1]), "kis")["output"]
+        matches = [row for row in rows if str(field(row, "odno")) == request.order_id
+                   and field(row, "pdno") == symbol]
+        if len(matches) != 1:
+            raise NotSupportedError("KIS exact open order not found; reconcile before cancellation")
+        row = matches[0]
+        remaining = whole(field(row, "rmn_qty" if self.virtual else "psbl_qty") if self.market == "KR"
+                          else field(row, "nccs_qty"))
+        if request.quantity > remaining:
+            raise ConfigurationError("Cancellation quantity exceeds the broker remaining quantity")
+        branch = field(row, "krx_fwdg_ord_orgno", field(row, "ord_gno_brno"))
+        if not isinstance(branch, str) or not branch.strip():
+            raise InvalidResponseError("KIS cancellation branch identifier missing")
+        ref = SimpleNamespace(krx_fwdg_ord_orgno=branch, odno=request.order_id)
+        with self._single_attempt():
+            if self.market == "KR":
+                response = scope.cancel(order=ref, qty=request.quantity)
+            else:
+                response = scope.overseas_cancel(market=VENUES[self.venue][1], code=symbol,
+                                                order=ref, qty=request.quantity)
+        envelope = check_response(response, "kis")
+        if isinstance(response, Mapping) and str(field(envelope, "rt_cd")) != "0":
+            raise InvalidResponseError("KIS cancellation response lacks a success status")
+        output = field(envelope, "output", envelope)
+        cancel_id = field(output, "ODNO", field(output, "odno"))
+        if cancel_id is None or not str(cancel_id).strip():
+            raise InvalidResponseError("KIS cancellation response lacks an order identifier")
+        # Accepted cancellation is not proof the original order has been cancelled.
+        return Order(id=request.order_id, symbol=symbol, market=request.market,
+                     quantity=request.quantity, status="accepted", virtual=self.virtual)
 
     @contextmanager
     def _single_attempt(self):

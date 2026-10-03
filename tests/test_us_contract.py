@@ -126,7 +126,7 @@ def test_dbfi_us_contract(live_safety):
     assert not broker.capabilities().supports_nxt
 
 
-@pytest.mark.parametrize("broker_type", [KIS, DBFI])
+@pytest.mark.parametrize("broker_type", [DBFI])
 def test_us_requires_caller_cash_mapping(broker_type):
     client, api = Mock(), Mock()
     client.key = SimpleNamespace(virtual_account=False)
@@ -149,3 +149,51 @@ def test_missing_dbfi_ack_is_not_success(dbfi, request_order):
     client.buy.return_value = {"Out": {"OrdNo": "42"}}
     with pytest.raises(InvalidResponseError, match="success status"):
         broker.place_order(request_order)
+
+
+@pytest.mark.parametrize("integrated,key", [(False, "usd_gnrl_ord_psbl_amt"), (True, "usd_itgr_ord_psbl_amt")])
+def test_kis_us_buying_power_is_broker_reported_normal_or_unified(integrated, key):
+    client, api, scope = Mock(), Mock(), Mock()
+    client.key = SimpleNamespace(virtual_account=False)
+    client.account.return_value = scope
+    output = {"usd_gnrl_ord_psbl_amt": "20", "usd_itgr_ord_psbl_amt": "150",
+              "usd_objt_amt": "99999", "usd_frst_bltn_exrt": "1300"}
+    scope.client.request.return_value = SimpleNamespace(
+        status_code=200, json=lambda: {"rt_cd": "0", "output": output}
+    )
+    scope.account.build_body.side_effect = lambda params: params
+    api.get_balances.return_value = {"rt_cd": "0", "output1": []}
+    broker = KIS(account="fixture", market="US", venue="NASDAQ", client=client,
+                 api=api, is_integrated=integrated)
+    assert broker.available_cash() == Decimal(output[key])
+    assert scope.client.request.call_args.args == ("get", "/uapi/domestic-stock/v1/trading/intgr-margin")
+    assert scope.client.request.call_args.kwargs["params"]["WCRC_FRCR_DVSN_CD"] == "01"
+    output.pop(key)
+    with pytest.raises(InvalidResponseError):
+        broker.available_cash()
+
+
+def test_kis_us_exact_cancel_and_ledger_full_fill(live_safety):
+    from pykbroker.models import Order
+    client, api, scope = Mock(), Mock(), Mock()
+    client.key = SimpleNamespace(virtual_account=False)
+    client.account.return_value = scope
+    live_safety.valuation = lambda request: Decimal("1000")
+    broker = KIS(account="fixture", market="US", venue="NASDAQ", client=client,
+                 api=api, safety=live_safety)
+    api.get_open_orders_overseas_all.return_value = {"rt_cd": "0", "output": [
+        {"odno": "42", "pdno": "TEST", "nccs_qty": "2", "ord_gno_brno": "001"},
+    ]}
+    scope.overseas_cancel.return_value = SimpleNamespace(odno="43")
+    result = broker.cancel_order(CancelRequest(order_id="42", symbol="TEST", market="US",
+                               venue="NASDAQ", quantity=1, client_key="cancel-us"))
+    assert result.status == "accepted"
+    args = scope.overseas_cancel.call_args.kwargs
+    assert args["market"] == "NASD" and args["code"] == "TEST" and args["qty"] == 1
+    assert args["order"].odno == "42"
+    api.get_orders_overseas_all.return_value = {"rt_cd": "0", "output": [
+        {"odno": "42", "pdno": "TEST", "ft_ord_qty": "2", "ft_ccld_qty": "2",
+         "nccs_qty": "0", "ft_ccld_unpr3": "119.4", "rvse_cncl_dvsn": "00"},
+    ]}
+    result = broker.status(Order(id="42", symbol="TEST", market="US"))
+    assert result.status == "filled" and result.fill_price == Decimal("119.4")

@@ -15,7 +15,7 @@ import pytest
 
 from pykbroker.brokers.kis import KIS
 from pykbroker.exceptions import ConfigurationError, InvalidResponseError, TransportError
-from pykbroker.models import OrderRequest
+from pykbroker.models import CancelRequest, OrderRequest
 
 from .conftest import load_fixture
 
@@ -274,3 +274,20 @@ def test_a_client_without_a_vendor_transport_is_untouched(kis, request_order):
     broker, _, api, _ = kis
     assert broker.place_order(request_order).id
     api.post_order_domestic.assert_called_once()
+
+
+@pytest.mark.parametrize("market,venue,symbol", [("KR", None, "005930"), ("US", "NASDAQ", "TEST")])
+def test_kis_cancel_post_also_bypasses_vendor_retries(live_safety, market, venue, symbol):
+    live_safety.valuation = lambda request: Decimal("1000")
+    broker, transport = _broker(live_safety, [ConnectionError("reset")], market=market, venue=venue)
+    scope = broker._client.account("fixture")
+    row = {"odno": "42", "pdno": symbol, "psbl_qty": "2", "nccs_qty": "2", "ord_gno_brno": "001"}
+    broker._api = SimpleNamespace(
+        get_open_orders_domestic=lambda **kwargs: {"orders": [row]},
+        get_open_orders_overseas_all=lambda **kwargs: {"rt_cd": "0", "output": [row]},
+    )
+    scope.cancel = scope.overseas_cancel = lambda **kwargs: transport.request("post", "/cancel")
+    with pytest.raises(TransportError):
+        broker.cancel_order(CancelRequest(order_id="42", symbol=symbol, quantity=1,
+                                         market=market, venue=venue, client_key="cancel-once"))
+    assert len(transport.posts()) == 1
