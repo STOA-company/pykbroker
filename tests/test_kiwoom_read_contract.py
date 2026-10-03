@@ -663,7 +663,10 @@ def us_read(responses, **kwargs):
 def test_us_quote_maps_previous_close_without_inventing_source_time():
     broker = us_read(
         {
-            "usa20100": {"return_code": 0, "cur_prc": "+201.4700", "base_close_pric": "200.0400"},
+            "usa20100": {
+                "return_code": 0, "cur_prc": "+201.4700", "base_close_pric": "200.0400",
+                "stk_cd": "NVDA", "stex_tp": "ND", "trd_susp_tp": "0",
+            },
             "usa20101": {"return_code": 0, "fpr_buy_bid": "+201.4200", "fpr_sel_bid": "+201.5300"},
         }
     )
@@ -676,6 +679,7 @@ def test_us_quote_maps_previous_close_without_inventing_source_time():
         Decimal("200.0400"),
     )
     assert quote.timestamp is None
+    assert broker.get_rules("NVDA").halted is False
 
 
 def test_us_capabilities_and_explicit_account_configuration():

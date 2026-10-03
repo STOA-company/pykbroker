@@ -180,6 +180,7 @@ class Kiwoom(BaseBroker):
         if not isinstance(is_integrated, bool):
             raise ConfigurationError("is_integrated must be an explicit boolean")
         self.venue = venue
+        self._us_native_halts: dict[tuple[str | None, str], bool | None] = {}
         self.is_integrated = is_integrated
         options = dict(client_options)
         if not set(options) <= CLIENT_OPTION_KEYS:
@@ -310,7 +311,14 @@ class Kiwoom(BaseBroker):
         self, symbol: str, *, now: datetime | None = None, trading_day: Callable[[date], bool] | None = None
     ) -> Rules:
         if self.market == "US":
-            return super().get_rules(symbol, now=now, trading_day=trading_day)
+            code = self._symbol(symbol, "US")
+            key = (self.venue, code)
+            if key not in self._us_native_halts:
+                self.get_quote(code, market="US")
+            rules = super().get_rules(code, now=now, trading_day=trading_day)
+            # A caller halt can veto native normal; caller False cannot fill a native silence.
+            halted = True if rules.halted is True else self._us_native_halts[key]
+            return rules.model_copy(update={"halted": halted})
         code = self._symbol(symbol, "KR")
 
         def read() -> tuple[Decimal, Decimal | None, Decimal | None]:
@@ -523,13 +531,15 @@ class Kiwoom(BaseBroker):
         return {"stex_tp": _US_VENUES[self.venue], "stk_cd": code}
 
     def _us_quote(self, code: str) -> Quote:
+        key = (self.venue, code)
+        self._us_native_halts.pop(key, None)
         basic = self._post("/api/us/mrkcond", "usa20100", self._us_body(code))[0]
         book = self._post("/api/us/mrkcond", "usa20101", self._us_body(code))[0]
         bid, ask = _optional_price(book.get("fpr_buy_bid")), _optional_price(book.get("fpr_sel_bid"))
         if bid is not None and ask is not None and bid > ask:
             bid = ask = None
         # dt/bid_tm have no documented timezone; a receipt clock is not a source timestamp.
-        return Quote(
+        quote = Quote(
             symbol=code,
             market="US",
             last=_price(basic["cur_prc"]),
@@ -537,6 +547,14 @@ class Kiwoom(BaseBroker):
             ask=ask,
             prev_close=_optional_price(basic.get("base_close_pric")),
         )
+        # Official /guide/apiGuideContents/33/usa20100: trd_susp_tp "0" is normal;
+        # suspended instruments are not returned. No other code meaning is documented.
+        self._us_native_halts[key] = (
+            False if type(basic.get("trd_susp_tp")) is str and basic["trd_susp_tp"] == "0"
+            and basic.get("stk_cd") == code and basic.get("stex_tp") == _US_VENUES[self.venue]
+            and quote.last > 0 else None
+        )
+        return quote
 
     def _us_positions(self) -> list[Position]:
         rows = self._rows("/api/us/acnt", "ust21070", self._us_body(""), "result_list")
