@@ -9,7 +9,6 @@ from pykbroker.exceptions import (
     DryRunError,
     DuplicateOrderError,
     InvalidResponseError,
-    NotSupportedError,
     TransportError,
 )
 from pykbroker.models import CancelRequest, Order
@@ -27,6 +26,7 @@ def test_kis_recorded_contract(kis):
     assert broker.get_positions()[0].sellable == 1
     assert broker.list_orders()[0].id == "42"
     assert broker.list_orders("000660") == []
+    scope.daily_order_all.return_value = SimpleNamespace(orders=[])
     assert broker.status(Order(id="absent", symbol="005930")).status == "unknown"
 
 
@@ -58,7 +58,7 @@ def test_kis_dry_run_never_connects(kis, request_order):
 
 def test_kis_never_broadens_cancel(kis):
     broker, _, api, _ = kis
-    with pytest.raises(NotSupportedError):
+    with pytest.raises(InvalidResponseError, match="branch identifier"):
         broker.cancel_order(CancelRequest(order_id="42", symbol="005930", quantity=1, client_key="cancel"))
     api.cancel_orders_domestic.assert_not_called()
 
@@ -104,3 +104,49 @@ def test_borrowed_client_not_closed(kis):
     broker.close()
     broker.close()
     client.close.assert_not_called()
+
+
+def test_kis_exact_cancel_never_cancels_other_orders(kis):
+    broker, _, api, scope = kis
+    api.get_open_orders_domestic.return_value = {"orders": [
+        {"odno": "41", "pdno": "005930", "psbl_qty": "7", "krx_fwdg_ord_orgno": "999"},
+        {"odno": "42", "pdno": "005930", "psbl_qty": "2", "krx_fwdg_ord_orgno": "001"},
+    ]}
+    scope.cancel.return_value = SimpleNamespace(odno="43")
+    result = broker.cancel_order(CancelRequest(order_id="42", symbol="005930", quantity=1, client_key="cancel"))
+    assert result.status == "accepted" and result.id == "42"
+    scope.cancel.assert_called_once()
+    assert scope.cancel.call_args.kwargs["order"].odno == "42"
+    assert scope.cancel.call_args.kwargs["order"].krx_fwdg_ord_orgno == "001"
+    assert scope.cancel.call_args.kwargs["qty"] == 1
+    api.cancel_orders_domestic.assert_not_called()
+
+
+def test_kis_status_reads_full_fill_after_order_leaves_open_snapshot(kis):
+    broker, _, _, scope = kis
+    scope.daily_order_all.return_value = SimpleNamespace(orders=[
+        {"odno": "42", "pdno": "005930", "ord_qty": "2", "tot_ccld_qty": "2",
+         "rmn_qty": "0", "avg_prvs": "69000", "cncl_yn": "N"},
+    ])
+    result = broker.status(Order(id="42", symbol="005930"))
+    assert result.status == "filled" and result.filled == 2 and result.fill_price == Decimal("69000")
+
+
+def test_kis_partial_fill_zero_remaining_is_not_a_full_fill(kis):
+    broker, _, _, scope = kis
+    scope.daily_order_all.return_value = SimpleNamespace(orders=[
+        {"odno": "42", "pdno": "005930", "ord_qty": "2", "tot_ccld_qty": "1",
+         "rmn_qty": "0", "avg_prvs": "69000", "cncl_yn": "N"},
+    ])
+    assert broker.status(Order(id="42", symbol="005930")).status == "unknown"
+
+
+@pytest.mark.parametrize("ack", [{}, {"ODNO": None}, {"ODNO": ""}])
+def test_kis_missing_cancel_ack_never_reports_acceptance(kis, ack):
+    broker, _, api, scope = kis
+    api.get_open_orders_domestic.return_value = {"orders": [
+        {"odno": "42", "pdno": "005930", "psbl_qty": "2", "ord_gno_brno": "001"},
+    ]}
+    scope.cancel.return_value = {"rt_cd": "0", "output": ack}
+    with pytest.raises(InvalidResponseError, match="order identifier"):
+        broker.cancel_order(CancelRequest(order_id="42", symbol="005930", quantity=1, client_key="cancel"))
