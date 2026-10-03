@@ -26,7 +26,7 @@ from pykbroker.exceptions import (
     TransportError,
 )
 from pykbroker.experimental._rest import RestBroker
-from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote
+from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
 from pykbroker.safety.rate_limit import credential_rate_limiter
 
 # Field contracts: official public guide version 20261002071141740.
@@ -167,6 +167,7 @@ class LS(RestBroker):
         self._codes = {**LS_CODES, **dict(codes or {})}
         self._headers, self._limiter = dict(headers or {}), limiter
         self.venue, self._order_date = venue, order_date
+        self._us_native_halts = {}
         if self._client is None:
             raise ConfigurationError("Supply an LS REST client with an explicit base_url")
         self._bound_virtual = self.virtual
@@ -326,6 +327,10 @@ class LS(RestBroker):
                 )["g3101OutBlock"]
                 if row["symbol"] != symbol or row["currency"] != "USD" or row["exchcd"] != exchange:
                     raise InvalidResponseError("LS quote identity/currency does not match")
+                suspend, sellonly = row.get("suspend"), row.get("sellonly")
+                self._us_native_halts[symbol] = (
+                    False if suspend == "N" and sellonly == "0" else
+                    True if suspend == "Y" or sellonly in {"1", "2"} else None)
                 return Quote(symbol=symbol, market="US", last=decimal(row["price"]))
 
             return self._call(read_us)
@@ -341,6 +346,16 @@ class LS(RestBroker):
                 ),
             )
         )
+
+    def get_rules(self, symbol, *, now=None, trading_day=None):
+        if self.market != "US":
+            return super().get_rules(symbol, now=now, trading_day=trading_day)
+        symbol = self._us_symbol(symbol)
+        if symbol not in self._us_native_halts:
+            self.get_quote(symbol, market="US")
+        return Rules(symbol=symbol, market="US", currency="USD", timezone="America/New_York",
+                     lot=1, regular_open="09:30", regular_close="16:00",
+                     halted=self._us_native_halts[symbol])
 
     def get_balance(self) -> Balance:
         if self.market == "US":

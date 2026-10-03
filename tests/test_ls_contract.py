@@ -824,3 +824,28 @@ def test_official_cosat_blank_broker_type_is_not_invented():
     broker, client, _ = us_make({"COSAT00301": [{"rsp_cd": "00000", "COSAT00301OutBlock2": {"OrdNo": 42}}]})
     broker._place_order(buy(symbol="TSLA", market="US", venue="NASDAQ", price="100.25"))
     assert client.calls[0][2]["COSAT00301InBlock1"]["BrkTpCode"] == ""
+
+@pytest.mark.parametrize("suspend,sellonly,expected", [("N", "0", False), ("Y", "0", True),
+    ("N", "1", True), ("N", "2", True), (None, "0", None), ("N", None, None)])
+def test_us_rules_read_native_eligibility_from_same_quote(suspend, sellonly, expected):
+    broker = LS.__new__(LS)
+    broker.market, broker.venue = "US", "NASDAQ"
+    broker._us_native_halts = {}
+    broker._call = lambda fn: fn()
+    calls = []
+    def response(*args, **kwargs):
+        calls.append(args)
+        return {"g3101OutBlock": {"symbol": "AAPL", "currency": "USD", "exchcd": "82",
+            "price": "100", "suspend": suspend, "sellonly": sellonly}}
+    broker._response = response
+    # The adapter's published NASDAQ code remains the one contract source.
+    from pykbroker.brokers.ls import LS_US_VENUES
+    exchange = LS_US_VENUES["NASDAQ"]
+    def bound_response(*args, **kwargs):
+        row = response(*args, **kwargs)
+        row["g3101OutBlock"]["exchcd"] = exchange
+        return row
+    broker._response = bound_response
+    broker.get_quote("AAPL", market="US")
+    assert broker.get_rules("AAPL").halted is expected
+    assert len(calls) == 1

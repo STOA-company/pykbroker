@@ -155,7 +155,7 @@ class KB(BaseBroker):
             request.price * 10000
         ).to_integral_value():
             raise ConfigurationError("KB US limit price supports at most four decimal places")
-        if self.market == "US" and not self._is_integrated:
+        if self.market == "US" and isinstance(request, OrderRequest) and not self._is_integrated:
             raise SpecUnverifiedError("KB US requires existing Global One Market enrollment")
         if not self._writes_enabled:
             raise SpecUnverifiedError("KB writes are disabled by default")

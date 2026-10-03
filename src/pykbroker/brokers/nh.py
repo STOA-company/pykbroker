@@ -855,7 +855,8 @@ class NH(BaseBroker):
         if bid is not None and ask is not None and bid > ask:
             bid = ask = None
         return Quote(
-            symbol=code, market="US", currency="USD", last=_positive(row["trdprc"], "last price"), bid=bid, ask=ask
+            symbol=code, market="US", last=_positive(row["trdprc"], "last price"), bid=bid, ask=ask,
+            prev_close=optional_price(row.get("hst_trdprc"))
         )
 
     def _us_buying_power(self, code: str, kind: str, price: Decimal | None = None) -> Mapping[str, Any]:

@@ -198,3 +198,15 @@ def test_us_native_balance_excludes_integrated_buying_power(broker_type):
         broker = DBFI(account="fixture", market="US", venue="NASDAQ", client=client, is_integrated=True)
     balance = broker.get_balance()
     assert balance.cash_available == Decimal("80") and balance.total == Decimal("80")
+
+def test_kb_us_cancel_does_not_require_a_new_integrated_buy_policy():
+    from pykbroker.brokers.kb import KB
+    from pykbroker.models import CancelRequest, OrderRequest
+    from pykbroker.exceptions import SpecUnverifiedError
+    broker = KB(account="fixture", bound_account="fixture", market="US", venue="NASDAQ",
+                app_key="fake-app", token="fake-token", is_integrated=False, writes_enabled=True)
+    broker._validate_order(CancelRequest(order_id="42", symbol="AAPL", market="US", venue="NASDAQ",
+                                        quantity=1, client_key="cancel-fixture"))
+    with pytest.raises(SpecUnverifiedError, match="Global One Market"):
+        broker._validate_order(OrderRequest(symbol="AAPL", market="US", venue="NASDAQ",
+                                           side="buy", quantity=1, price="100", client_key="buy-fixture"))
