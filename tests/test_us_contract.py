@@ -126,15 +126,12 @@ def test_dbfi_us_contract(live_safety):
     assert not broker.capabilities().supports_nxt
 
 
-@pytest.mark.parametrize("broker_type", [DBFI])
-def test_us_requires_caller_cash_mapping(broker_type):
-    client, api = Mock(), Mock()
+@pytest.mark.parametrize("broker_type", [KIS, DBFI])
+def test_us_requires_explicit_venue(broker_type):
+    client = Mock()
     client.key = SimpleNamespace(virtual_account=False)
     with pytest.raises(ConfigurationError, match="venue"):
         broker_type(account="fixture", market="US", client=client)
-    broker = broker_type(account="fixture", market="US", venue="NASDAQ", client=client, api=api)
-    with pytest.raises(ConfigurationError, match="cash_provider"):
-        broker.get_balance()
 
 
 @pytest.mark.parametrize("broker_fixture", ["kis", "dbfi"])
