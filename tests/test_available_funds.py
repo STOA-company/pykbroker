@@ -211,3 +211,25 @@ def test_kb_us_cancel_does_not_require_a_new_integrated_buy_policy():
     with pytest.raises(SpecUnverifiedError, match="Global One Market"):
         broker._validate_order(OrderRequest(symbol="AAPL", market="US", venue="NASDAQ",
                                            side="buy", quantity=1, price="100", client_key="buy-fixture"))
+
+@pytest.mark.parametrize("standard,short,expected", [("KR7005930003", "005930", "005930"),
+    ("KR7005930004", "005930", None), (None, "005930", None), ("KR7005930003", None, None)])
+def test_kb_standard_instrument_uses_exact_native_mapping(standard, short, expected):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from pykbroker.brokers.kb import KB, KB_API_BASE_URL
+    client = Mock(base_url=KB_API_BASE_URL)
+    client.post.return_value = {"dataHeader": {"resultCode": "200", "processFlag": "A"},
+        "dataBody": {"stnd_is_cd": standard, "shrt_is_cd": short}}
+    broker = KB(account="fixture", bound_account="fixture", app_key="fake", token="fake", client=client)
+    broker._limiter = SimpleNamespace(wait=lambda _: None)
+    if expected is None:
+        with pytest.raises(InvalidResponseError):
+            broker._response_symbol("KR7005930003", "KR")
+    else:
+        assert broker._response_symbol("KR7005930003", "KR") == expected
+        assert broker._response_symbol("KR7005930003", "KR") == expected
+        assert client.post.call_count == 1
+    assert client.post.call_args.args[0] == "/api/v1/siqm4900"
+    assert client.post.call_args.kwargs["body"]["dataBody"] == {"stnd_is_cd": "KR7005930003"}

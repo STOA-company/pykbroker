@@ -224,8 +224,20 @@ class KB(BaseBroker):
         try:
             return self._symbol(mapped, market)
         except ConfigurationError:
-            # Standard instrument numbers are not converted to tickers by guessing.
-            raise SpecUnverifiedError("Supply the existing verified standard-id-to-symbol mapping") from None
+            if market != "KR" or len(raw) != 12 or not raw.isascii() or not raw.isalnum():
+                raise SpecUnverifiedError("KB response instrument mapping is unverified") from None
+        # Official SIQM4900 accepts standard IDs and returns both standard and short codes.
+        # Bind the native result exactly; never slice an ISIN into a ticker.
+        row = self._response("siqm4900", {"stnd_is_cd": raw})
+        standard = row.get("stnd_is_cd")
+        if not isinstance(standard, str) or standard.strip() != raw:
+            raise InvalidResponseError("KB instrument mapping identity differs from the ledger")
+        try:
+            mapped = self._symbol(row.get("shrt_is_cd"), "KR")
+        except ConfigurationError:
+            raise InvalidResponseError("KB instrument mapping short code is invalid") from None
+        self._symbol_map[raw] = mapped
+        return mapped
 
     def get_positions(self) -> list[Position]:
         def read():
