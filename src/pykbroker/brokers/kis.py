@@ -305,7 +305,7 @@ class KIS(BaseBroker):
         return self._call(read)
 
     def available_cash(self) -> Decimal:
-        if self.market == "US":
+        if self.market == "US" or self.is_integrated:
             return self._call(lambda: self._us_cash(self._connect()[0]))
         return super().available_cash()
 
@@ -321,15 +321,16 @@ class KIS(BaseBroker):
         return min(decimal(field(usd[0], "frcr_dncl_amt_2")), decimal(field(usd[0], "frcr_drwg_psbl_amt_1")))
 
     def _us_cash(self, scope: Any) -> Decimal:
-        # Official domestic_stock/intgr_margin (TTTC0869R): foreign-currency basis.
+        # Official domestic_stock/intgr_margin (TTTC0869R): native cash100 buying power.
         # usd_itgr_ord_psbl_amt is broker-computed unified buying power, never total assets/FX.
         # Keep normal accounts on usd_gnrl_ord_psbl_amt. Mode comes from existing account policy.
+        currency_basis = "02" if self.market == "KR" else "01"
         response = scope.client.request(
             "get", "/uapi/domestic-stock/v1/trading/intgr-margin",
             headers={"tr_id": "TTTC0869R"},
             params=scope.account.build_body({
-                "CMA_EVLU_AMT_ICLD_YN": "N", "WCRC_FRCR_DVSN_CD": "01",
-                "FWEX_CTRT_FRCR_DVSN_CD": "01",
+                "CMA_EVLU_AMT_ICLD_YN": "N", "WCRC_FRCR_DVSN_CD": currency_basis,
+                "FWEX_CTRT_FRCR_DVSN_CD": currency_basis,
             }), response=None,
         )
         # Pykis response=None returns requests.Response, not its usual normalized helper envelope.
@@ -341,7 +342,8 @@ class KIS(BaseBroker):
         if str(field(envelope, "rt_cd")) != "0":
             raise InvalidResponseError("KIS buying-power response lacks a success status")
         output = field(envelope, "output")
-        key = "usd_itgr_ord_psbl_amt" if self.is_integrated else "usd_gnrl_ord_psbl_amt"
+        key = ("stck_itgr_cash100_ord_psbl_amt" if self.market == "KR"
+               else "usd_itgr_ord_psbl_amt" if self.is_integrated else "usd_gnrl_ord_psbl_amt")
         return decimal(field(output, key))
 
     def get_positions(self) -> list[Position]:

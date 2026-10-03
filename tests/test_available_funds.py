@@ -237,3 +237,24 @@ def test_kb_standard_instrument_uses_exact_native_mapping(standard, short, expec
         assert client.post.call_count == 1
     assert client.post.call_args.args[0] == "/api/v1/siqm4900"
     assert client.post.call_args.kwargs["body"]["dataBody"] == {"stnd_is_cd": "KR7005930003"}
+
+
+@pytest.mark.parametrize("value", ["150000", "0", None, "-1", "NaN"])
+def test_kis_kr_explicit_unified_cash100_is_budget_not_balance(kis, value):
+    broker, _, _, scope = kis
+    broker.is_integrated = True
+    scope.account.build_body.side_effect = lambda params: params
+    scope.client.request.return_value = {"rt_cd": "0", "output": {
+        "stck_itgr_cash100_ord_psbl_amt": value, "stck_itgr_100_ord_psbl_amt": "99999999"}}
+    if value in ("150000", "0"):
+        assert broker.available_cash() == Decimal(value)
+    else:
+        with pytest.raises(InvalidResponseError):
+            broker.available_cash()
+    params = scope.client.request.call_args.kwargs["params"]
+    assert params == {"CMA_EVLU_AMT_ICLD_YN": "N", "WCRC_FRCR_DVSN_CD": "02", "FWEX_CTRT_FRCR_DVSN_CD": "02"}
+    assert broker.get_balance().total == Decimal("340000")
+    broker.is_integrated = False
+    before = scope.client.request.call_count
+    assert broker.available_cash() == Decimal("200000")
+    assert scope.client.request.call_count == before
