@@ -646,11 +646,19 @@ def test_us_quote_uses_symbol_venue_without_fabricated_timestamp():
                     "rsp_cd": "00000",
                     "g3101OutBlock": {"symbol": "TSLA", "currency": "USD", "exchcd": "82", "price": "123.45"},
                 }
-            ]
+            ],
+            "g3104": [
+                {
+                    "rsp_cd": "00000",
+                    "g3104OutBlock": {"symbol": "TSLA", "currency": "USD", "exchcd": "82",
+                                     "keysymbol": "82TSLA", "pcls": "120.25"},
+                }
+            ],
         }
     )
     quote = broker.get_quote("TSLA")
     assert quote.market == "US" and quote.last == Decimal("123.45") and quote.timestamp is None
+    assert quote.prev_close == Decimal("120.25")
     assert client.calls[0][0] == "/overseas-stock/market-data"
     assert client.calls[0][2] == {
         "g3101InBlock": {"delaygb": "R", "keysymbol": "82TSLA", "exchcd": "82", "symbol": "TSLA"}
@@ -835,6 +843,9 @@ def test_us_rules_read_native_eligibility_from_same_quote(suspend, sellonly, exp
     calls = []
     def response(*args, **kwargs):
         calls.append(args)
+        if args[1] == "g3104":
+            return {"g3104OutBlock": {"symbol": "AAPL", "currency": "USD", "exchcd": "82",
+                "keysymbol": "82AAPL", "pcls": "99"}}
         return {"g3101OutBlock": {"symbol": "AAPL", "currency": "USD", "exchcd": "82",
             "price": "100", "suspend": suspend, "sellonly": sellonly}}
     broker._response = response
@@ -843,9 +854,9 @@ def test_us_rules_read_native_eligibility_from_same_quote(suspend, sellonly, exp
     exchange = LS_US_VENUES["NASDAQ"]
     def bound_response(*args, **kwargs):
         row = response(*args, **kwargs)
-        row["g3101OutBlock"]["exchcd"] = exchange
+        row["g3101OutBlock" if args[1] == "g3101" else "g3104OutBlock"]["exchcd"] = exchange
         return row
     broker._response = bound_response
     broker.get_quote("AAPL", market="US")
     assert broker.get_rules("AAPL").halted is expected
-    assert len(calls) == 1
+    assert [call[1] for call in calls] == ["g3101", "g3104"]

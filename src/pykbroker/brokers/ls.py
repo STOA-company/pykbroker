@@ -40,6 +40,7 @@ LS_RATES = {
     "CSPAT00601": 10,
     "CSPAT00801": 3,
     "g3101": 10,
+    "g3104": 10,
     "COSOQ00201": 1,
     "COSAQ00102": 1,
     "COSAT00301": 10,
@@ -331,7 +332,17 @@ class LS(RestBroker):
                 self._us_native_halts[symbol] = (
                     False if suspend == "N" and sellonly == "0" else
                     True if suspend == "Y" or sellonly in {"1", "2"} else None)
-                return Quote(symbol=symbol, market="US", last=decimal(row["price"]))
+                # g3104 is an exact-symbol read; pcls is the native previous close.
+                info = self._response(
+                    "/overseas-stock/market-data", "g3104",
+                    {"g3104InBlock": {"delaygb": "R", "keysymbol": exchange + symbol,
+                                      "exchcd": exchange, "symbol": symbol}},
+                )["g3104OutBlock"]
+                if (info["symbol"] != symbol or info["currency"] != "USD"
+                        or info["exchcd"] != exchange or info["keysymbol"] != exchange + symbol):
+                    raise InvalidResponseError("LS previous close identity/currency does not match")
+                return Quote(symbol=symbol, market="US", last=decimal(row["price"]),
+                             prev_close=self._price(info.get("pcls")))
 
             return self._call(read_us)
         return self._call(
