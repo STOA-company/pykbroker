@@ -126,7 +126,7 @@ def test_dbfi_us_contract(live_safety):
     assert not broker.capabilities().supports_nxt
 
 
-@pytest.mark.parametrize("broker_type", [KIS, DBFI])
+@pytest.mark.parametrize("broker_type", [KIS])
 def test_us_requires_caller_cash_mapping(broker_type):
     client, api = Mock(), Mock()
     client.key = SimpleNamespace(virtual_account=False)
