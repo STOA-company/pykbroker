@@ -1,13 +1,18 @@
-"""LS KR adapter with an injected REST boundary and a default-closed write lock.
+"""LS KR/US REST mappings with an injected boundary and default-closed writes.
 
-UNVERIFIED (명세 미확인): detailed official guides were inaccessible on 2026-10-01.
-Paths/TRs/request blocks reuse experimental/ls.py and trader traders/ls_order.py.
-Enum values, rsp_cd meanings, continuation, and t0425 qty/price/cheqty/cheprice
-semantics and account-mode binding require official specification comparison.
-No default client, credentials, rate budget, or environment unlock is provided.
+Field/path source: official TR guide version 20261002071141740 (2026-10-04).
+The guide does not establish write success codes, REST mock account binding,
+US BrkTpCode values, unified margin enrollment, or average fill price semantics.
+Those gaps do not become permission: live writes remain locked. US account
+snapshots require preserved response continuation headers and an explicit
+broker order date. No transport, authentication, or token refresh owner is added.
 """
 
-from pykbroker.brokers._common import decimal, optional_price, whole
+import re
+from collections.abc import Mapping
+from datetime import date
+
+from pykbroker.brokers._common import BaseBroker, decimal, optional_price, whole
 from pykbroker.exceptions import (
     BrokerRejectedError,
     ConfigurationError,
@@ -18,8 +23,29 @@ from pykbroker.exceptions import (
 from pykbroker.experimental._rest import RestBroker
 from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote
 
+# Field contracts: official public guide version 20261002071141740.
+# https://openapi.ls-sec.co.kr/api/apis/public/tr-guides.json?download=true
+LS_CODES = {
+    "exchange": "K",
+    "balance_type": "0",
+    "prcgb": "1",
+    "chegb": "2",
+    "dangb": "0",
+    "charge": "0",
+    "order_filter": "0",
+    "side_all": "0",
+    "sort_order": "2",
+    "buy": "2",
+    "sell": "1",
+    "limit": "00",
+    "market": "03",
+    "cash": "000",
+    "condition": "0",
+    "member": "KRX",
+}
+LS_US_VENUES = {"NYSE": "81", "NASDAQ": "82"}
 LS_SPEC_VERIFIED = False  # Global veto only; True never enables live orders.
-# UNVERIFIED: legacy live URL, no local official address/account-mode contract.
+# Official REST address; mock/real account binding is still unverified.
 LS_API_BASE_URL = "https://openapi.ls-sec.co.kr:8080"
 # UNVERIFIED: no distinct mock host established; do not invent one or reuse live.
 LS_MOCK_BASE_URL: str | None = None
@@ -29,10 +55,36 @@ class LS(RestBroker):
     broker_code = "ls"
     supports_virtual = True  # Accept explicit mode; missing mock contract still fails closed.
 
-    def __init__(self, *, virtual: bool = False, spec_verified: bool = False, **kwargs) -> None:
-        if not isinstance(spec_verified, bool):
-            raise ConfigurationError("spec_verified must be a boolean")
-        super().__init__(virtual=virtual, **kwargs)
+    us_venues = tuple(LS_US_VENUES)
+
+    def __init__(
+        self,
+        *,
+        virtual: bool = False,
+        spec_verified: bool = False,
+        market: str = "KR",
+        venue: str | None = None,
+        is_integrated: bool = False,
+        order_date: date | None = None,
+        **kwargs,
+    ) -> None:
+        if not isinstance(spec_verified, bool) or not isinstance(is_integrated, bool):
+            raise ConfigurationError("LS verification and margin flags must be booleans")
+        if is_integrated:
+            raise SpecUnverifiedError("LS unified margin enrollment/settlement contract is unverified")
+        if market == "US" and venue not in LS_US_VENUES:
+            raise ConfigurationError("LS US venue must be NYSE or NASDAQ")
+        if order_date is not None and type(order_date) is not date:
+            raise ConfigurationError("LS order_date must be an explicit date")
+        client, codes = kwargs.pop("client", None), kwargs.pop("codes", None)
+        headers, limiter = kwargs.pop("headers", None), kwargs.pop("rate_limiter", None)
+        # RestBroker's constructor is domestic-only; reuse its request boundary
+        # with BaseBroker's existing KR/US validation and explicit LS state.
+        BaseBroker.__init__(self, virtual=virtual, market=market, **kwargs)
+        self._client = client
+        self._codes = {**LS_CODES, **dict(codes or {})}
+        self._headers, self._limiter = dict(headers or {}), limiter
+        self.venue, self._order_date = venue, order_date
         if self._client is None:
             raise ConfigurationError("Supply an LS REST client with an explicit base_url")
         self._bound_virtual = self.virtual
@@ -56,13 +108,14 @@ class LS(RestBroker):
             virtual=self._bound_virtual,
             supports_spot=verified,
             supports_limit_order=verified,
-            supports_market_order=verified,
+            supports_market_order=verified and self.market == "KR",
             supports_single_order_cancel=verified,
             # UNVERIFIED: t0425 is not yet proof of real-time/history coverage.
             supports_order_history=False,
             realtime_open_orders=False,
-            markets=("KR",),
-            venues=("KRX",),
+            markets=(self.market,),
+            requires_venue=self.market == "US",
+            venues=("KRX",) if self.market == "KR" else self.us_venues,
         )
 
     def _validate_order(self, request: OrderRequest | CancelRequest) -> None:
@@ -71,6 +124,8 @@ class LS(RestBroker):
             raise NotSupportedError("LS close orders have not been verified")
         if isinstance(request, CancelRequest):
             self._order_id(request.order_id, request=True)
+        if request.market == "US":
+            self._us_symbol(request.symbol)
 
     def place_order(self, request: OrderRequest) -> Order:
         if not self._mock_verified():
@@ -144,8 +199,31 @@ class LS(RestBroker):
         if meta[cursor].strip():
             raise SpecUnverifiedError("LS pagination has not been verified")
 
-    def get_quote(self, symbol: str, *, market: str = "KR") -> Quote:
+    def get_quote(self, symbol: str, *, market: str | None = None) -> Quote:
+        market = market or self.market
         symbol = self._symbol(symbol, market)
+        if market == "US":
+            symbol = self._us_symbol(symbol)
+            exchange = LS_US_VENUES[self.venue]
+
+            def read_us():
+                row = self._response(
+                    "/overseas-stock/market-data",
+                    "g3101",
+                    {
+                        "g3101InBlock": {
+                            "delaygb": "R",
+                            "keysymbol": exchange + symbol,
+                            "exchcd": exchange,
+                            "symbol": symbol,
+                        },
+                    },
+                )["g3101OutBlock"]
+                if row["symbol"] != symbol or row["currency"] != "USD" or row["exchcd"] != exchange:
+                    raise InvalidResponseError("LS quote identity/currency does not match")
+                return Quote(symbol=symbol, market="US", last=decimal(row["price"]))
+
+            return self._call(read_us)
         return self._call(
             lambda: Quote(
                 symbol=symbol,
@@ -160,6 +238,23 @@ class LS(RestBroker):
         )
 
     def get_balance(self) -> Balance:
+        if self.market == "US":
+
+            def read_us():
+                response = self._us_balance()
+                rows = self._us_rows(response, "COSOQ00201OutBlock3")
+                usd = [row for row in rows if row["CrcyCode"] == "USD"]
+                if len(usd) != 1:
+                    raise InvalidResponseError("LS balance must contain exactly one USD row")
+                # Never derive orderable USD from total assets or an FX rate.
+                return Balance(
+                    currency="USD",
+                    cash_available=decimal(usd[0]["FcurrOrdAbleAmt"]),
+                    position_value=decimal(usd[0]["FcurrEvalAmt"]),
+                )
+
+            return self._call(read_us)
+
         def read():
             row = self._response(
                 "/stock/accno", "CSPAQ12200", {"CSPAQ12200InBlock1": {"BalCreTp": self._code("balance_type")}}
@@ -169,6 +264,26 @@ class LS(RestBroker):
         return self._call(read)
 
     def get_positions(self) -> list[Position]:
+        if self.market == "US":
+
+            def read_us():
+                return [
+                    Position(
+                        symbol=self._us_symbol(row["ShtnIsuNo"]),
+                        name=row["JpnMktHanglIsuNm"],
+                        market="US",
+                        quantity=whole(row["AstkBalQty"]),
+                        sellable=whole(row["AstkSellAbleQty"]),
+                        average_price=decimal(row["FcstckUprc"]),
+                        last=decimal(row["OvrsScrtsCurpri"]),
+                        market_value=decimal(row["FcurrEvalAmt"]),
+                    )
+                    for row in self._us_rows(self._us_balance(), "COSOQ00201OutBlock4")
+                    if row["CrcyCode"] == "USD"
+                ]
+
+            return self._call(read_us)
+
         def read():
             body = {key: self._code(key) for key in ("prcgb", "chegb", "dangb", "charge")}
             body["cts_expcode"] = ""
@@ -190,6 +305,8 @@ class LS(RestBroker):
         return self._call(read)
 
     def list_orders(self, symbol: str | None = None) -> list[Order]:
+        if self.market == "US":
+            return self._call(lambda: self._us_orders(symbol))
         code = self._symbol(symbol, "KR") if symbol is not None else None
 
         def read():
@@ -243,6 +360,8 @@ class LS(RestBroker):
         )
 
     def _place_order(self, request: OrderRequest) -> Order:
+        if self.market == "US":
+            return self._us_write(request)
         body = {
             "IsuNo": self._symbol(request.symbol, "KR"),
             "OrdQty": request.quantity,
@@ -267,6 +386,8 @@ class LS(RestBroker):
         )
 
     def _cancel_order(self, request: CancelRequest) -> Order:
+        if self.market == "US":
+            return self._us_write(request)
         body = {"OrgOrdNo": request.order_id, "IsuNo": self._symbol(request.symbol, "KR"), "OrdQty": request.quantity}
         response = self._response("/stock/order", "CSPAT00801", {"CSPAT00801InBlock1": body}, write=True)
         # UNVERIFIED: ack block; accepted does not prove the original order closed.
@@ -276,4 +397,117 @@ class LS(RestBroker):
             symbol=self._symbol(request.symbol, "KR"),
             status="accepted",
             virtual=self._bound_virtual,
+        )
+
+    @staticmethod
+    def _us_symbol(symbol):
+        if not isinstance(symbol, str) or not re.fullmatch(r"[A-Z][A-Z0-9.\-]{0,15}", symbol):
+            raise InvalidResponseError("Invalid LS US symbol")
+        return symbol
+
+    @staticmethod
+    def _us_rows(response, block):
+        value = response[block]
+        rows = value if isinstance(value, list) else [value]
+        if any(not isinstance(row, dict) for row in rows):
+            raise InvalidResponseError("Invalid LS US rows")
+        return rows
+
+    def _us_complete(self):
+        # The official US TR uses response header continuation, not a body cursor.
+        # An injected client must retain the last response headers; silence cannot
+        # become proof that an account-wide balance or order snapshot is complete.
+        headers = getattr(self._client, "response_headers", None)
+        if not isinstance(headers, Mapping):
+            raise SpecUnverifiedError("LS US reads require response continuation headers")
+        headers = {str(k).lower(): v for k, v in headers.items()}
+        if headers.get("tr_cont") != "N" or headers.get("tr_cont_key") not in ("", None):
+            raise SpecUnverifiedError("LS US continued account snapshots are not implemented")
+
+    def _us_balance(self):
+        response = self._response(
+            "/overseas-stock/accno",
+            "COSOQ00201",
+            {
+                "COSOQ00201InBlock1": {"RecCnt": 1, "BaseDt": "", "CrcyCode": "USD", "AstkBalTpCode": "10"},
+            },
+        )
+        self._us_complete()
+        return response
+
+    def _us_orders(self, symbol):
+        if self._order_date is None:
+            raise ConfigurationError("LS US order listing requires an explicit broker order_date")
+        symbol = self._us_symbol(symbol) if symbol is not None else ""
+        response = self._response(
+            "/overseas-stock/accno",
+            "COSAQ00102",
+            {
+                "COSAQ00102InBlock1": {
+                    "RecCnt": 1,
+                    "QryTpCode": "1",
+                    "BkseqTpCode": "2",
+                    "OrdMktCode": LS_US_VENUES[self.venue],
+                    "BnsTpCode": "0",
+                    "IsuNo": symbol,
+                    "SrtOrdNo": 0,
+                    "OrdDt": self._order_date.strftime("%Y%m%d"),
+                    "ExecYn": "0",
+                    "CrcyCode": "USD",
+                    "ThdayBnsAppYn": "0",
+                    "LoanBalHldYn": "0",
+                },
+            },
+        )
+        self._us_complete()
+        result = []
+        for row in self._us_rows(response, "COSAQ00102OutBlock3"):
+            code = self._us_symbol(row["ShtnIsuNo"])
+            if row["CrcyCode"] != "USD" or row["OrdMktCode"] != LS_US_VENUES[self.venue]:
+                raise InvalidResponseError("LS US order identity/currency does not match")
+            quantity, filled, remaining = (whole(row[k]) for k in ("OrdQty", "AllExecQty", "UnercQty"))
+            if not quantity or filled + remaining > quantity:
+                raise InvalidResponseError("Inconsistent LS US order quantities")
+            status = "filled" if filled == quantity and remaining == 0 else "unknown"
+            if remaining > 0:
+                status = "partial" if filled else "open"
+            order = Order(
+                id=self._order_id(row["OrdNo"]),
+                symbol=code,
+                market="US",
+                quantity=quantity,
+                price=self._price(row.get("OvrsOrdPrc")),
+                filled=filled,
+                remaining=remaining,
+                fill_price=None,
+                status=status,
+                virtual=self._bound_virtual,
+            )
+            if not symbol or code == symbol:
+                result.append(order)
+        return result
+
+    def _us_write(self, request):
+        cancellation = isinstance(request, CancelRequest)
+        body = {
+            "RecCnt": 1,
+            "OrdPtnCode": "08" if cancellation else {"buy": "02", "sell": "01"}[request.side],
+            "OrgOrdNo": int(request.order_id) if cancellation else 0,
+            "OrdMktCode": LS_US_VENUES[self.venue],
+            "IsuNo": self._us_symbol(request.symbol),
+            "OrdQty": request.quantity,
+            "OvrsOrdPrc": 0 if cancellation else float(request.price),
+            "OrdprcPtnCode": "00",
+            "BrkTpCode": self._code("broker_type"),
+        }
+        response = self._response("/overseas-stock/order", "COSAT00301", {"COSAT00301InBlock1": body}, write=True)
+        order_id = self._order_id(response["COSAT00301OutBlock2"]["OrdNo"])
+        return Order(
+            id=request.order_id if cancellation else order_id,
+            symbol=request.symbol,
+            market="US",
+            status="accepted",
+            virtual=self._bound_virtual,
+            quantity=request.quantity,
+            price=None if cancellation else request.price,
         )
