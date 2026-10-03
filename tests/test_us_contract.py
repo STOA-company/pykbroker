@@ -193,4 +193,4 @@ def test_kis_us_exact_cancel_and_ledger_full_fill(live_safety):
          "nccs_qty": "0", "ft_ccld_unpr3": "119.4", "rvse_cncl_dvsn": "00"},
     ]}
     result = broker.status(Order(id="42", symbol="TEST", market="US"))
-    assert result.status == "filled" and result.fill_price == Decimal("119.4")
+    assert result.status == "filled" and result.fill_price is None

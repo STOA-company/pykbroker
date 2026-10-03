@@ -164,12 +164,20 @@ class DBFI(BaseBroker):
 
     def get_balance(self) -> Balance:
         def read() -> Balance:
-            cash = self.available_cash()
             if self.market == "US":
+                client, _ = self._connect()
+                if self._cash_provider is not None:
+                    cash = decimal(self._cash_provider(client))
+                else:
+                    usd = [row for page in self._balance_pages() for row in page["Out1"]
+                           if row.get("CrcyCode") == "USD"]
+                    if len(usd) != 1:
+                        raise InvalidResponseError("DBFI native cash requires one USD row")
+                    cash = min(decimal(usd[0]["FcurrDps"]), decimal(usd[0]["AstkMnyoutAbleAmt"]))
                 return Balance(currency="USD", cash_available=cash,
                                position_value=sum((p.market_value for p in self.get_positions()), Decimal(0)))
             data = self._balance_pages()[0]["Out"]
-            return Balance(cash_available=cash, position_value=decimal(data["TotEvalAmt"]))
+            return Balance(cash_available=self.available_cash(), position_value=decimal(data["TotEvalAmt"]))
 
         return self._call(read)
 

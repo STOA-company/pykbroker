@@ -343,7 +343,7 @@ class Kiwoom(BaseBroker):
             usd = [row for row in rows if row.get("crnc_code") == "USD"]
             if len(usd) != 1:
                 raise InvalidResponseError("Kiwoom cash must contain exactly one USD row")
-            return decimal(usd[0]["fc_ord_alowa"])
+            return min(decimal(usd[0]["fc_entra"]), decimal(usd[0]["fc_pymn_alowa"]))
         row = self._post("/api/dostk/acnt", "kt00001", {"qry_tp": KIWOOM_CASH_QUERY_TYPE})[0]
         # `ord_alow_amt` (주문가능금액) is not documented as cash-only and the official sample shows it above the
         # deposit `entr` (85,341 vs 17,534), so it is capped by the deposit. `prsm_dpst_aset_amt` is never used.

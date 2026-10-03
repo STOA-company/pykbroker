@@ -292,7 +292,7 @@ class KIS(BaseBroker):
                     raise ConfigurationError("US mock cash requires a caller-supplied cash_provider")
                 return Balance(
                     currency="USD",
-                    cash_available=decimal(self._cash_provider(scope)) if self._cash_provider else self._us_cash(scope),
+                    cash_available=decimal(self._cash_provider(scope)) if self._cash_provider else self._us_native_cash(scope),
                     position_value=sum((p.market_value for p in self.get_positions()), Decimal(0)),
                 )
             balance, amount = scope.balance_all(), scope.amount(code=None)
@@ -302,6 +302,22 @@ class KIS(BaseBroker):
             )
 
         return self._call(read)
+
+    def available_cash(self) -> Decimal:
+        if self.market == "US":
+            return self._call(lambda: self._us_cash(self._connect()[0]))
+        return super().available_cash()
+
+    def _us_native_cash(self, scope: Any) -> Decimal:
+        _, api = self._connect()
+        data = check_response(api.get_balances(kis_account=scope, NATN_CD="840", TR_MKET_CD="00"), "kis")
+        rows = field(data, "output2")
+        if not isinstance(rows, list):
+            raise InvalidResponseError("KIS native cash block missing")
+        usd = [row for row in rows if field(row, "crcy_cd") == "USD"]
+        if len(usd) != 1:
+            raise InvalidResponseError("KIS native cash requires one USD row")
+        return min(decimal(field(usd[0], "frcr_dncl_amt_2")), decimal(field(usd[0], "frcr_drwg_psbl_amt_1")))
 
     def _us_cash(self, scope: Any) -> Decimal:
         # Official domestic_stock/intgr_margin (TTTC0869R): foreign-currency basis.
@@ -459,7 +475,8 @@ class KIS(BaseBroker):
                 # Partial fills plus zero remaining can be a cancellation/rejection: no invented full fill.
                 if state == "filled" and filled != quantity:
                     state = "unknown"
-                average = optional_price(field(row, "avg_prvs" if kr else "ft_ccld_unpr3")) if filled else None
+                average = (optional_price(field(row, "avg_prvs")) if kr and filled else
+                           optional_price(field(row, "ft_ccld_unpr3")) if not kr and filled == 1 else None)
                 return Order.model_validate({**order.model_dump(), "quantity": quantity, "filled": filled,
                     "remaining": remaining, "fill_price": average, "status": state})
             return order.model_copy(update={"status": "unknown"})

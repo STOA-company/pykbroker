@@ -689,13 +689,13 @@ def test_us_capabilities_and_explicit_account_configuration():
             us_read({}, is_integrated=mode)
 
 
-def test_us_cash_is_broker_reported_orderable_usd_without_local_conversion():
+def test_us_cash_is_native_deposit_capped_by_withdrawable_usd():
     response = {
         "return_code": 0,
         "krw_entra": "999999999",
-        "result_list": [{"crnc_code": "USD", "fc_ord_alowa": "125.37", "fc_entra": "50"}],
+        "result_list": [{"crnc_code": "USD", "fc_ord_alowa": "125.37", "fc_entra": "50", "fc_pymn_alowa": "40"}],
     }
-    assert us_read({"ust21110": response}).available_cash() == Decimal("125.37")
+    assert us_read({"ust21110": response}).available_cash() == Decimal("40")
     for rows in ([], response["result_list"] * 2):
         with pytest.raises(InvalidResponseError):
             us_read({"ust21110": {**response, "result_list": rows}}).available_cash()

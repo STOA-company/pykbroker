@@ -96,7 +96,7 @@ def test_kb_uses_broker_integrated_amount_without_local_fx():
 
 
 
-def test_kb_us_balance_preserves_native_integrated_usd_and_empty_positions():
+def test_kb_us_balance_preserves_native_cash_without_integrated_capacity():
     from types import SimpleNamespace
     from unittest.mock import Mock
 
@@ -105,11 +105,12 @@ def test_kb_us_balance_preserves_native_integrated_usd_and_empty_positions():
     header = {"resultCode": "200", "processFlag": "A"}
     client.post.side_effect = [
         {"dataHeader": header, "dataBody": {"grid_cnt": "1", "Record1": [
-            {"crncy_cd": "USD", "fcrncy_unty_ordr_psbl_amt_p2": "123.45"}]}},
+            {"crncy_cd": "USD", "fcrncy_unty_ordr_psbl_amt_p2": "999.99",
+             "fcrncy_tfnd": "123.45", "fcrncy_use_psbl_amt_p2": "123.45"}]}},
         {"dataHeader": header, "dataBody": {"grid_cnt2": "0", "Record2": [], "nxt_key": ""}},
     ]
     broker = KB(account="fixture", bound_account="fixture", market="US", venue="NASDAQ",
-                app_key="fake-app", token="fake-token", is_integrated=True, client=client)
+                app_key="fake-app", token="fake-token", is_integrated=False, client=client)
     broker._limiter = SimpleNamespace(wait=lambda _: None)
     balance = broker.get_balance()
     assert balance.currency == "USD"
@@ -175,3 +176,25 @@ def test_kb_repeated_ledger_cursor_never_returns_partial_snapshot():
     with pytest.raises(InvalidResponseError, match="repeated"):
         broker.list_orders()
     assert client.post.call_count == 2
+
+@pytest.mark.parametrize("broker_type", ["kis", "dbfi"])
+def test_us_native_balance_excludes_integrated_buying_power(broker_type):
+    from unittest.mock import Mock
+    from types import SimpleNamespace
+    from pykbroker.brokers.kis import KIS
+    from pykbroker.brokers.dbfi import DBFI
+    client, api, scope = Mock(), Mock(), Mock()
+    if broker_type == "kis":
+        client.key = SimpleNamespace(virtual_account=False)
+        client.account.return_value = scope
+        api.get_balances.return_value = {"rt_cd": "0", "output1": [], "output2": [
+            {"crcy_cd": "USD", "frcr_dncl_amt_2": "100", "frcr_drwg_psbl_amt_1": "80"}]}
+        broker = KIS(account="fixture", market="US", venue="NASDAQ", client=client, api=api,
+                     is_integrated=True)
+    else:
+        client.get_stock_balance.return_value = [{"rsp_cd": "00000", "Out2": [], "Out1": [
+            {"CrcyCode": "USD", "FcurrDps": "100", "AstkMnyoutAbleAmt": "80",
+             "CrcyOrdAbleAmt0": "9999"}]}]
+        broker = DBFI(account="fixture", market="US", venue="NASDAQ", client=client, is_integrated=True)
+    balance = broker.get_balance()
+    assert balance.cash_available == Decimal("80") and balance.total == Decimal("80")

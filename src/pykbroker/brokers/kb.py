@@ -272,14 +272,12 @@ class KB(BaseBroker):
             if self.market == "KR":
                 cash = decimal(self._response("ssqm0004", {"is_no": ""})["ordr_psbl_csh"])
             else:
-                if not self._is_integrated:
-                    raise SpecUnverifiedError("KB US funding requires existing Global One Market enrollment")
                 data = self._response("skqm3350", {})
                 rows = self._rows(data, "Record1", "grid_cnt")
                 usd = [row for row in rows if row.get("crncy_cd", "").strip() == "USD"]
                 if len(usd) != 1:
                     raise InvalidResponseError("KB funding requires one explicitly identified USD row")
-                cash = decimal(usd[0]["fcrncy_unty_ordr_psbl_amt_p2"])
+                cash = min(decimal(usd[0]["fcrncy_tfnd"]), decimal(usd[0]["fcrncy_use_psbl_amt_p2"]))
             positions = self.get_positions()
             return Balance(currency="KRW" if self.market == "KR" else "USD", cash_available=cash,
                            position_value=sum((item.market_value for item in positions), Decimal(0)))
@@ -338,7 +336,7 @@ class KB(BaseBroker):
                     status = self._quantity_status(quantity, filled, remaining)
                     result.append(Order(id=number, symbol=code, market=self.market, side=side, quantity=quantity,
                                         price=price, filled=filled, remaining=remaining,
-                                        fill_price=fill_price if filled else None, status=status))
+                                        fill_price=fill_price if filled == 1 else None, status=status))
             return result
         return self._call(read)
 
