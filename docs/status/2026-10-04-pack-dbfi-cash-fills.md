@@ -29,3 +29,5 @@ Official source links:
 - https://github.com/DBsecurities/dbsec-open-api/blob/564b5100b80a3a785468b77ee8c0557f6edcfdeb/examples/ov_stock_order/ov_stock_inquire_psbl_amount.py
 - https://github.com/DBsecurities/dbsec-open-api/blob/564b5100b80a3a785468b77ee8c0557f6edcfdeb/examples/kr_stock_order/kr_stock_inquire_executions.py
 - https://github.com/DBsecurities/dbsec-open-api/blob/564b5100b80a3a785468b77ee8c0557f6edcfdeb/examples/ov_stock_order/ov_stock_inquire_executions.py
+
+10-04 consolidated review delta (SOURCE only): US get_balance now uses the unique native USD Out1 row, min(FcurrDps, AstkMnyoutAbleAmt). It does not add CrcyOrdAbleAmt0 integrated buying power to positions. Per-order available_cash(symbol,price) remains separate. Primary balance schema: official pinned ov_stock_inquire_balance_margin.py. Existing affected SDK688 checks passed before subsequent narrow quote/cancel delta; dev/account receipt remains unverified.
