@@ -177,7 +177,7 @@ class DBFI(BaseBroker):
                 return Balance(currency="USD", cash_available=cash,
                                position_value=sum((p.market_value for p in self.get_positions()), Decimal(0)))
             data = self._balance_pages()[0]["Out"]
-            return Balance(cash_available=self.available_cash(), position_value=decimal(data["TotEvalAmt"]))
+            return Balance(cash_available=decimal(data["Dps2"]), position_value=decimal(data["TotEvalAmt"]))
 
         return self._call(read)
 

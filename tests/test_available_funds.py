@@ -22,9 +22,13 @@ def test_kis_available_qty_is_the_sellable_not_the_held_quantity(kis):
 
 
 def test_dbfi_answers_the_same_two_questions(dbfi):
-    broker, _, _ = dbfi
-    assert broker.available_cash() == Decimal(200000)
+    broker, client, _ = dbfi
+    client.get_able_order_quantity.return_value["Out"]["MgnRat100pctOrdAbleAmt"] = "250000"
+    assert broker.available_cash() == Decimal(250000)
     assert broker.available_qty("005930") == 1
+    balance = broker.get_balance()
+    assert balance.cash_available == Decimal(200000)
+    assert balance.total == Decimal(340000)
 
 
 @pytest.mark.parametrize("symbol", ["A005930", "005930"])
