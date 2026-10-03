@@ -1,7 +1,8 @@
-"""NH PLUG domestic reads and guarded cash limit orders.
+"""NH PLUG KR/US reads and guarded cash limit orders.
 
 Specifications: https://www.nhplug.com/openapi-docs/common/openapi.json and
-https://www.nhplug.com/openapi-docs/krstock/openapi.json (read 2026-09-27).
+https://www.nhplug.com/openapi-docs/krstock/openapi.json and
+https://www.nhplug.com/openapi-docs/gbstock/openapi.json (read 2026-10-04).
 The caller owns durable token storage; ``token_cache`` is an injectable shared
 mapping and ``token_state`` can be persisted by the caller. No global secret or
 token file is created by this adapter.
@@ -16,6 +17,7 @@ from collections.abc import Callable, Mapping, MutableMapping
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from pykbroker._http import urlopen
 from pykbroker.exceptions import (
@@ -137,6 +139,7 @@ class NH(BaseBroker):
         venue: str = "KRX",
         virtual: bool = False,
         allow_live_orders: bool = False,
+        is_integrated: bool = False,
         client_factory: Callable[..., Any] | None = None,
         token_cache: MutableMapping[str, dict[str, str]] | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -145,10 +148,11 @@ class NH(BaseBroker):
         halt_provider: Callable[[str], bool] | None = None,
     ) -> None:
         super().__init__(account=account, market=market, virtual=virtual, safety=safety, halt_provider=halt_provider)
-        if market != "KR":
-            raise NotSupportedError("NH overseas reads are not implemented")
-        if venue not in _VENUES:
-            raise ConfigurationError("NH venue must be KRX, NXT or UNT")
+        if venue not in (_VENUES if market == "KR" else {"US"}):
+            raise ConfigurationError("NH venue must be KRX, NXT or UNT for KR, US for US")
+        if type(is_integrated) is not bool:
+            raise ConfigurationError("is_integrated must be a boolean")
+        self.is_integrated = is_integrated
         if type(allow_live_orders) is not bool:
             raise ConfigurationError("allow_live_orders must be a boolean")
         self._allow_live_orders = allow_live_orders
@@ -370,14 +374,14 @@ class NH(BaseBroker):
     def capabilities(self) -> Capabilities:
         return Capabilities(
             supports_spot=True,
-            supports_limit_order=self.venue in {"KRX", "NXT"},
+            supports_limit_order=self.venue in {"KRX", "NXT", "US"},
             supports_market_order=False,
-            supports_single_order_cancel=self.venue in {"KRX", "NXT"},
+            supports_single_order_cancel=self.venue in {"KRX", "NXT", "US"},
             supports_order_history=True,
             supports_virtual_account=True,
             virtual=self.virtual,
             venues=(self.venue,),
-            markets=("KR",),
+            markets=(self.market,),
             supports_nxt=self.venue == "NXT",
         )
 
@@ -405,6 +409,8 @@ class NH(BaseBroker):
 
     def get_quote(self, symbol: str, *, market: str = "KR") -> Quote:
         code = self._symbol(symbol, market)
+        if self.market == "US":
+            return self._call(lambda: self._us_quote(code))
 
         def read() -> Quote:
             row = self._quote_row(code)
@@ -433,6 +439,8 @@ class NH(BaseBroker):
     def get_rules(
         self, symbol: str, *, now: datetime | None = None, trading_day: Callable[[date], bool] | None = None
     ) -> Rules:
+        if self.market == "US":
+            return super().get_rules(symbol, now=now, trading_day=trading_day)
         code = self._symbol(symbol, "KR")
 
         def read() -> Rules:
@@ -496,6 +504,9 @@ class NH(BaseBroker):
         raise InvalidResponseError("NH balance exceeded the page limit")
 
     def get_balance(self) -> Balance:
+        if self.market == "US":
+            return self._call(self._us_balance)
+
         def read() -> Balance:
             row = self._balance()["Output_0"]
             if not isinstance(row, Mapping):
@@ -507,6 +518,9 @@ class NH(BaseBroker):
         return self._call(read)
 
     def get_positions(self) -> list[Position]:
+        if self.market == "US":
+            return self._call(self._us_positions)
+
         def read() -> list[Position]:
             body = self._balance(allow_empty_positions=True)
             rows = body.get("Output_1", [])
@@ -572,11 +586,20 @@ class NH(BaseBroker):
         return whole(row["sll_pbl_qty"])
 
     def available_qty(self, symbol: str) -> int:
+        if self.market == "US":
+            code = self._symbol(symbol, "US")
+            return self._call(lambda: whole(self._us_buying_power(code, "3")["sll_pbl_qty"]))
         code = self._symbol(symbol, "KR")
         return self._call(lambda: self._sellable_quantity(code))
 
     def buyable_quantity(self, symbol: str, *, price: Decimal | None = None) -> int:
         """Cash buyable quantity at the caller's ordinary limit price."""
+        if self.market == "US":
+            code = self._symbol(symbol, "US")
+            if price is None:
+                raise ConfigurationError("NH buyable quantity requires a limit price")
+            self._us_price(price)
+            return self._call(lambda: whole(self._us_buying_power(code, "2", price)["orr_pbl_qty"]))
         code = self._symbol(symbol, "KR")
         if price is None:
             raise ConfigurationError("NH buyable quantity requires a limit price")
@@ -612,12 +635,18 @@ class NH(BaseBroker):
                 raise NotSupportedError("NH implements cash limit orders only")
             # The shared stock ladder does not cover ETFs and other KR products.
             # Whole won is checked by BaseBroker; the venue decides product ticks.
+            if self.market == "US":
+                self._us_price(request.price)
+        elif self.market == "US":
+            if not request.order_id.startswith("us:"):
+                raise ConfigurationError("NH US cancellation requires the original US order number")
+            _order_number(request.order_id[3:])
         elif not request.order_id.startswith("mkt:"):
             raise ConfigurationError("NH cancellation requires the market order number from a placement")
         else:
             _order_number(request.order_id[4:])
 
-    def _write(self, path: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    def _write(self, path: str, payload: Mapping[str, Any], *, number_field: str = "mkt_orr_no") -> Mapping[str, Any]:
         """One order POST. Token renewal and HTTP replay are forbidden after transmission."""
         token = self._ensure_token()  # Preflight only: token issuance here cannot duplicate an order.
         headers = {
@@ -651,10 +680,12 @@ class NH(BaseBroker):
         output = body.get("Output_0")
         if not isinstance(output, Mapping):
             raise InvalidResponseError("NH order acknowledgement is missing; reconcile before retrying")
-        _order_number(output.get("mkt_orr_no"))
+        _order_number(output.get(number_field))
         return output
 
     def _place_order(self, request: OrderRequest) -> Order:
+        if self.market == "US":
+            return self._us_place_order(request)
         code = self._symbol(request.symbol, request.market)
         payload = {
             "act_no": self._account,
@@ -682,6 +713,8 @@ class NH(BaseBroker):
         )
 
     def _cancel_order(self, request: CancelRequest) -> Order:
+        if self.market == "US":
+            return self._us_cancel_order(request)
         code = self._symbol(request.symbol, request.market)
         self._write(
             "/krstock/order/v1/cancel",
@@ -708,9 +741,12 @@ class NH(BaseBroker):
         cts: str | None = None
         for _ in range(NH_MAX_BALANCE_PAGES):
             body, headers = self._read_response("/krstock/inquiry/v1/dailyOrderExecution", payload, None, cts=cts)
-            if body.get("Output_1") is None and str(body.get("rsp_cd", "")).strip() != "13578":
-                raise InvalidResponseError("NH read missing Output_1")
-            page = body.get("Output_1", [])
+            # Current official schema uses Output_0; older fixtures/wire used Output_1.
+            page = body.get("Output_1") if "Output_1" in body else body.get("Output_0")
+            if page is None:
+                if str(body.get("rsp_cd", "")).strip() != "13578":
+                    raise InvalidResponseError("NH daily order rows are missing")
+                page = []
             if not isinstance(page, list) or any(not isinstance(row, Mapping) for row in page):
                 raise InvalidResponseError("NH daily order rows are invalid")
             rows.extend(page)
@@ -730,6 +766,9 @@ class NH(BaseBroker):
         raise InvalidResponseError("NH daily order list exceeded the page limit")
 
     def list_orders(self, symbol: str | None = None) -> list[Order]:
+        if self.market == "US":
+            code = self._symbol(symbol, "US") if symbol is not None else None
+            return self._call(lambda: self._us_orders(code))
         code = self._symbol(symbol, "KR") if symbol is not None else None
 
         def read() -> list[Order]:
@@ -774,6 +813,7 @@ class NH(BaseBroker):
                         order_type=order_type,
                         quantity=quantity,
                         price=decimal(row["orr_pr"]),
+                        fill_price=optional_price(row.get("cns_avg_uit_pr")) if filled else None,
                         filled=filled,
                         remaining=remaining,
                         status=state,
@@ -786,7 +826,7 @@ class NH(BaseBroker):
 
     def status(self, order: Order) -> Order:
         code = self._symbol(order.symbol, order.market)
-        if not order.id.startswith("itg:"):
+        if not order.id.startswith("us:" if self.market == "US" else "itg:"):
             # The API documents no relation between mkt_orr_no and itg_orr_no.
             return order.model_copy(update={"status": "unknown"})
 
@@ -797,3 +837,215 @@ class NH(BaseBroker):
             return matches[0]
 
         return self._call(read)
+
+    @staticmethod
+    def _us_price(price: Any) -> Decimal:
+        value = decimal(price)
+        if value <= 0 or value * 100 != (value * 100).to_integral_value():
+            raise ConfigurationError("NH US limit price must be positive with at most two decimal places")
+        return value
+
+    def _us_quote(self, code: str) -> Quote:
+        row = self._read("/gbstock/quote/v1/current", {"iem_cd": code}, "Output_0", client=self._auth_client)[
+            "Output_0"
+        ]
+        if not isinstance(row, Mapping) or row.get("iem_cd") != code:
+            raise InvalidResponseError("NH US quote symbol does not match request")
+        bid, ask = optional_price(row.get("best_bid1")), optional_price(row.get("best_ask1"))
+        if bid is not None and ask is not None and bid > ask:
+            bid = ask = None
+        return Quote(
+            symbol=code, market="US", currency="USD", last=_positive(row["trdprc"], "last price"), bid=bid, ask=ask
+        )
+
+    def _us_buying_power(self, code: str, kind: str, price: Decimal | None = None) -> Mapping[str, Any]:
+        # 4 explicitly excludes integrated-margin buying power. 1 includes it,
+        # and is selected only for an account already enrolled by its owner.
+        payload = {
+            "act_no": self._account,
+            "pcs_dit": kind,
+            "fc_sec_trd_nat_cd": "200",
+            "iem_cd": code,
+            "wtm_cur_knd_cd": "1" if self.is_integrated else "4",
+            "oss_orr_knd_cd": "1",
+            "ahi_nmn_pr_tp_cd": "00",
+            "cfd_lon_cd": "00",
+        }
+        if price is not None:
+            payload["fc_orr_uit_pr"] = float(self._us_price(price))
+        row = self._read("/gbstock/inquiry/v1/buyableAmount", payload, "Output_0")["Output_0"]
+        if not isinstance(row, Mapping):
+            raise InvalidResponseError("NH US buying power block is invalid")
+        if kind in {"1", "2"} and row.get("wtm_cur_cd") != "USD":
+            raise InvalidResponseError("NH US buying power currency is not USD")
+        return row
+
+    def buyable_amount(self, symbol: str, *, price: Decimal | None = None) -> Decimal:
+        """Broker-calculated USD buying power; account enrollment is never changed."""
+        if self.market != "US":
+            raise NotSupportedError("NH symbol buying-power amount is implemented for US")
+        code = self._symbol(symbol, "US")
+        return self._call(lambda: decimal(self._us_buying_power(code, "1", price)["orr_pbl_amt"]))
+
+    def _us_pages(
+        self, path: str, payload: Mapping[str, Any], block: str
+    ) -> tuple[Mapping[str, Any], list[Mapping[str, Any]]]:
+        rows, seen, cts = [], set(), None
+        for _ in range(NH_MAX_BALANCE_PAGES):
+            body, headers = self._read_response(path, payload, None, cts=cts)
+            page = body.get(block)
+            if page is None and str(body.get("rsp_cd", "")).strip() == "13578":
+                page = []
+            if not isinstance(page, list) or any(not isinstance(row, Mapping) for row in page):
+                raise InvalidResponseError("NH US list block is missing or invalid")
+            rows.extend(page)
+            headers = {str(k).lower(): v for k, v in headers.items()}
+            flag = _cts_flag(headers)
+            continuing = str(body.get("rsp_cd", "")).strip() in NH_CONTINUATION_CODES
+            if flag == "N" and continuing:
+                raise InvalidResponseError("NH US continuation signals conflict")
+            if flag != "Y" and not (flag is None and continuing):
+                return body, rows
+            cts = str(headers.get("cts", "")).strip()
+            if not cts or cts in seen:
+                raise InvalidResponseError("NH US continuation key is missing or repeated")
+            seen.add(cts)
+        raise InvalidResponseError("NH US list exceeded the page limit")
+
+    def _us_holdings(self) -> tuple[Mapping[str, Any], list[Mapping[str, Any]]]:
+        body, rows = self._us_pages(
+            "/gbstock/inquiry/v1/balance",
+            {
+                "act_no": self._account,
+                "qut_iqr_dit_cd": "1",
+                "fc_sec_trd_nat_cd": "200",
+                "cur_cd": "USD",
+                "xns_dit_cd": "0",
+            },
+            "Output_1",
+        )
+        summary = body.get("Output_0")
+        if not isinstance(summary, Mapping):
+            raise InvalidResponseError("NH US balance summary is missing")
+        return summary, rows
+
+    def _us_balance(self) -> Balance:
+        summary, _ = self._us_holdings()
+        # Account cash remains conservative. Symbol buying power is queried above;
+        # this cash field does not add collateral, cross-currency margin or assets.
+        _, rows = self._us_pages("/gbstock/inquiry/v1/margin", {"act_no": self._account}, "Output_0")
+        dollars = [row for row in rows if row.get("cur_cd") == "USD"]
+        if len(dollars) != 1:
+            raise InvalidResponseError("NH USD cash row is absent or ambiguous")
+        cash = min(decimal(dollars[0]["fc_dca"]), decimal(dollars[0]["fc_drn_pbl_amt"]))
+        return Balance(currency="USD", cash_available=cash, position_value=decimal(summary["fc_eal_amt"]))
+
+    def _us_positions(self) -> list[Position]:
+        _, rows = self._us_holdings()
+        positions, seen = [], set()
+        for row in rows:
+            if row.get("fc_sec_trd_nat_cd") != "200" or row.get("cur_cd") != "USD":
+                raise InvalidResponseError("NH US holding country or currency does not match")
+            code = self._symbol(row["iem_cd"], "US")
+            if code in seen:
+                raise InvalidResponseError("NH US holding symbol is ambiguous")
+            seen.add(code)
+            positions.append(
+                Position(
+                    symbol=code,
+                    name=str(row.get("iem_nm", "")),
+                    market="US",
+                    quantity=whole(row["cns_bse_bnc_qty"]),
+                    sellable=whole(row["sll_pbl_qty1"]),
+                    average_price=decimal(row["fc_phs_uit_pr"]),
+                    last=decimal(row["fc_sec_end_pr"]),
+                    market_value=decimal(row["fc_eal_amt"]),
+                )
+            )
+        return positions
+
+    def _us_place_order(self, request: OrderRequest) -> Order:
+        payload = {
+            "act_no": self._account,
+            "fc_sec_trd_nat_cd": "200",
+            "iem_cd": request.symbol,
+            "orr_qty": request.quantity,
+            "fc_orr_uit_pr": float(self._us_price(request.price)),
+            "ahi_nmn_pr_tp_cd": "00",
+            "wtm_cur_knd_cd": "1",
+        }
+        output = self._write("/gbstock/order/v1/" + request.side, payload, number_field="orr_no")
+        return Order(
+            id="us:" + _order_number(output["orr_no"]),
+            symbol=request.symbol,
+            market="US",
+            side=request.side,
+            order_type="limit",
+            quantity=request.quantity,
+            price=request.price,
+            status="accepted",
+            virtual=self.virtual,
+        )
+
+    def _us_cancel_order(self, request: CancelRequest) -> Order:
+        self._write(
+            "/gbstock/order/v1/cancel",
+            {
+                "act_no": self._account,
+                "org_orr_no": int(_order_number(request.order_id[3:])),
+                "fc_sec_trd_nat_cd": "200",
+                "iem_cd": request.symbol,
+                "can_qty": request.quantity,
+                "all_pat_dit_cd": "2",
+            },
+            number_field="orr_no",
+        )
+        return Order(id=request.order_id, symbol=request.symbol, market="US", status="accepted", virtual=self.virtual)
+
+    def _us_orders(self, code: str | None) -> list[Order]:
+        payload = {
+            "orr_dt": self._clock().astimezone(ZoneInfo("America/New_York")).strftime("%Y%m%d"),
+            "act_no": self._account,
+            "oss_sby_dit_cd": "0",
+            "sot_dit": "0",
+            "ost_cns_dit": "0",
+        }
+        if code is not None:
+            payload["iem_cd"] = code
+        _, rows = self._us_pages("/gbstock/inquiry/v1/unexecuted", payload, "Output_0")
+        touched = {_order_number(row["org_orr_no"]) for row in rows if row.get("org_orr_no") not in (None, "", 0, "0")}
+        orders = []
+        for row in rows:
+            if row.get("fc_sec_trd_nat_cd") != "200":
+                raise InvalidResponseError("NH US ledger country does not match")
+            symbol = self._symbol(row["iem_cd"], "US")
+            if code is not None and symbol != code:
+                continue
+            number = _order_number(row["orr_no"])
+            quantity, filled, remaining = whole(row["orr_qty"]), whole(row["cns_qty"]), whole(row["ny_cns_orr_qty"])
+            changed = any(
+                str(row.get(k) or "").strip() for k in ("cor_can_dit_cd", "cor_can_dit_nm", "rjt_rsn_cts", "orr_sts_nm")
+            )
+            changed = changed or whole(row.get("can_qty") or 0) > 0 or whole(row.get("cor_qty") or 0) > 0
+            state = "unknown"
+            if quantity > 0 and filled + remaining == quantity and not changed and number not in touched:
+                state = "filled" if filled == quantity else "partial" if filled else "open"
+            orders.append(
+                Order(
+                    id="us:" + number,
+                    symbol=symbol,
+                    market="US",
+                    side={"1": "sell", "2": "buy"}.get(str(row.get("oss_sby_dit_cd"))),
+                    order_type="limit" if row.get("ahi_nmn_pr_tp_cd") == "00" else None,
+                    quantity=quantity,
+                    price=decimal(row["fc_orr_uit_pr"]),
+                    filled=filled,
+                    remaining=remaining,
+                    # cns_pr is documented as execution price, not an order-average.
+                    # Keep average fill price unknown until the vendor proves that binding.
+                    fill_price=None,
+                    status=state,
+                    virtual=self.virtual,
+                )
+            )
+        return orders

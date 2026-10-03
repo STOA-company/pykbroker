@@ -1,0 +1,135 @@
+{
+  "observed_at": "2026-10-04",
+  "source": "https://www.nhplug.com/openapi-docs/gbstock/openapi.json",
+  "sha256": "88944f68f582db1b95ec7b8853cf62f497cd65365c7499da481bd4916078942e",
+  "paths": {
+    "/gbstock/order/v1/buy": {
+      "request": {
+        "act_no": "계좌번호 / 길이 11 / 계좌번호 입력 / /n2/acctinfo 의 acct_no 사용 (운영은 acct_type=01·02, 모의투자는 03 계좌만 유효)",
+        "fc_sec_trd_nat_cd": "외화증권거래국가코드 / 길이 3 / 200.미국 070.일본 120.홍콩 160.상해 170.심천",
+        "iem_cd": "티커종목코드 / 길이 12 / 예시> 미국주식 APPLE인 경우, AAPL",
+        "orr_qty": "주문수량 / 길이 18 / 주문수량",
+        "fc_orr_uit_pr": "외화주문단가 / 길이 15.6 / 주문단가 - 소수점 2자리까지(향후변경예정) \"현물호가유형코드\" 00,11,12,61,62,63 시 필수",
+        "ahi_nmn_pr_tp_cd": "현물호가유형코드 / 길이 2 / 00.지정가 03.시장가 61.프리마켓(지정가) 62.애프터마켓(지정가) 63.주간거래(지정가) 11.LOO(장개시 지정가) 12.LOC(장마감 지정가) 13.MOO(장개시 시장가) 14.MOC(장마감 시장가) TW.TWAP(시장가) VW.VWAP(시장가) TL.TWAP(지정가) VL.VWAP(지정가)",
+        "wtm_cur_knd_cd": "증거금통화종류코드 / 길이 1 / 1.해당통화 2.원화"
+      },
+      "response": {
+        "Output_0": {
+          "orr_no": "주문번호 / 길이 10"
+        }
+      }
+    },
+    "/gbstock/order/v1/cancel": {
+      "request": {
+        "act_no": "계좌번호 / 길이 11 / 계좌번호 / /n2/acctinfo 의 acct_no 사용 (운영은 acct_type=01·02, 모의투자는 03 계좌만 유효)",
+        "org_orr_no": "원주문번호 / 길이 10 / 취소대상 주문번호",
+        "fc_sec_trd_nat_cd": "외화증권거래국가코드 / 길이 3 / 200.미국 070.일본 120.홍콩 160.상해 170.심천",
+        "iem_cd": "티커종목코드 / 길이 12 / 예시> 미국주식 APPLE인 경우, AAPL",
+        "can_qty": "취소수량 / 길이 18 / 취소수량",
+        "all_pat_dit_cd": "전체일부구분코드 / 길이 1 / 1:전체, 2:일부"
+      },
+      "response": {
+        "Output_0": {
+          "orr_no": "주문번호 / 길이 10"
+        }
+      }
+    },
+    "/gbstock/inquiry/v1/unexecuted": {
+      "request": {
+        "orr_dt": "주문일자 / 길이 8",
+        "act_no": "계좌번호 / 길이 11 / /n2/acctinfo 의 acct_no 사용 (운영은 acct_type=01·02, 모의투자는 03 계좌만 유효)",
+        "iem_cd": "티커종목코드 / 길이 12 / 예시> 미국주식 APPLE인 경우, AAPL",
+        "oss_sby_dit_cd": "해외증권매매구분코드 / 길이 1 / 0.전체 1.매도 2.매수",
+        "sot_dit": "정렬구분 / 길이 1 / 0.주문번호순 1.주문번호역순",
+        "orr_no": "주문번호 / 길이 10",
+        "ost_cns_dit": "체결구분 / 길이 1 / 0.전체 1.체결 2.미체결",
+        "ove_qty_dit_cd": "해외주식수량구분코드 / 길이 1"
+      },
+      "response": {
+        "Output_0": {
+          "orr_no": "주문번호 / 길이 10",
+          "org_orr_no": "원주문번호 / 길이 10",
+          "oss_sby_dit_cd": "해외증권매매구분코드 / 길이 1",
+          "sby_dit_nm": "매매구분명 / 길이 4",
+          "fc_sec_trd_nat_cd": "외화증권거래국가코드 / 길이 3",
+          "mkt_dit_cd_nm": "시장구분코드명 / 길이 50",
+          "iem_cd": "종목코드 / 길이 12",
+          "iem_nm": "종목명 / 길이 60",
+          "orr_qty": "주문수량 / 길이 18",
+          "fc_orr_uit_pr": "외화주문단가 / 길이 15.6",
+          "cns_qty": "체결수량 / 길이 18",
+          "cns_pr": "체결가격 / 길이 15.6",
+          "ny_cns_orr_qty": "미체결주문수량 / 길이 18",
+          "cor_can_dit_cd": "정정취소구분코드 / 길이 1",
+          "cor_can_dit_nm": "정정취소구분명 / 길이 4",
+          "cor_qty": "정정수량 / 길이 18",
+          "can_qty": "취소수량 / 길이 18",
+          "oss_ato_orr_sts_cd": "해외증권자동주문상태코드 / 길이 1",
+          "orr_sts_nm": "주문상태명 / 길이 6",
+          "oms_cus_orr_no": "OMS고객주문번호 / 길이 40",
+          "rjt_rsn_cts": "거부사유내용 / 길이 500",
+          "ivs_nat_krx_dit_cd": "투자국가거래소구분코드 / 길이 4",
+          "orr_pcs_mtd_cd_nm": "주문처리방법코드명 / 길이 40",
+          "ahi_nmn_pr_tp_cd": "현물호가유형코드 / 길이 2",
+          "ahi_nmn_pr_tp_cd_nm": "현물호가유형코드명 / 길이 20",
+          "fc_stop_orr_bse_pr": "외화STOP주문기준가격 / 길이 15.6",
+          "orr_pdt_dit_cd": "주문상품구분코드 / 길이 2",
+          "orr_dt": "주문일자 / 길이 8",
+          "csh_wtm_rt": "현금증거금율 / 길이 8.5",
+          "cfd_lon_cd": "신용대출코드 / 길이 2",
+          "cfd_lon_cd_nm": "신용대출코드명 / 길이 40",
+          "lon_dt": "대출일자 / 길이 8"
+        }
+      }
+    },
+    "/gbstock/inquiry/v1/buyableAmount": {
+      "request": {
+        "act_no": "계좌번호 / 길이 11 / /n2/acctinfo 의 acct_no 사용 (운영은 acct_type=01·02, 모의투자는 03 계좌만 유효)",
+        "pcs_dit": "처리구분 / 길이 1 / 1.매수가능금액조회 2.매수가능수량조회 3.매도가능수량조회 4.예약매수금액/수량 5.예약매도수량",
+        "fc_sec_trd_nat_cd": "외화증권거래국가코드 / 길이 3 / 200.미국 070.일본 120.홍콩 160.상해 170.심천",
+        "iem_cd": "종목코드 / 길이 12 / 예시> 미국주식 APPLE인 경우, AAPL",
+        "fc_orr_uit_pr": "외화주문단가 / 길이 15.6",
+        "wtm_cur_knd_cd": "증거금통화종류코드 / 길이 1 / 1.거래국가통화 2.원화 3.기타통화 4.거래국가통화(통합금거금가능금미포함)",
+        "oss_orr_knd_cd": "해외증권주문종류코드 / 길이 1 / 1.GTS(미국시장주문) 2.기타자동 3.기타수동",
+        "ahi_nmn_pr_tp_cd": "현물호가유형코드 / 길이 2 / 00.지정가 03.시장가 61.프리마켓(지정가) 62.애프터마켓(지정가) 63.주간거래(지정가) 11.LOO(장개시 지정가) 12.LOC(장마감 지정가) 13.MOO(장개시 시장가) 14.MOC(장마감 시장가) 15.STOP(시장가) 16.STOP LIMIT(지정가) TW.TWAP(시장가) VW.VWAP(시장가) TL.TWAP(지정가) VL.VWAP(지정가)",
+        "cfd_lon_cd": "신용대출코드 / 길이 2 / 00.현금 19.해외주식담보대출",
+        "lon_dt": "대출일자 / 길이 8 / YYYYMMDD"
+      },
+      "response": {
+        "Output_0": {
+          "fc_dca": "외화예수금 / 길이 15.3",
+          "mgg_fc_amt": "담보외화금액 / 길이 15.3",
+          "csh_wtm": "현금증거금 / 길이 15.3",
+          "re_use_obj_amt": "재사용대상금액 / 길이 15.3",
+          "re_use_rtr_use_amt": "재사용환원사용금액 / 길이 15.3",
+          "ect_use_amt": "기타사용금액 / 길이 15.3",
+          "orr_pbl_amt": "주문가능금액 / 길이 15.3",
+          "wtm_cur_cd": "증거금통화코드 / 길이 3",
+          "hld_qty": "보유수량 / 길이 18",
+          "orr_pbl_qty": "주문가능수량 / 길이 10",
+          "sll_pbl_qty": "매도가능수량 / 길이 18",
+          "sll_pbl_qty1": "매도가능수량1 / 길이 18",
+          "byn_cns_qty": "매수체결수량 / 길이 18",
+          "sll_cns_qty": "매도체결수량 / 길이 18",
+          "sll_orr_qty": "매도주문수량 / 길이 18",
+          "dps_rsc_qty": "처분제한수량 / 길이 18",
+          "byn_pbl_qty": "매수가능수량 / 길이 18",
+          "max_pbl_amt": "최대가능금액 / 길이 15.3",
+          "max_pbl_qty": "최대가능수량 / 길이 18",
+          "csh_wtm_rt": "현금증거금율 / 길이 8.5"
+        }
+      }
+    }
+  },
+  "kr_average_fill": {
+    "source": "https://www.nhplug.com/openapi-docs/krstock/openapi.json",
+    "sha256": "694fc0e709b46c6f8466b98450a2f0564371ba02bd71ec771d223ef2c47b2448",
+    "path": "/krstock/inquiry/v1/dailyOrderExecution",
+    "block": "Output_0[]",
+    "field": {
+      "type": "number",
+      "format": "double",
+      "description": "체결평균단가 / 길이 15.3"
+    }
+  }
+}
