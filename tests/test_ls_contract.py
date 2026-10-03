@@ -748,3 +748,79 @@ def test_us_order_and_exact_id_cancel_use_official_tr_template():
     assert submitted["OvrsOrdPrc"] == 100.25 and submitted["OrdprcPtnCode"] == "00"
     assert cancelled["OrdPtnCode"] == "08" and cancelled["OrgOrdNo"] == 42
     assert all(call[0] == "/overseas-stock/order" and call[1]["tr_cd"] == "COSAT00301" for call in client.calls)
+
+
+# The official token-present example resolves real transport, not demo payloads.
+def test_persisted_token_constructs_default_transport_without_request():
+    broker = LS(account="12345678", client_options={"token": "fixture-stored-token"})
+    assert broker._client.base_url == module.LS_API_BASE_URL
+    assert broker._client.response_headers == {}
+    assert not broker.capabilities().supports_limit_order
+    with pytest.raises(SpecUnverifiedError):
+        broker.place_order(buy())
+
+
+def test_explicit_real_optin_checks_token_account_then_posts_once(live_safety):
+    balance = page("CSPAQ12200", CSPAQ12200OutBlock1={"AcntNo": "12345678"})
+    client = FakeClient({"CSPAQ12200": [balance], "CSPAT00601": [page("CSPAT00601")]})
+    limiter = Mock(spec=RateLimiter)
+    broker = LS(
+        account="1234-5678",
+        client=client,
+        client_options={"token": "fixture-stored-token"},
+        allow_live_orders=True,
+        rate_limiter=limiter,
+        safety=live_safety,
+    )
+    assert broker.capabilities().supports_limit_order
+    order = broker.place_order(buy())
+    assert order.status == "accepted" and not order.virtual
+    assert [c[1]["tr_cd"] for c in client.calls] == ["CSPAQ12200", "CSPAT00601"]
+    assert client.calls[1][2]["CSPAT00601InBlock1"]["BnsTpCode"] == "2"
+    assert client.calls[1][2]["CSPAT00601InBlock1"]["MgntrnCode"] == "000"
+
+
+def test_real_token_account_mismatch_prevents_any_order_post(live_safety):
+    balance = page("CSPAQ12200", CSPAQ12200OutBlock1={"AcntNo": "87654321"})
+    client = FakeClient({"CSPAQ12200": [balance]})
+    broker = LS(
+        account="12345678",
+        client=client,
+        client_options={"token": "fixture-stored-token"},
+        allow_live_orders=True,
+        rate_limiter=Mock(spec=RateLimiter),
+        safety=live_safety,
+    )
+    with pytest.raises(ConfigurationError, match="bound"):
+        broker.place_order(buy())
+    assert [c[1]["tr_cd"] for c in client.calls] == ["CSPAQ12200"]
+
+
+@pytest.mark.parametrize("flag", [None, 1, "true"])
+def test_real_optin_is_exact_bool(flag):
+    with pytest.raises(ConfigurationError):
+        LS(account="12345678", client_options={"token": "fixture-stored-token"}, allow_live_orders=flag)
+
+
+def test_official_us_balance_success_code_is_tr_specific():
+    body = us_balance()
+    body["rsp_cd"] = "00001"
+    broker, client, _ = us_make({"COSOQ00201": [body]})
+    client.response_headers = {"tr_cont": "N"}
+    assert broker.get_balance().cash_available == Decimal("12.34")
+
+
+def test_official_us_ledger_success_code_is_tr_specific():
+    from datetime import date
+
+    broker, client, _ = us_make(
+        {"COSAQ00102": [{"rsp_cd": "00136", "COSAQ00102OutBlock3": []}]}, order_date=date(2026, 10, 2)
+    )
+    client.response_headers = {"tr_cont": "N"}
+    assert broker.list_orders() == []
+
+
+def test_official_cosat_blank_broker_type_is_not_invented():
+    broker, client, _ = us_make({"COSAT00301": [{"rsp_cd": "00000", "COSAT00301OutBlock2": {"OrdNo": 42}}]})
+    broker._place_order(buy(symbol="TSLA", market="US", venue="NASDAQ", price="100.25"))
+    assert client.calls[0][2]["COSAT00301InBlock1"]["BrkTpCode"] == ""

@@ -1,17 +1,21 @@
 """LS KR/US REST mappings with an injected boundary and default-closed writes.
 
 Field/path source: official TR guide version 20261002071141740 (2026-10-04).
-The guide does not establish write success codes, REST mock account binding,
-US BrkTpCode values, unified margin enrollment, or average fill price semantics.
-Those gaps do not become permission: live writes remain locked. US account
-snapshots require preserved response continuation headers and an explicit
-broker order date. No transport, authentication, or token refresh owner is added.
+Official public live-client code establishes all-zero rsp_cd and per-TR US read
+successes; COSAT00301 detail supplies a blank BrkTpCode in its Python example.
+Persisted account tokens use the shared no-redirect transport/rate limiter.
+Real writes default OFF, require explicit opt-in, broker account identity read,
+and OrderSafety. Mock REST binding, unified margin enrollment, average fill
+price and continued US snapshots remain unverified; no token issuer is added.
 """
 
+import json
 import re
+import urllib.request
 from collections.abc import Mapping
 from datetime import date
 
+from pykbroker._http import urlopen
 from pykbroker.brokers._common import BaseBroker, decimal, optional_price, whole
 from pykbroker.exceptions import (
     BrokerRejectedError,
@@ -19,12 +23,28 @@ from pykbroker.exceptions import (
     InvalidResponseError,
     NotSupportedError,
     SpecUnverifiedError,
+    TransportError,
 )
 from pykbroker.experimental._rest import RestBroker
 from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote
+from pykbroker.safety.rate_limit import credential_rate_limiter
 
 # Field contracts: official public guide version 20261002071141740.
 # https://openapi.ls-sec.co.kr/api/apis/public/tr-guides.json?download=true
+LS_READ_SUCCESS = {"COSAQ00102": {"00136"}, "COSOQ00201": {"00001"}}
+LS_RATES = {
+    "t1102": 10,
+    "CSPAQ12200": 1,
+    "t0424": 2,
+    "t0425": 2,
+    "CSPAT00601": 10,
+    "CSPAT00801": 3,
+    "g3101": 10,
+    "COSOQ00201": 1,
+    "COSAQ00102": 1,
+    "COSAT00301": 10,
+    "COSOQ02701": 1,
+}
 LS_CODES = {
     "exchange": "K",
     "balance_type": "0",
@@ -42,6 +62,7 @@ LS_CODES = {
     "cash": "000",
     "condition": "0",
     "member": "KRX",
+    "broker_type": "",
 }
 LS_US_VENUES = {"NYSE": "81", "NASDAQ": "82"}
 LS_SPEC_VERIFIED = False  # Global veto only; True never enables live orders.
@@ -49,6 +70,40 @@ LS_SPEC_VERIFIED = False  # Global veto only; True never enables live orders.
 LS_API_BASE_URL = "https://openapi.ls-sec.co.kr:8080"
 # UNVERIFIED: no distinct mock host established; do not invent one or reuse live.
 LS_MOCK_BASE_URL: str | None = None
+
+
+class _LsRestClient:
+    """One POST attempt through the shared no-redirect boundary; no token issue/refresh."""
+
+    def __init__(self):
+        self.base_url = LS_API_BASE_URL
+        self.response_headers = {}
+
+    def post(self, path, *, headers, json):
+        self.response_headers = {}
+        request = urllib.request.Request(self.base_url + path, data=_json_bytes(json), headers=headers, method="POST")
+        try:
+            with urlopen(request, timeout=10.0) as response:
+                self.response_headers = dict(response.headers)
+                return _json_object(response.read())
+        except (InvalidResponseError, TransportError):
+            raise
+        except Exception:
+            raise TransportError("LS transport failed; reconcile writes before retrying") from None
+
+
+def _json_bytes(value):
+    return json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8")
+
+
+def _json_object(value):
+    try:
+        result = json.loads(value)
+    except (TypeError, ValueError):
+        raise InvalidResponseError("LS response is not JSON") from None
+    if not isinstance(result, dict):
+        raise InvalidResponseError("LS response is not an object")
+    return result
 
 
 class LS(RestBroker):
@@ -66,10 +121,14 @@ class LS(RestBroker):
         venue: str | None = None,
         is_integrated: bool = False,
         order_date: date | None = None,
+        client_options: Mapping | None = None,
+        allow_live_orders: bool = False,
         **kwargs,
     ) -> None:
         if not isinstance(spec_verified, bool) or not isinstance(is_integrated, bool):
             raise ConfigurationError("LS verification and margin flags must be booleans")
+        if type(allow_live_orders) is not bool:
+            raise ConfigurationError("allow_live_orders must be a boolean")
         if is_integrated:
             raise SpecUnverifiedError("LS unified margin enrollment/settlement contract is unverified")
         if market == "US" and venue not in LS_US_VENUES:
@@ -78,6 +137,29 @@ class LS(RestBroker):
             raise ConfigurationError("LS order_date must be an explicit date")
         client, codes = kwargs.pop("client", None), kwargs.pop("codes", None)
         headers, limiter = kwargs.pop("headers", None), kwargs.pop("rate_limiter", None)
+        options = dict(client_options or {})
+        if set(options) - {"app_key", "token", "token_type", "mac_address"}:
+            raise ConfigurationError("Unknown LS client option")
+        token = options.get("token")
+        if token is not None and (not isinstance(token, str) or not token.strip()):
+            raise ConfigurationError("LS stored token must be nonempty")
+        if str(options.get("token_type", "Bearer")).lower() != "bearer":
+            raise ConfigurationError("LS token_type must be Bearer")
+        if client is None and token:
+            client = _LsRestClient()
+        if token:
+            headers = {
+                **dict(headers or {}),
+                "authorization": "Bearer " + token,
+                "mac_address": options.get("mac_address", ""),
+            }
+            credential = options.get("app_key") or token
+            if not isinstance(credential, str) or not credential:
+                raise ConfigurationError("LS credential scope is invalid")
+            limiter = limiter or credential_rate_limiter("ls", credential, LS_RATES)
+        if allow_live_orders and (not token or virtual):
+            raise ConfigurationError("LS live opt-in requires a persisted real-account token")
+        self._allow_live_orders = allow_live_orders
         # RestBroker's constructor is domestic-only; reuse its request boundary
         # with BaseBroker's existing KR/US validation and explicit LS state.
         BaseBroker.__init__(self, virtual=virtual, market=market, **kwargs)
@@ -102,8 +184,11 @@ class LS(RestBroker):
     def _mock_verified(self) -> bool:
         return LS_SPEC_VERIFIED is True and self._spec_verified is True and self._bound_virtual is True
 
+    def _writes_verified(self):
+        return self._mock_verified() or (self._bound_virtual is False and self._allow_live_orders is True)
+
     def capabilities(self) -> Capabilities:
-        verified = self._mock_verified()
+        verified = self._writes_verified()
         return Capabilities(
             virtual=self._bound_virtual,
             supports_spot=verified,
@@ -128,18 +213,37 @@ class LS(RestBroker):
             self._us_symbol(request.symbol)
 
     def place_order(self, request: OrderRequest) -> Order:
-        if not self._mock_verified():
-            raise SpecUnverifiedError("LS writes require a verified mock instance; live writes are locked")
+        if not self._writes_verified():
+            raise SpecUnverifiedError("LS writes require the explicit real-account opt-in or verified mock")
         self._verify_mode(self._client)
+        self._call(self._verify_account)
         return super().place_order(request)
 
     def cancel_order(self, request: CancelRequest) -> Order:
-        if not self._mock_verified():
-            raise SpecUnverifiedError("LS writes require a verified mock instance; live writes are locked")
+        if not self._writes_verified():
+            raise SpecUnverifiedError("LS writes require the explicit real-account opt-in or verified mock")
         self._verify_mode(self._client)
+        self._call(self._verify_account)
         return super().cancel_order(request)
 
+    def _verify_account(self):
+        if self._bound_virtual:
+            return  # Existing injected, explicitly verified mock contract.
+        if self.market == "US":
+            response = self._response(
+                "/overseas-stock/accno", "COSOQ02701", {"COSOQ02701InBlock1": {"RecCnt": 1, "CrcyCode": "USD"}}
+            )
+            row = response["COSOQ02701OutBlock1"]
+        else:
+            response = self._response("/stock/accno", "CSPAQ12200", {"CSPAQ12200InBlock1": {"BalCreTp": "0"}})
+            row = response["CSPAQ12200OutBlock1"]
+        actual = row.get("AcntNo") if isinstance(row, dict) else None
+        if not isinstance(actual, str) or actual.replace("-", "") != self._account.replace("-", ""):
+            raise ConfigurationError("LS token is not bound to the requested account")
+
     def _code(self, name: str) -> str:
+        if name == "broker_type" and self._codes.get(name) == "":
+            return ""  # Official COSAT00301 Python live-request example.
         value = super()._code(name)
         if not value.strip():
             raise ConfigurationError("Unverified vendor code; supply a reviewed codes mapping")
@@ -165,8 +269,9 @@ class LS(RestBroker):
         code = result.get("rsp_cd")
         if not isinstance(code, str) or not code.strip():
             raise InvalidResponseError("Missing LS response code; reconcile writes before retrying")
-        # UNVERIFIED: legacy success mapping; an absent code cannot succeed.
-        if code not in ("00000", "0000", "0"):
+        # Official token-present callRestTr and isApiSuccessCode; never the demo generator.
+        # Extra codes are documented in that client's TR_META for the two US reads.
+        if not re.fullmatch("0+", code) and (write or code not in LS_READ_SUCCESS.get(tr, set())):
             if write:
                 # Error meanings are unverified: never release a write for retry.
                 raise InvalidResponseError("Unverified LS write result; reconcile before retrying")
@@ -329,9 +434,9 @@ class LS(RestBroker):
         return super().status(order).model_copy(update={"virtual": self._bound_virtual})
 
     def _order(self, row) -> Order:
-        # UNVERIFIED (명세 미확인): candidate t0425 fields. Missing fill data stays None.
-        quantity = whole(row["qty"]) if self._mock_verified() and "qty" in row else None
-        filled = whole(row["cheqty"]) if self._mock_verified() and "cheqty" in row else None
+        # Official t0425 quantities; missing fields stay unknown and average fill price stays None.
+        quantity = whole(row["qty"]) if self._writes_verified() and "qty" in row else None
+        filled = whole(row["cheqty"]) if self._writes_verified() and "cheqty" in row else None
         remaining = whole(row["ordrem"])
         price = self._price(row.get("price"))
         if quantity is not None:
@@ -339,7 +444,7 @@ class LS(RestBroker):
                 raise InvalidResponseError("Inconsistent LS order quantities")
         status = "unknown"
         # No quantity subtraction, zero-remainder inference, or unverified state interpretation.
-        if self._mock_verified() and quantity is not None and filled is not None:
+        if self._writes_verified() and quantity is not None and filled is not None:
             if filled == quantity and remaining == 0:
                 status = "filled"
             elif filled > 0 and remaining > 0:
@@ -388,7 +493,11 @@ class LS(RestBroker):
     def _cancel_order(self, request: CancelRequest) -> Order:
         if self.market == "US":
             return self._us_write(request)
-        body = {"OrgOrdNo": request.order_id, "IsuNo": self._symbol(request.symbol, "KR"), "OrdQty": request.quantity}
+        body = {
+            "OrgOrdNo": request.order_id if self._bound_virtual else int(request.order_id),
+            "IsuNo": self._symbol(request.symbol, "KR"),
+            "OrdQty": request.quantity,
+        }
         response = self._response("/stock/order", "CSPAT00801", {"CSPAT00801InBlock1": body}, write=True)
         # UNVERIFIED: ack block; accepted does not prove the original order closed.
         self._order_id(response["CSPAT00801OutBlock2"]["OrdNo"])
