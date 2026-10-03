@@ -1,7 +1,9 @@
-"""Kiwoom domestic broker over a stored token, with explicit au10001 issuance: reads, limit orders and single cancels.
+"""Kiwoom KR/US broker over a stored token, with explicit au10001 issuance: reads, limit orders and single cancels.
 
 Spec: the official portal pages of 2026-09-26 12:44 KST (openapi.kiwoom.com/guide/apiGuideContents/...), as
-extracted in q-gateway plans/kiwoom_rest_spec.md. What those pages do not say is refused, never guessed.
+extracted in q-gateway plans/kiwoom_rest_spec.md. US source: official Kiwoom-Securities/Kiwoom-REST-API
+kiwoom/_data/kiwoom_api_spec.json at 953e5dbff123f437ab4d11a78a95191a685eb51f (read 2026-10-04).
+What those pages do not say is refused, never guessed.
 """
 
 import json
@@ -39,7 +41,12 @@ KIWOOM_MOCK_BASE_URL = "https://mockapi.kiwoom.com"
 KIWOOM_TR_RATE_LIMITS: dict[str, float] = {
     "ka10001": 1, "ka10004": 1, "kt00001": 1, "kt00018": 1, "ka10075": 0.5, "kt00007": 0.5,
     "kt10000": 1, "kt10001": 1, "kt10003": 1,
+    "usa20100": 0.4, "usa20101": 0.4, "ust21050": 0.4, "ust21070": 0.4,
+    "ust21110": 0.4, "ust21150": 0.4, "ust31490": 0.4,
+    "ust20000": 1, "ust20001": 1, "ust20003": 1,
 }  # fmt: skip
+# US peak (09:00-10:00 KST): all seven read TRs total 2.8/s, three write TRs total 3/s.
+# This also stays below mock one/TR/s; the KR and US budgets are documented separately.
 # A stored token is the only credential the broker holds; the secret key is used once by `issue_token` and dropped.
 CLIENT_OPTION_KEYS = {"token", "token_type", "expires_dt", "app_key"}
 # kt00001 qry_tp is 3 (estimated) or 2 (ordinary). The official sample asks for 3, but neither is described and an
@@ -56,6 +63,8 @@ TOKEN_EXPIRY_MARGIN = timedelta(minutes=5)
 _EXPIRES_DT = re.compile(r"\d{14}")
 # Spec: ord_no is «7자리» (the kt10000 sample shows 5), and 0000000 is the «no original order» filler, never an order.
 _ORDER_NO = re.compile(r"[0-9]{1,7}")
+_US_ORDER_NO = re.compile(r"[0-9]{1,9}")
+_US_VENUES = {"NASDAQ": "ND", "NYSE": "NY", "AMEX": "NA"}
 _UNEXPECTED_ERROR_CODE = 1999
 # trde_tp 0 (보통) is the only order type sent; ka10075/kt00007 spell types in Korean (보통 / 지정가 / 시장가), and any
 # other name stays unknown.
@@ -120,8 +129,9 @@ def _unpack(reply: Any, *, write: bool = False) -> tuple[Mapping[str, Any], Mapp
     return body, {str(key).lower(): value for key, value in headers.items()}
 
 
-def _order_number(value: Any) -> str:
-    if not (isinstance(value, str) and _ORDER_NO.fullmatch(value) and int(value)):
+def _order_number(value: Any, *, market: str = "KR") -> str:
+    pattern = _US_ORDER_NO if market == "US" else _ORDER_NO
+    if not (isinstance(value, str) and pattern.fullmatch(value) and int(value)):
         raise InvalidResponseError("Kiwoom order number is not the documented form; reconcile before retrying")
     return value
 
@@ -144,6 +154,7 @@ def _optional_price(value: Any) -> Decimal | None:
 class Kiwoom(BaseBroker):
     broker_code = "kiwoom"
     supports_virtual = True
+    us_venues = tuple(_US_VENUES)
 
     def __init__(
         self,
@@ -156,12 +167,20 @@ class Kiwoom(BaseBroker):
         safety: OrderSafety | None = None,
         market: str = "KR",
         virtual: bool = False,
+        venue: str | None = None,
+        is_integrated: bool = False,
         halt_provider: Callable[[str], bool] | None = None,
         clock: Callable[[], datetime] = _utcnow,
     ) -> None:
         super().__init__(account=account, safety=safety, market=market, virtual=virtual, halt_provider=halt_provider)
-        if market != "KR":
-            raise NotSupportedError("Kiwoom US is not implemented")
+        if market == "US" and venue not in _US_VENUES:
+            raise ConfigurationError("Kiwoom US requires NASDAQ, NYSE or AMEX venue")
+        if market == "KR" and venue not in (None, "KRX"):
+            raise NotSupportedError("Kiwoom KR supports KRX only")
+        if not isinstance(is_integrated, bool):
+            raise ConfigurationError("is_integrated must be an explicit boolean")
+        self.venue = venue
+        self.is_integrated = is_integrated
         options = dict(client_options)
         if not set(options) <= CLIENT_OPTION_KEYS:
             raise ConfigurationError("client_options accepts only token, token_type, expires_dt and app_key")
@@ -261,8 +280,9 @@ class Kiwoom(BaseBroker):
             # ka10075 is a snapshot, but the spec does not say how current it is: not declared real-time.
             supports_virtual_account=True,
             virtual=self.virtual,
-            venues=("KRX",),
-            markets=("KR",),
+            requires_venue=self.market == "US",
+            venues=self.us_venues if self.market == "US" else ("KRX",),
+            markets=(self.market,),
         )
 
     def _basic(self, code: str) -> Mapping[str, Any]:
@@ -270,6 +290,9 @@ class Kiwoom(BaseBroker):
 
     def get_quote(self, symbol: str, *, market: str = "KR") -> Quote:
         code = self._symbol(symbol, market)
+
+        if self.market == "US":
+            return self._call(lambda: self._us_quote(code))
 
         def read() -> Quote:
             last = _price(self._basic(code)["cur_prc"])
@@ -286,6 +309,8 @@ class Kiwoom(BaseBroker):
     def get_rules(
         self, symbol: str, *, now: datetime | None = None, trading_day: Callable[[date], bool] | None = None
     ) -> Rules:
+        if self.market == "US":
+            return super().get_rules(symbol, now=now, trading_day=trading_day)
         code = self._symbol(symbol, "KR")
 
         def read() -> tuple[Decimal, Decimal | None, Decimal | None]:
@@ -313,6 +338,12 @@ class Kiwoom(BaseBroker):
         )
 
     def _cash(self) -> Decimal:
+        if self.market == "US":
+            rows = self._rows("/api/us/acnt", "ust21110", {}, "result_list")
+            usd = [row for row in rows if row.get("crnc_code") == "USD"]
+            if len(usd) != 1:
+                raise InvalidResponseError("Kiwoom cash must contain exactly one USD row")
+            return decimal(usd[0]["fc_ord_alowa"])
         row = self._post("/api/dostk/acnt", "kt00001", {"qry_tp": KIWOOM_CASH_QUERY_TYPE})[0]
         # `ord_alow_amt` (주문가능금액) is not documented as cash-only and the official sample shows it above the
         # deposit `entr` (85,341 vs 17,534), so it is capped by the deposit. `prsm_dpst_aset_amt` is never used.
@@ -324,11 +355,15 @@ class Kiwoom(BaseBroker):
     def get_balance(self) -> Balance:
         def read() -> Balance:
             value = sum((position.market_value for position in self._positions()), Decimal(0))
-            return Balance(cash_available=self._cash(), position_value=value)
+            return Balance(
+                currency="USD" if self.market == "US" else "KRW", cash_available=self._cash(), position_value=value
+            )
 
         return self._call(read)
 
     def _positions(self) -> list[Position]:
+        if self.market == "US":
+            return self._us_positions()
         exchange, query = self._codes.get("exchange", "KRX"), self._codes.get("query_type")
         if exchange not in KIWOOM_POSITION_EXCHANGES or query not in KIWOOM_POSITION_QUERY_TYPES:
             raise ConfigurationError("Supply codes exchange (KRX) and query_type (1 or 2, see the kt00018 spec)")
@@ -355,19 +390,22 @@ class Kiwoom(BaseBroker):
         super()._validate_order(request)
         if isinstance(request, OrderRequest) and request.order_type != "limit":
             raise NotSupportedError("Kiwoom implements limit orders only")
-        if isinstance(request, CancelRequest) and not (_ORDER_NO.fullmatch(request.order_id) and int(request.order_id)):
+        pattern = _US_ORDER_NO if self.market == "US" else _ORDER_NO
+        if isinstance(request, CancelRequest) and not (pattern.fullmatch(request.order_id) and int(request.order_id)):
             # all zeros is the «no original order» filler, never a real order number
-            raise ConfigurationError("Kiwoom order numbers are 1 to 7 digits and not all zeros")
+            raise ConfigurationError("Kiwoom order number format is invalid for this market")
 
     def _write(self, path: str, tr: str, body: dict[str, Any]) -> Mapping[str, Any]:
         """One POST, never repeated: this client does not retry and no caller loop may. A refusal is a return_code
         integer other than 0; a failed send or an unreadable answer is unknown, so `_call` reports it as such."""
         response = self._post(path, tr, body, write=True)[0]
-        _order_number(response.get("ord_no"))
+        _order_number(response.get("ord_no"), market=self.market)
         return response
 
     def _place_order(self, request: OrderRequest) -> Order:
         code = self._symbol(request.symbol, request.market)
+        if self.market == "US":
+            return self._us_place(request, code)
         body = {
             "dmst_stex_tp": "KRX",
             "stk_cd": code,
@@ -392,6 +430,8 @@ class Kiwoom(BaseBroker):
 
     def _cancel_order(self, request: CancelRequest) -> Order:
         code = self._symbol(request.symbol, request.market)
+        if self.market == "US":
+            return self._us_cancel(request, code)
         body = {
             "dmst_stex_tp": "KRX",
             "orig_ord_no": request.order_id,
@@ -407,6 +447,8 @@ class Kiwoom(BaseBroker):
         return Order(id=request.order_id, symbol=code, status="accepted", virtual=self.virtual)
 
     def list_orders(self, symbol: str | None = None) -> list[Order]:
+        if self.market == "US":
+            return self._call(lambda: self._us_orders(symbol))
         code = self._symbol(symbol, self.market) if symbol is not None else None
         body = {"all_stk_tp": "0" if code is None else "1", "trde_tp": "0", "stex_tp": "1"}
         if code is not None:
@@ -441,6 +483,8 @@ class Kiwoom(BaseBroker):
         """kt00007 for today (KST) by order number. An order the ledger does not show exactly once, or whose numbers
         do not add up, or that a cancel/amend row points at, is unknown: absence never proves a fill or a cancel."""
         code = self._symbol(order.symbol, order.market)
+        if self.market == "US":
+            return self._call(lambda: self._us_status(order, code))
         today = self._clock().astimezone(KST).strftime("%Y%m%d")
         body = {
             "ord_dt": today,
@@ -464,7 +508,170 @@ class Kiwoom(BaseBroker):
             elif remaining and not touched and filled + remaining == quantity:
                 status = "partial" if filled else "open"
             return order.model_copy(
-                update={"status": status, "quantity": quantity, "filled": filled, "remaining": remaining}
+                update={
+                    "status": status,
+                    "quantity": quantity,
+                    "filled": filled,
+                    "remaining": remaining,
+                    "fill_price": _optional_price(mine[0].get("cntr_uv")) if filled == 1 else None,
+                }
             )
 
         return self._call(read)
+
+    def _us_body(self, code: str) -> dict[str, str]:
+        return {"stex_tp": _US_VENUES[self.venue], "stk_cd": code}
+
+    def _us_quote(self, code: str) -> Quote:
+        basic = self._post("/api/us/mrkcond", "usa20100", self._us_body(code))[0]
+        book = self._post("/api/us/mrkcond", "usa20101", self._us_body(code))[0]
+        bid, ask = _optional_price(book.get("fpr_buy_bid")), _optional_price(book.get("fpr_sel_bid"))
+        if bid is not None and ask is not None and bid > ask:
+            bid = ask = None
+        # dt/bid_tm have no documented timezone; a receipt clock is not a source timestamp.
+        return Quote(
+            symbol=code,
+            market="US",
+            last=_price(basic["cur_prc"]),
+            bid=bid,
+            ask=ask,
+            prev_close=_optional_price(basic.get("base_close_pric")),
+        )
+
+    def _us_positions(self) -> list[Position]:
+        rows = self._rows("/api/us/acnt", "ust21070", self._us_body(""), "result_list")
+        positions = []
+        for row in rows:
+            if row.get("crnc_code") != "USD":
+                raise InvalidResponseError("Kiwoom US holding currency is not USD")
+            positions.append(
+                Position(
+                    symbol=self._symbol(row["stk_cd"], "US"),
+                    name=row["frgn_stk_nm"],
+                    quantity=whole(row["poss_qty"]),
+                    sellable=whole(row["sell_alowq"]),
+                    average_price=_price(row["frgn_stk_book_uv"]),
+                    last=_price(row["now_pric"]),
+                    market_value=decimal(row["evlt_amt"]),
+                    market="US",
+                )
+            )
+        return positions
+
+    def orderable_quantity(self, symbol: str, price: Decimal) -> int:
+        """ust31490 no-debt quantity from the broker. No cash/FX/asset-value conversion.
+
+        The existing account's explicit is_integrated selects the broker's KRW-order column,
+        only when the broker confirms that the account has applied for KRW orders.
+        This read neither enrolls the account nor changes order submission safety.
+        """
+        code = self._symbol(symbol, "US")
+        price = decimal(price)
+        if not price:
+            raise ConfigurationError("Supply a positive order price")
+
+        def read() -> int:
+            row = self._post("/api/us/ordr", "ust31490", {**self._us_body(code), "uv": format(price, "f")})[0]
+            if row.get("crnc_code") != "USD":
+                raise InvalidResponseError("Kiwoom orderability currency is not USD")
+            key = "min_ord_alowq"
+            if self.is_integrated:
+                if row.get("krw_ord_rqst_yn") != "Y":
+                    raise NotSupportedError("The broker has not enabled KRW orders for this account")
+                key = "min_krw_ord_alowq"
+            return whole(row[key])
+
+        return self._call(read)
+
+    def _us_place(self, request: OrderRequest, code: str) -> Order:
+        response = self._write(
+            "/api/us/ordr",
+            "ust20000" if request.side == "buy" else "ust20001",
+            {
+                **self._us_body(code),
+                "ord_qty": str(request.quantity),
+                "ord_uv": format(request.price, "f"),
+                "trde_tp": "00",
+            },
+        )
+        return Order(
+            id=response["ord_no"],
+            symbol=code,
+            market="US",
+            side=request.side,
+            order_type="limit",
+            quantity=request.quantity,
+            price=request.price,
+            status="accepted",
+            virtual=self.virtual,
+        )
+
+    def _us_cancel(self, request: CancelRequest, code: str) -> Order:
+        # ust20003 has no quantity parameter and cancels the entire order. Refuse partial cancels
+        # before a POST; a concurrent external amendment/fill still requires reconciliation.
+        mine = [order for order in self._us_orders(code) if order.id == request.order_id]
+        if len(mine) != 1 or mine[0].remaining != request.quantity or mine[0].status not in {"open", "partial"}:
+            raise NotSupportedError("Kiwoom US cancel requires the full confirmed remaining quantity")
+        response = self._write("/api/us/ordr", "ust20003", {**self._us_body(code), "orig_ord_no": request.order_id})
+        if whole(response["cncl_ord_qty"]) != request.quantity:
+            raise InvalidResponseError("Kiwoom cancelled another quantity; reconcile before retrying")
+        return Order(id=request.order_id, symbol=code, market="US", status="accepted", virtual=self.virtual)
+
+    def _us_order_row(self, row: Mapping[str, Any]) -> Order:
+        quantity, filled, remaining = (whole(row[name]) for name in ("ord_qty", "cntr_qty", "ord_remnq"))
+        if row.get("crnc_code") != "USD":
+            raise InvalidResponseError("Kiwoom order currency is not USD")
+        changed = whole(row["mdfy_qty"]) or whole(row["cncl_qty"])
+        status = "unknown"
+        if not changed and filled + remaining == quantity:
+            if filled and not remaining:
+                status = "filled"
+            elif remaining:
+                status = "partial" if filled else "open"
+        # cntr_uv is documented as execution unit price, not weighted average. Preserve unknown.
+        # A single filled share necessarily has one unit price; the broker price can be preserved then.
+        return Order(
+            id=_order_number(row["ord_no"], market="US"),
+            symbol=self._symbol(row["stk_cd"], "US"),
+            market="US",
+            side={"1": "sell", "2": "buy"}.get(row.get("slby_tp")),
+            order_type={"00": "limit", "03": "market", "지정가": "limit"}.get(row.get("frgn_trde_tp")),
+            price=_optional_price(row.get("ord_uv")),
+            quantity=quantity,
+            filled=filled,
+            remaining=remaining,
+            status=status,
+            fill_price=_optional_price(row.get("cntr_uv")) if filled == 1 else None,
+            virtual=self.virtual,
+        )
+
+    def _us_orders(self, symbol: str | None) -> list[Order]:
+        code = self._symbol(symbol, "US") if symbol is not None else ""
+        rows = self._rows(
+            "/api/us/acnt", "ust21050", {**self._us_body(code), "ord_dt": "", "slby_tp": "0"}, "result_list"
+        )
+        return [
+            self._us_order_row(row)
+            for row in rows
+            if (not code or row.get("stk_cd") == code) and row.get("ord_cntr_tp") == "10"
+        ]
+
+    def _us_status(self, order: Order, code: str) -> Order:
+        # Empty ord_dt is explicitly documented as today's ledger; no timezone inference.
+        rows = self._rows(
+            "/api/us/acnt",
+            "ust21150",
+            {
+                **self._us_body(code),
+                "ord_dt": "",
+                "query_tp": "1",
+                "slby_tp": "0",
+                "oppo_trde_tp": "%",
+                "fr_ord_no": "",
+            },
+            "result_list",
+        )
+        mine = [row for row in rows if row.get("ord_no") == order.id and row.get("stk_cd") == code]
+        if len(mine) != 1:
+            return order.model_copy(update={"status": "unknown"})
+        return self._us_order_row(mine[0])
