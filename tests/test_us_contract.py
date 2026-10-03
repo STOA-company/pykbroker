@@ -194,3 +194,44 @@ def test_kis_us_exact_cancel_and_ledger_full_fill(live_safety):
     ]}
     result = broker.status(Order(id="42", symbol="TEST", market="US"))
     assert result.status == "filled" and result.fill_price is None
+
+@pytest.mark.parametrize("native,expected", [("매매 가능", False), (None, None), ("", None),
+    ("Y", None), ("N", None), ("1", None), ("0", None), (1, None), (0, None),
+    (True, None), (False, None), ("매매 불가", None), (" 매매 가능 ", None)])
+def test_kis_us_native_orderability_reuses_bound_quote_and_never_guesses_enum(native, expected):
+    client, api, scope = Mock(), Mock(), Mock()
+    client.key = SimpleNamespace(virtual_account=False)
+    client.account.return_value = scope
+    api.get_price_overseas_detail.return_value = {"rt_cd": "0", "output": {
+        "last": "100", "e_ordyn": native}}
+    api.get_quote_overseas.return_value = {"rt_cd": "0", "output2": {"pbid1": "99", "pask1": "101"}}
+    broker = KIS(account="fixture", market="US", venue="NASDAQ", client=client, api=api,
+                 halt_provider=lambda symbol: False)
+    broker.get_quote("AAPL", market="US")
+    rules = broker.get_rules("AAPL")
+    assert rules.halted is expected
+    api.get_price_overseas_detail.assert_called_once_with(kis_account=scope, excd="NAS", code="AAPL")
+    api.get_quote_overseas.assert_called_once_with(kis_account=scope, excd="NAS", code="AAPL")
+    assert broker._us_native_orderability == {}
+
+
+def test_kis_us_native_orderability_cannot_override_caller_halt_or_cross_venue_snapshot():
+    client, api, scope = Mock(), Mock(), Mock()
+    client.key = SimpleNamespace(virtual_account=False)
+    client.account.return_value = scope
+    api.get_price_overseas_detail.return_value = {"rt_cd": "0", "output": {
+        "last": "100", "e_ordyn": "매매 가능"}}
+    api.get_quote_overseas.return_value = {"rt_cd": "0", "output2": {"pbid1": "99", "pask1": "101"}}
+    broker = KIS(account="fixture", market="US", venue="NASDAQ", client=client, api=api,
+                 halt_provider=lambda symbol: True)
+    broker.get_quote("AAPL", market="US")
+    assert broker.get_rules("AAPL").halted is True
+    broker._halt_provider = None
+    broker._us_native_orderability[("NASDAQ", "AAPL")] = True
+    broker.venue = "NYSE"
+    api.get_price_overseas_detail.return_value = {"rt_cd": "0", "output": {"last": "100"}}
+    assert broker.get_rules("AAPL").halted is None
+    api.get_price_overseas_detail.assert_called_with(kis_account=scope, excd="NYS", code="AAPL")
+    # Neither a prior venue snapshot nor the earlier ticker may answer another query pair.
+    assert broker.get_rules("MSFT").halted is None
+    api.get_price_overseas_detail.assert_called_with(kis_account=scope, excd="NYS", code="MSFT")

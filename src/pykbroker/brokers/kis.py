@@ -154,6 +154,8 @@ class KIS(BaseBroker):
             raise ConfigurationError("Set the account mode with virtual=, not client_options")
         self._scope = None
         self._owns_client = client is None
+        # Consume once in US rules; the query's configured venue and ticker bind the fact.
+        self._us_native_orderability: dict[tuple[str, str], bool | None] = {}
 
     def _connect(self) -> tuple[Any, Any]:
         try:
@@ -211,7 +213,24 @@ class KIS(BaseBroker):
     ) -> Rules:
         """KR rules come from the live price row: tick, the daily band, and the halt flag."""
         if self.market != "KR":
-            return super().get_rules(symbol, now=now, trading_day=trading_day)
+            code = self._symbol(symbol, "US")
+            key = (self.venue, code)
+            rules = super().get_rules(code, now=now, trading_day=trading_day)
+            if rules.halted is True:
+                self._us_native_orderability.clear()
+                return rules  # An affirmative caller halt is never talked away.
+            if key not in self._us_native_orderability:
+                def read_native() -> bool | None:
+                    scope, api = self._connect()
+                    output = check_response(api.get_price_overseas_detail(
+                        kis_account=scope, excd=VENUES[self.venue][0], code=code), "kis")["output"]
+                    return self._us_orderability(output)
+                self._us_native_orderability[key] = self._call(read_native)
+            orderable = self._us_native_orderability.pop(key)
+            self._us_native_orderability.clear()
+            # US uses the native broker-orderability guard, not an invented exchange halt enum.
+            # A positive two-sided quote/caller False cannot replace a missing native answer.
+            return rules.model_copy(update={"halted": False if orderable is True else None})
         code = self._symbol(symbol, "KR")
 
         def read() -> Rules:
@@ -256,6 +275,13 @@ class KIS(BaseBroker):
             return True
         return venue if venue is False else notice
 
+    @staticmethod
+    def _us_orderability(output: Any) -> bool | None:
+        # Official HHDFS76200200 e_ordyn example is this exact semantic literal.
+        # Other/missing values have no published exhaustive enum and remain unknown.
+        value = field(output, "e_ordyn")
+        return True if type(value) is str and value == "매매 가능" else None
+
     def get_quote(self, symbol: str, *, market: str = "KR") -> Quote:
         symbol = self._symbol(symbol, market)
 
@@ -274,13 +300,15 @@ class KIS(BaseBroker):
             kwargs = dict(kis_account=scope, excd=VENUES[self.venue][0], code=symbol)
             price = check_response(api.get_price_overseas_detail(**kwargs), "kis")["output"]
             book = check_response(api.get_quote_overseas(**kwargs), "kis")["output2"]
-            return Quote(
+            quote = Quote(
                 symbol=symbol,
                 market="US",
                 last=decimal(price["last"]),
                 bid=optional_price(book["pbid1"]),
                 ask=optional_price(book["pask1"]),
             )
+            self._us_native_orderability[(self.venue, symbol)] = self._us_orderability(price)
+            return quote
 
         return self._call(read)
 
