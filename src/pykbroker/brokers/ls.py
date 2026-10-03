@@ -217,6 +217,8 @@ class LS(RestBroker):
     def place_order(self, request: OrderRequest) -> Order:
         if not self._writes_verified():
             raise SpecUnverifiedError("LS writes require the explicit real-account opt-in or verified mock")
+        if request.market == "US" and type(self._order_date) is not date:
+            raise ConfigurationError("LS US submission requires an explicit broker order_date for reconciliation")
         self._verify_mode(self._client)
         self._call(self._verify_account)
         return super().place_order(request)
