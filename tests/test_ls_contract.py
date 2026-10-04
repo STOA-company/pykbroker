@@ -700,6 +700,16 @@ def test_us_order_query_requires_broker_date_without_transport():
     assert client.calls == []
 
 
+def test_us_new_order_requires_broker_date_before_any_transport(live_safety):
+    client = FakeClient({})
+    broker = LS(account="12345678", market="US", venue="NASDAQ", client=client,
+                client_options={"token": "fixture-stored-token"}, allow_live_orders=True,
+                rate_limiter=Mock(spec=RateLimiter), safety=live_safety)
+    with pytest.raises(ConfigurationError, match="broker order_date"):
+        broker.place_order(buy(symbol="AAPL", market="US", venue="NASDAQ", price="100"))
+    assert client.calls == []
+
+
 def test_us_quantity_status_never_maps_execution_price_to_average_fill():
     from datetime import date
 
