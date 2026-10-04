@@ -1,0 +1,251 @@
+{
+  "scope": "public official documentation GET / already received official local schema only; no broker API or auth calls",
+  "observed_date_utc": "2026-10-04",
+  "native_mapping": {
+    "DBFI": null,
+    "NH": null,
+    "Toss": null
+  },
+  "sources": [
+    {
+      "broker": "DBFI",
+      "artifact": "db-new-orderbook.py",
+      "lines": "18-53",
+      "finding": "FSTKHOGA response defines price/depth fields; no US current halt or orderability enum.",
+      "url": "https://raw.githubusercontent.com/DBsecurities/dbsec-open-api/564b5100b80a3a785468b77ee8c0557f6edcfdeb/examples/ov_stock_quote/ov_stock_inquire_orderbook.py",
+      "final_url": "https://raw.githubusercontent.com/DBsecurities/dbsec-open-api/564b5100b80a3a785468b77ee8c0557f6edcfdeb/examples/ov_stock_quote/ov_stock_inquire_orderbook.py",
+      "status": 200,
+      "sha256": "05b2f44d1506373a02b507995acf4be5a69345cd4fe751d2f60dbb9eadd32904",
+      "bytes": 2991,
+      "observed_utc": "2026-10-04T00:15:21.208434+00:00"
+    },
+    {
+      "broker": "DBFI",
+      "artifact": "db-order-endpoints.py",
+      "lines": "417-449",
+      "finding": "CAZCQ01300 reports account buying power/quantity, not instrument halt permission.",
+      "url": "https://raw.githubusercontent.com/DBsecurities/dbsec-open-api/564b5100b80a3a785468b77ee8c0557f6edcfdeb/dbsec_sdk/apis/ov_stock_order/endpoints.py",
+      "final_url": "https://raw.githubusercontent.com/DBsecurities/dbsec-open-api/564b5100b80a3a785468b77ee8c0557f6edcfdeb/dbsec_sdk/apis/ov_stock_order/endpoints.py",
+      "status": 200,
+      "sha256": "c9e7a763422d7f06741a472f38d43bd58052f095eb400828baea04a1075d7824",
+      "bytes": 29862,
+      "observed_utc": "2026-10-04T00:15:21.456682+00:00"
+    },
+    {
+      "broker": "DBFI",
+      "artifact": "db-dataroom-posts.json",
+      "lines": "db-dataroom-posts.pretty.json:1-146",
+      "finding": "New public download inventory: two Excel price/chart examples, one Linux futures example and TradingView order example.",
+      "url": "https://openapi.dbsec.co.kr/api/forums/10000000-0000-0011-0000-000000000004/posts",
+      "final_url": "https://openapi.dbsec.co.kr/api/forums/10000000-0000-0011-0000-000000000004/posts",
+      "status": 200,
+      "sha256": "e5999ca6b6d6632764be0f67b30e356743c6dad387ca496f573feefe7853da2f",
+      "bytes": 2808,
+      "observed_utc": "2026-10-04T00:17:14.420120+00:00"
+    },
+    {
+      "broker": "DBFI",
+      "artifact": "db-excel-price-post.json",
+      "lines": "db-excel-price-post.pretty.json:4-5,33-38",
+      "finding": "New official public price example attachment; no US permission enum in its post.",
+      "url": "https://openapi.dbsec.co.kr/api/forums/10000000-0000-0011-0000-000000000004/posts/f3518535-d4f4-466b-aee7-dc21f2342072",
+      "final_url": "https://openapi.dbsec.co.kr/api/forums/10000000-0000-0011-0000-000000000004/posts/f3518535-d4f4-466b-aee7-dc21f2342072",
+      "status": 200,
+      "sha256": "afebb84d93f45d4d7ac5bf2acc85687eeda90feafef76bc0f2a5539210385c74",
+      "bytes": 1669,
+      "observed_utc": "2026-10-04T00:18:20.721816+00:00"
+    },
+    {
+      "broker": "DBFI",
+      "artifact": "db-excel-price.zip",
+      "lines": "member XLSM xl/sharedStrings.xml (18 strings), readback.json:2-9",
+      "finding": "Downloaded but not executed: sheet examples include domestic ticker 005930; no halt definition in shared strings. VBA not decoded, no absence claim for VBA.",
+      "url": "https://openapi.dbsec.co.kr/files/download/4198f754-98aa-44ae-8046-2c9692dae17c",
+      "final_url": "https://openapi.dbsec.co.kr/files/download/4198f754-98aa-44ae-8046-2c9692dae17c",
+      "status": 200,
+      "sha256": "c5f487ca7eef3e74b63fa6bfcc5745b5e31cb05961dd730fd7ee638f7c14d78e",
+      "bytes": 28001,
+      "observed_utc": "2026-10-04T00:20:52.632279+00:00",
+      "member_sha256": "1c896c93cb479d00d15a88123015bc453275747f6d690cd79bf5ab250ee1ed35",
+      "member_lines": "XLSM xl/sharedStrings.xml:1 (18 strings); derived db-excel-readback.pretty.json:2-9"
+    },
+    {
+      "broker": "NH",
+      "artifact": "nh-official-sdk.zip",
+      "lines": "instruments/headers/m_gtsstock.h:28-29; snippets/gbstock/current_price/current_price.py:1-12",
+      "finding": "Pinned official repository: trade_flag has observed 1 only and lock_cls has no code definition; quote sample supplies no normal enum.",
+      "url": "https://codeload.github.com/PLUG-OpenAPI/nhplug-sdk/zip/13866ff45dadb25d89e7e68db69ffe79620b198a",
+      "final_url": "https://codeload.github.com/PLUG-OpenAPI/nhplug-sdk/zip/13866ff45dadb25d89e7e68db69ffe79620b198a",
+      "status": 200,
+      "sha256": "2b3e837a81473453ed8e402cb4dfafe83d19d6c3933da58a1c9eef101fa70c0b",
+      "bytes": 195144,
+      "observed_utc": "2026-10-04T00:15:52.473223+00:00",
+      "members": [
+        {
+          "path": "instruments/headers/m_gtsstock.h",
+          "url": "https://github.com/PLUG-OpenAPI/nhplug-sdk/blob/13866ff45dadb25d89e7e68db69ffe79620b198a/instruments/headers/m_gtsstock.h",
+          "sha256": "bcbe6497a76351a18d71e43c155ee0f01cc3cd08063a4eea4c8d654c0d22637f",
+          "lines": "28-29"
+        },
+        {
+          "path": "instruments/README.md",
+          "url": "https://github.com/PLUG-OpenAPI/nhplug-sdk/blob/13866ff45dadb25d89e7e68db69ffe79620b198a/instruments/README.md",
+          "sha256": "e8228d32063a2055641fa638e1dcb097f1eee52a5d41fdb076d97c589c974a66",
+          "lines": "5-22"
+        },
+        {
+          "path": "snippets/gbstock/current_price/current_price.py",
+          "url": "https://github.com/PLUG-OpenAPI/nhplug-sdk/blob/13866ff45dadb25d89e7e68db69ffe79620b198a/snippets/gbstock/current_price/current_price.py",
+          "sha256": "3e70e035e24b9a4ba0a1d2419ba63cb84636a65f064179a4c254a660a7b34044",
+          "lines": "1-12"
+        },
+        {
+          "path": "snippets/gbstock/current_price/chk_current_price.py",
+          "url": "https://github.com/PLUG-OpenAPI/nhplug-sdk/blob/13866ff45dadb25d89e7e68db69ffe79620b198a/snippets/gbstock/current_price/chk_current_price.py",
+          "sha256": "f2305822f79969a23a0b7efec25df90541e2a2beadb3929b5758ded243c0733a",
+          "lines": "1-8"
+        }
+      ]
+    },
+    {
+      "broker": "NH",
+      "artifact": "nh-master-current.h",
+      "lines": "103-104",
+      "finding": "Canonical portal header: gLock code meaning not defined; gPosTrade/trade_flag is observed all 1, not a definition of 1.",
+      "url": "https://www.nhplug.com/instruments/m_gtsstock.h",
+      "final_url": "https://www.nhplug.com/instruments/m_gtsstock.h",
+      "status": 200,
+      "sha256": "17cd5c1b1334cacd7281a06530efea25118026d252447581f9e23937d9a37bf6",
+      "bytes": 6737,
+      "observed_utc": "2026-10-04T00:17:14.377346+00:00"
+    },
+    {
+      "broker": "Toss",
+      "artifact": "toss-local-api-docs.json",
+      "lines": "29,900-913,7861-7870,7909-7920,7940-7952",
+      "finding": "Received official OpenAPI 1.2.17: status is listing status; overseas koreanMarketDetail=null; suspension booleans are domestic only.",
+      "source_path": "/home/quantus/coding/toss-openapi/api_docs.json",
+      "sha256": "791082da4cb379117ed9fdc29a45bd42746f7a1aec368da1e9f4e1f3bfbff5b4",
+      "bytes": 420256,
+      "version": "1.2.17",
+      "observed_utc": "2026-10-04T00:18:20.824672+00:00"
+    }
+  ],
+  "attempts": {
+    "db-excel-price.zip": {
+      "url": "https://openapi.dbsec.co.kr/files/download/4198f754-98aa-44ae-8046-2c9692dae17c",
+      "final_url": "https://openapi.dbsec.co.kr/files/download/4198f754-98aa-44ae-8046-2c9692dae17c",
+      "status": 200,
+      "sha256": "c5f487ca7eef3e74b63fa6bfcc5745b5e31cb05961dd730fd7ee638f7c14d78e",
+      "bytes": 28001,
+      "observed_utc": "2026-10-04T00:20:52.632279+00:00"
+    },
+    "db-unoUtil.js": {
+      "url": "https://openapi.dbsec.co.kr/js/unoUtil.js",
+      "status": 200,
+      "sha256": "7e7a38966ee6e64d0660e3eecbfc602a386957c65fcbcbc6fe73cffeae8bdb9f",
+      "bytes": 39880,
+      "observed_utc": "2026-10-04T00:20:07.209238+00:00"
+    },
+    "nh-main-commit.json": {
+      "url": "https://api.github.com/repos/PLUG-OpenAPI/nhplug-sdk/commits/main",
+      "final_url": "https://api.github.com/repos/PLUG-OpenAPI/nhplug-sdk/commits/main",
+      "status": 200,
+      "sha256": "af07e873bc1ad17a5587749aec177c01b5fa6d35762a57def4d16ff7353dff64",
+      "bytes": 50265,
+      "observed_utc": "2026-10-04T00:15:52.051204+00:00"
+    },
+    "nh-official-sdk.zip": {
+      "url": "https://codeload.github.com/PLUG-OpenAPI/nhplug-sdk/zip/13866ff45dadb25d89e7e68db69ffe79620b198a",
+      "final_url": "https://codeload.github.com/PLUG-OpenAPI/nhplug-sdk/zip/13866ff45dadb25d89e7e68db69ffe79620b198a",
+      "status": 200,
+      "sha256": "2b3e837a81473453ed8e402cb4dfafe83d19d6c3933da58a1c9eef101fa70c0b",
+      "bytes": 195144,
+      "observed_utc": "2026-10-04T00:15:52.473223+00:00"
+    },
+    "db-dataroom.html": {
+      "url": "https://openapi.dbsec.co.kr/community/10000000-0000-0011-0000-000000000004",
+      "final_url": "https://openapi.dbsec.co.kr/community/10000000-0000-0011-0000-000000000004",
+      "status": 200,
+      "sha256": "6a1ca188d1de5ed99b39940c1894de9d725bac9fab1555fb3f7cc420a0217db0",
+      "bytes": 125837,
+      "observed_utc": "2026-10-04T00:15:52.634005+00:00"
+    },
+    "manifest-excel-download/db-excel-price.zip": {
+      "url": "https://openapi.dbsec.co.kr/files/download/public/4198f754-98aa-44ae-8046-2c9692dae17c",
+      "error": "HTTP Error 404: Not Found",
+      "observed_utc": "2026-10-04T00:19:23.952021+00:00"
+    },
+    "db-excel-price-post.json": {
+      "url": "https://openapi.dbsec.co.kr/api/forums/10000000-0000-0011-0000-000000000004/posts/f3518535-d4f4-466b-aee7-dc21f2342072",
+      "final_url": "https://openapi.dbsec.co.kr/api/forums/10000000-0000-0011-0000-000000000004/posts/f3518535-d4f4-466b-aee7-dc21f2342072",
+      "status": 200,
+      "sha256": "afebb84d93f45d4d7ac5bf2acc85687eeda90feafef76bc0f2a5539210385c74",
+      "bytes": 1669,
+      "observed_utc": "2026-10-04T00:18:20.721816+00:00"
+    },
+    "db-excel-chart-post.json": {
+      "url": "https://openapi.dbsec.co.kr/api/forums/10000000-0000-0011-0000-000000000004/posts/76ebc67c-ca11-45f2-b3ae-d8114dd7be90",
+      "final_url": "https://openapi.dbsec.co.kr/api/forums/10000000-0000-0011-0000-000000000004/posts/76ebc67c-ca11-45f2-b3ae-d8114dd7be90",
+      "status": 200,
+      "sha256": "9acc960cee7bf90696cb420d1a3e6fbcd6aeda1eb4506c5954d7586ce93e70c7",
+      "bytes": 899,
+      "observed_utc": "2026-10-04T00:18:20.814651+00:00"
+    },
+    "nh-repo.json": {
+      "url": "https://api.github.com/repos/PLUG-OpenAPI/nhplug-sdk",
+      "final_url": "https://api.github.com/repos/PLUG-OpenAPI/nhplug-sdk",
+      "status": 200,
+      "sha256": "c215740226173a64fb5ed0ee2be623f5a1ccf7e8aebd8962f8d11e7ca339537b",
+      "bytes": 6704,
+      "observed_utc": "2026-10-04T00:15:20.879158+00:00"
+    },
+    "db-library.html": {
+      "url": "https://openapi.dbsec.co.kr/api/library",
+      "error": "HTTP Error 404: Not Found",
+      "observed_utc": "2026-10-04T00:15:20.943367+00:00"
+    },
+    "db-new-orderbook.py": {
+      "url": "https://raw.githubusercontent.com/DBsecurities/dbsec-open-api/564b5100b80a3a785468b77ee8c0557f6edcfdeb/examples/ov_stock_quote/ov_stock_inquire_orderbook.py",
+      "final_url": "https://raw.githubusercontent.com/DBsecurities/dbsec-open-api/564b5100b80a3a785468b77ee8c0557f6edcfdeb/examples/ov_stock_quote/ov_stock_inquire_orderbook.py",
+      "status": 200,
+      "sha256": "05b2f44d1506373a02b507995acf4be5a69345cd4fe751d2f60dbb9eadd32904",
+      "bytes": 2991,
+      "observed_utc": "2026-10-04T00:15:21.208434+00:00"
+    },
+    "db-order-endpoints.py": {
+      "url": "https://raw.githubusercontent.com/DBsecurities/dbsec-open-api/564b5100b80a3a785468b77ee8c0557f6edcfdeb/dbsec_sdk/apis/ov_stock_order/endpoints.py",
+      "final_url": "https://raw.githubusercontent.com/DBsecurities/dbsec-open-api/564b5100b80a3a785468b77ee8c0557f6edcfdeb/dbsec_sdk/apis/ov_stock_order/endpoints.py",
+      "status": 200,
+      "sha256": "c9e7a763422d7f06741a472f38d43bd58052f095eb400828baea04a1075d7824",
+      "bytes": 29862,
+      "observed_utc": "2026-10-04T00:15:21.456682+00:00"
+    },
+    "toss-local-api-docs.json": {
+      "source_path": "/home/quantus/coding/toss-openapi/api_docs.json",
+      "sha256": "791082da4cb379117ed9fdc29a45bd42746f7a1aec368da1e9f4e1f3bfbff5b4",
+      "bytes": 420256,
+      "version": "1.2.17",
+      "observed_utc": "2026-10-04T00:18:20.824672+00:00"
+    },
+    "nh-master-current.h": {
+      "url": "https://www.nhplug.com/instruments/m_gtsstock.h",
+      "final_url": "https://www.nhplug.com/instruments/m_gtsstock.h",
+      "status": 200,
+      "sha256": "17cd5c1b1334cacd7281a06530efea25118026d252447581f9e23937d9a37bf6",
+      "bytes": 6737,
+      "observed_utc": "2026-10-04T00:17:14.377346+00:00"
+    },
+    "db-dataroom-posts.json": {
+      "url": "https://openapi.dbsec.co.kr/api/forums/10000000-0000-0011-0000-000000000004/posts",
+      "final_url": "https://openapi.dbsec.co.kr/api/forums/10000000-0000-0011-0000-000000000004/posts",
+      "status": 200,
+      "sha256": "e5999ca6b6d6632764be0f67b30e356743c6dad387ca496f573feefe7853da2f",
+      "bytes": 2808,
+      "observed_utc": "2026-10-04T00:17:14.420120+00:00"
+    }
+  },
+  "nh_pinned_commit": "13866ff45dadb25d89e7e68db69ffe79620b198a",
+  "local_toss_schema_version": "1.2.17",
+  "previous_investigation": "/home/quantus/runs/us-native-contract-1004/REPORT.md (not rerun)"
+}

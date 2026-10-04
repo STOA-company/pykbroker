@@ -79,10 +79,12 @@ class DBFI(BaseBroker):
         now: datetime | None = None,
         trading_day: Callable[[date], bool] | None = None,
     ) -> Rules:
-        """Same contract as KIS. The DB price payload carries no prev close and no verified
-        halt field, so the band and the halt stay unknown unless a halt_provider answers."""
-        if self.market != "KR":
-            return super().get_rules(symbol, now=now, trading_day=trading_day)
+        """KR may use the caller's halt provider; US requires documented native evidence."""
+        if self.market == "US":
+            code = self._symbol(symbol, "US")
+            rules = super().get_rules(code, now=now, trading_day=trading_day)
+            # No verified US native enum: a caller True may veto, False cannot clear unknown.
+            return rules.model_copy(update={"halted": True if rules.halted is True else None})
         code = self._symbol(symbol, "KR")
 
         def read() -> Rules:

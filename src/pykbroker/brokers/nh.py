@@ -440,7 +440,10 @@ class NH(BaseBroker):
         self, symbol: str, *, now: datetime | None = None, trading_day: Callable[[date], bool] | None = None
     ) -> Rules:
         if self.market == "US":
-            return super().get_rules(symbol, now=now, trading_day=trading_day)
+            code = self._symbol(symbol, "US")
+            rules = super().get_rules(code, now=now, trading_day=trading_day)
+            # Master trade_flag has no documented normal enum; caller False is not native proof.
+            return rules.model_copy(update={"halted": True if rules.halted is True else None})
         code = self._symbol(symbol, "KR")
 
         def read() -> Rules:
