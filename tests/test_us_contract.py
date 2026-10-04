@@ -126,6 +126,54 @@ def test_dbfi_us_contract(live_safety):
     assert not broker.capabilities().supports_nxt
 
 
+@pytest.mark.parametrize("broker_code", ["dbfi", "nh", "toss"])
+@pytest.mark.parametrize("provider_answer", [None, False, True])
+def test_us_native_silence_cannot_be_cleared_by_quote_or_caller(broker_code, provider_answer):
+    """Official-shaped quotes prove prices, not US permission; a caller may only veto.
+
+    Provenance: docs/status/2026-10-04-pack-us-native-tradability.md.
+    Payload values are synthetic and all transports are injected/offline.
+    """
+    from pykbroker.brokers.nh import NH
+    from tests.test_toss_us_pilot import _broker
+
+    provider = None if provider_answer is None else lambda symbol: provider_answer
+    if broker_code == "dbfi":
+        client = Mock()
+        client.get_stock_price.return_value = {"rsp_cd": "00000", "Out": {"Prpr": "200"}}
+        client.get_order_book.return_value = {"rsp_cd": "00000", "Out": {"Bidp1": "199", "Askp1": "201"}}
+        broker = DBFI(account="fixture", market="US", venue="NASDAQ", client=client, halt_provider=provider)
+    elif broker_code == "nh":
+        class Client:
+            def __init__(self, *, base_url):
+                self.base_url = base_url
+
+            def post(self, path, *, headers, data):
+                assert path == "/gbstock/quote/v1/current"
+                return 200, {"rsp_cd": "00000", "Output_0": {
+                    "iem_cd": "AAPL", "trdprc": "200", "best_bid1": "199", "best_ask1": "201"}}, {}
+
+        broker = NH(account="fixture", market="US", venue="US", client_factory=Client,
+                    client_options={"app_key": "fixture-key", "token": "fixture-token", "acct_type": "01"},
+                    halt_provider=provider)
+    else:
+        broker, made = _broker(halt_provider=provider)
+
+    expected = True if provider_answer is True else None
+    assert broker.get_rules("AAPL").halted is expected
+    quote = broker.get_quote("AAPL", market="US")
+    assert quote.last > 0 and quote.bid > 0 and quote.ask > 0
+    rules = broker.rules("AAPL")
+    assert rules.halted is expected
+    # Isolate the instrument predicate from the separate session/calendar contract.
+    assert rules.model_copy(update={"session_open": True}).tradable is False
+    if broker_code == "dbfi":
+        client.buy.assert_not_called()
+        client.sell.assert_not_called()
+    elif broker_code == "toss":
+        assert all(call[0] not in {"submit_order", "cancel_order"} for call in made["sdk"].calls)
+
+
 @pytest.mark.parametrize("broker_type", [KIS, DBFI])
 def test_us_requires_explicit_venue(broker_type):
     client = Mock()

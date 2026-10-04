@@ -4,7 +4,7 @@ import asyncio
 import re
 import threading
 from collections.abc import Callable, Mapping
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from importlib import import_module
 from typing import Any
@@ -21,7 +21,7 @@ from pykbroker.exceptions import (
     TossRejectedError,
     TransportError,
 )
-from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote
+from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
 from pykbroker.safety.gate import OrderSafety
 from pykbroker.safety.idempotency import order_key
 from pykbroker.safety.rate_limit import RateLimiter, credential_rate_limiter
@@ -318,6 +318,17 @@ class Toss(BaseBroker):
             markets=(self.market,),
         )
         return Capabilities(**{**base.model_dump(), **update})
+
+    def get_rules(
+        self, symbol: str, *, now: datetime | None = None, trading_day: Callable[[date], bool] | None = None
+    ) -> Rules:
+        if self.market == "US":
+            symbol = self._symbol(symbol, "US")
+        rules = super().get_rules(symbol, now=now, trading_day=trading_day)
+        if self.market == "US":
+            # ACTIVE is listing status; domestic suspension flags cannot clear a US silence.
+            return rules.model_copy(update={"halted": True if rules.halted is True else None})
+        return rules
 
     def get_quote(self, symbol: str, *, market: str = "KR") -> Quote:
         symbol = self._symbol(symbol, market)
