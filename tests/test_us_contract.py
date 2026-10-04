@@ -170,6 +170,25 @@ def test_kis_us_buying_power_is_broker_reported_normal_or_unified(integrated, ke
         broker.available_cash()
 
 
+@pytest.mark.parametrize("caller_halt,expected", [(False, None), (None, None), (True, True)])
+def test_kb_us_undocumented_native_status_cannot_become_normal(caller_halt, expected):
+    from pykbroker.brokers.kb import KB, KB_API_BASE_URL
+
+    client = Mock(base_url=KB_API_BASE_URL)
+    client.post.return_value = {
+        "dataHeader": {"resultCode": "200", "processFlag": "A"},
+        "dataBody": {"is_cd": "AAPL", "krx_cd": "NAS", "now_prc_p4": "100",
+                     "b_askprc_p4": "99", "s_askprc_p4": "101", "bdy_cls_prc_p4": "98",
+                     "dl_spsn_ccd": "0"},
+    }
+    broker = KB(account="fixture", bound_account="fixture", app_key="fake-app", token="fake-token",
+                market="US", venue="NASDAQ", client=client, halt_provider=lambda _: caller_halt)
+    broker._limiter = SimpleNamespace(wait=lambda _: None)
+    assert broker.get_quote("AAPL", market="US").last == Decimal("100")
+    assert broker.get_rules("AAPL").halted is expected
+    assert client.post.call_count == 1
+
+
 def test_kis_us_exact_cancel_and_ledger_full_fill(live_safety):
     from pykbroker.models import Order
     client, api, scope = Mock(), Mock(), Mock()

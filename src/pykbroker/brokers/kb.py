@@ -130,11 +130,21 @@ class KB(BaseBroker):
                          prev_close=optional_price(row["bdy_cls_prc_p4"]))
         return self._call(read)
 
+    def get_rules(self, symbol: str, *, now=None, trading_day=None):
+        rules = super().get_rules(symbol, now=now, trading_day=trading_day)
+        if self.market == "US":
+            # Official GSS10030 dl_spsn_ccd has no documented normal enum.
+            # Preserve a caller's stop veto; False cannot establish native permission.
+            return rules.model_copy(update={"halted": True if rules.halted is True else None})
+        return rules
+
     def orderable_cash(self, symbol: str) -> Decimal:
-        """Symbol-specific broker spending power (KRW or USD), never fabricated FX cash.
+        """Symbol-specific broker spending power in KRW or native foreign currency.
 
         Global One Market enrollment must already belong to this owner-bound account.
         It cannot be inferred from a positive amount and is never changed here.
+        SKQM2106 lacks a documented returned currency/FX basis; consumers must not
+        treat its foreign amount as a verified USD budget.
         """
         symbol = self._symbol(symbol, self.market)
         def read():
