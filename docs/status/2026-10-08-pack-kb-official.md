@@ -1,0 +1,37 @@
+# KB official response correction — 2026-10-08
+- Scope: KB adapter only; integration base a7bf2a84562073807118ab06b2bd83c122a1bb2c.
+- Result: partial; official SPQM2226 export is incomplete and cannot safely become an empty account.
+- Customer scenes: domestic unsettled holding appears; integer won price; quantity-specific cancel body.
+- SKQM3350: count active currency rows; zero/blank fixed-array padding excluded (6 active of 10).
+- Funding rejects missing active rows, nonzero unidentified padding, malformed rows and duplicate USD.
+- SPQM2226: count 1, Record2 empty, positive securities valuation, displaced TSLA fields in Record1.
+- Preserve fail-closed handling; report incomplete native row block rather than silently dropping a holding.
+- XLSX labels grid_cnt/grid_cnt2 only; cumulative/page semantics have no prose definition.
+- SPQM2226 normal synthetic pages require exact per-page count and bounded unique nxt_key continuation.
+- cn_f enum is undocumented; no invented continuation flag.
+- SSQM2952: blank/KRW domestic currency accepted; ec_q settlement quantity includes sample unsettled buy.
+- Never add hld_q to ec_q; KR grid_cnt1 and tl_data_cnt truncation checks preserved.
+- KR request price: positive whole won, fixed integer string, String(9).
+- US request price: positive P4, at most four significant fractional places, String(15).
+- Strip insignificant decimal zeroes without rounding; reject excess precision/length before transport.
+- US ledger retains frgn_ordr_prc_p6; cancel serializes its exact value as P4, trimming only insignificant zeros.
+- US order-date timezone undocumented; existing New York default and explicit order_date preserved.
+- KR cancel: crct_clsf=1 + quantity per successful SSAM1806 JSON.
+- Conflict: sheet28:13 says 1 partial correction / 2 full correction; no inference of value 2.
+- KR order/cancel symbols normalized before serialization and identity checks.
+- All five write TRs validate every serialized field length at final transport boundary; no truncation.
+- issue_token: explicit Client Credentials; dataHeader/dataBody per token.json and official auth_example.py.
+- Returns issued access_token/token_type/expires_in only; no secret cache/log, auto-issue or renewal.
+- Token host, inputs, business envelope, token/expiry are checked; transport exceptions sanitized.
+- Writes remain off by default; OrderSafety and factory registration unchanged; other brokers untouched.
+- Sources: tests/fixtures/kb/official/SOURCE.md; original ZIP/XLSX hashes verified; no new downloads.
+- Fixtures: ten detached official examples with fake identities and original/sanitized SHA256.
+- Tests: tests/test_kb_official_contract.py; official replay, serialization, boundaries, corrupt responses.
+- Baseline: 1318 passed, 5 expected failures, 19 skipped (46.35s); no external calls.
+- Final: 1382 passed, same 5 expected failures, 19 skipped (45.66s); KB 64 passed; new failures zero.
+- Scope excludes fractional holdings, market/modify/reserve orders, consumer storage and default switches.
+- Live only: SPQM2226 native rows/currency, >15 holdings continuation, date rollover, fractional price acceptance.
+- Live only: token/account binding, KR quantity-specific cancellation of full remainder, acknowledgements vs ledger.
+- No mock API. First live call: independent review + CEO approval, one real-account read only.
+- Then approved one-share limit order/cancel reconciliation; no live order authorization in this PR.
+- Draft PR + do-not-merge only; no merge, deployment, VM/DB/queue access or independent review invocation.
