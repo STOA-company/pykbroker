@@ -23,7 +23,6 @@ from pykbroker.exceptions import (
     ConfigurationError,
     InvalidResponseError,
     NotSupportedError,
-    SpecUnverifiedError,
     TransportError,
 )
 from pykbroker.factory import BROKERS, create_broker
@@ -41,7 +40,7 @@ BASIC = {**OFFICIAL["ka10001"], "cur_prc": "74100", "upl_pric": "96300", "lst_pr
 # synthetic: the official ka10004 layout with a real-looking best bid/ask
 BOOK = {**OFFICIAL["ka10004"], "buy_fpr_bid": "74000", "sel_fpr_bid": "74100"}
 RESPONSES = {"ka10001": BASIC, "ka10004": BOOK, "kt00001": OFFICIAL["kt00001"], "kt00018": OFFICIAL["kt00018"]}
-PRICE_SIGNS = ["-74100", " -74100", "-0"]
+PRICE_SIGNS = ["-", " -", "+"]
 
 
 class FakeClient:
@@ -252,7 +251,7 @@ def test_official_ka10001_sample_is_refused_because_its_fields_are_misaligned():
     broker, _ = make({**RESPONSES, "ka10001": OFFICIAL["ka10001"]})
     with pytest.raises(InvalidResponseError):  # cur_prc "0.00" is not a price
         broker.get_quote("005930")
-    with pytest.raises(SpecUnverifiedError):  # lst_pric "-47.41" carries an unverified sign
+    with pytest.raises(InvalidResponseError):  # the band contradicts the reference and last prices
         broker.get_rules("005930")
 
 
@@ -277,17 +276,26 @@ def test_plus_sign_on_a_price_is_its_magnitude():
         ("ka10001", "base_pric", "get_rules"),
     ],
 )
-def test_minus_sign_on_any_price_is_refused_as_unverified(tr, field, read, sign):
-    broker, _ = make({**RESPONSES, tr: {**RESPONSES[tr], field: sign}})
-    with pytest.raises(SpecUnverifiedError):
-        getattr(broker, read)("005930")
+def test_direction_sign_on_any_price_preserves_magnitude(tr, field, read, sign):
+    value = RESPONSES[tr][field]
+    broker, _ = make({**RESPONSES, tr: {**RESPONSES[tr], field: sign + value}})
+    result = getattr(broker, read)("005930")
+    mapped = {
+        "cur_prc": "last",
+        "buy_fpr_bid": "bid",
+        "sel_fpr_bid": "ask",
+        "upl_pric": "limit_up",
+        "lst_pric": "limit_down",
+    }.get(field)
+    if mapped and not (read == "get_rules" and mapped == "last"):
+        assert getattr(result, mapped) == Decimal(value)
 
 
 @pytest.mark.parametrize("field", ["pur_pric", "cur_prc"])
-def test_minus_sign_on_a_holding_price_is_refused_as_unverified(field):
+def test_minus_sign_on_a_holding_price_preserves_magnitude(field):
     broker, _ = make({**RESPONSES, "kt00018": with_row(**{field: "-000000059000"})})
-    with pytest.raises(SpecUnverifiedError):
-        broker.get_positions()
+    (position,) = broker.get_positions()
+    assert getattr(position, "average_price" if field == "pur_pric" else "last") == Decimal("59000")
 
 
 @pytest.mark.parametrize("field", ["pur_pric", "cur_prc"])
@@ -357,7 +365,7 @@ def test_closed_broker_refuses_rules_and_reads():
 
 def test_cash_request_and_the_official_sample():
     broker, made = make()
-    assert broker.available_cash() == Decimal("17534")  # ord_alow_amt 85341 capped by entr 17534
+    assert broker.available_cash() == Decimal("12550")  # capped by 100stk_ord_alow_amt and d2_entra 12550
     (call,) = made[0].calls
     assert call["path"] == "/api/dostk/acnt" and call["headers"]["api-id"] == "kt00001"
     assert call["json"] == {"qry_tp": "2"}
@@ -377,20 +385,20 @@ def test_cash_read_needs_no_position_codes_and_makes_one_call():
 def test_estimated_deposit_asset_is_never_cash():
     assert OFFICIAL["kt00018"]["prsm_dpst_aset_amt"] == "000001012632507"
     balance = make()[0].get_balance()
-    assert balance.cash_available == Decimal("17534") != Decimal("1012632507")
+    assert balance.cash_available == Decimal("12550") != Decimal("1012632507")
     assert balance.position_value == Decimal("857000")  # the two official rows: 177000 + 680000
-    assert balance.total == Decimal("874534")
+    assert balance.total == Decimal("869550")
 
 
-@pytest.mark.parametrize("drop", ["ord_alow_amt", "entr"])
+@pytest.mark.parametrize("drop", ["ord_alow_amt", "entr", "100stk_ord_alow_amt", "d2_entra"])
 def test_cash_without_either_field_is_invalid(drop):
     body = {k: v for k, v in OFFICIAL["kt00001"].items() if k != drop}
     with pytest.raises(InvalidResponseError):
         make({**RESPONSES, "kt00001": body})[0].available_cash()
 
 
-@pytest.mark.parametrize("value", ["-000000000085341", "", "abc"])
-def test_negative_or_unreadable_cash_is_invalid(value):
+@pytest.mark.parametrize("value", ["", "abc", "NaN", "Infinity", True, None])
+def test_unreadable_cash_is_invalid(value):
     with pytest.raises(InvalidResponseError):
         make({**RESPONSES, "kt00001": {**OFFICIAL["kt00001"], "ord_alow_amt": value}})[0].available_cash()
 
@@ -544,7 +552,7 @@ def test_stored_token_and_app_key_are_required(options):
 
 
 def test_limiter_covers_every_read_tr_within_the_documented_budget():
-    read_trs = ("ka10001", "ka10004", "kt00001", "kt00018", "ka10075", "kt00007")
+    read_trs = ("ka10001", "ka10004", "kt00001", "kt00018", "ka10075", "kt00007", "kt00011")
     assert {*read_trs, "kt10000", "kt10001", "kt10003"} <= set(module.KIWOOM_TR_RATE_LIMITS)
     us_reads = ("usa20100", "usa20101", "ust21050", "ust21070", "ust21110", "ust21150", "ust31490")
     assert sum(module.KIWOOM_TR_RATE_LIMITS[tr] for tr in us_reads) <= 3
@@ -664,8 +672,12 @@ def test_us_quote_maps_previous_close_without_inventing_source_time():
     broker = us_read(
         {
             "usa20100": {
-                "return_code": 0, "cur_prc": "+201.4700", "base_close_pric": "200.0400",
-                "stk_cd": "NVDA", "stex_tp": "ND", "trd_susp_tp": "0",
+                "return_code": 0,
+                "cur_prc": "+201.4700",
+                "base_close_pric": "200.0400",
+                "stk_cd": "NVDA",
+                "stex_tp": "ND",
+                "trd_susp_tp": "0",
             },
             "usa20101": {"return_code": 0, "fpr_buy_bid": "+201.4200", "fpr_sel_bid": "+201.5300"},
         }
@@ -723,3 +735,91 @@ def test_integrated_quantity_requires_broker_confirmation_and_never_enrolls():
     response = {"return_code": 0, "crnc_code": "USD", "krw_ord_rqst_yn": "N", "min_krw_ord_alowq": "999999"}
     with pytest.raises(NotSupportedError, match="not enabled"):
         us_read({"ust31490": response}, is_integrated=True).orderable_quantity("NVDA", Decimal("200"))
+
+
+# Pinned GitHub examples; altered values below are explicitly derived cases, never captured responses.
+PINNED = {
+    path.stem: json.loads(path.read_text())
+    for path in (Path(__file__).parent / "fixtures" / "kiwoom" / "official").glob("*.json")
+    if path.stem != "error_codes"
+}
+
+
+def test_pinned_official_direction_prices_and_rules():
+    sample = PINNED["ka10001"]["response"]
+    assert module._price(sample["oyr_lwst"]) == Decimal("91200")
+    band = PINNED["ka10095"]["response"]["atn_stk_infr"][0]
+    body = {**BASIC, **{key: band[key] for key in ("cur_prc", "base_pric", "upl_pric", "lst_pric")}}
+    rules = make({**RESPONSES, "ka10001": body})[0].get_rules("005930")
+    assert (rules.limit_down, rules.limit_up) == (Decimal("85200"), Decimal("158200"))
+    # Derived down-day current price and book, using the official signed lower-bound price.
+    body["cur_prc"] = band["lst_pric"]
+    quote = make({**RESPONSES, "ka10001": body, "ka10004": {**BOOK, "buy_fpr_bid": "-85200", "sel_fpr_bid": "-85300"}})[
+        0
+    ].get_quote("005930")
+    assert (quote.last, quote.bid, quote.ask) == (Decimal("85200"), Decimal("85200"), Decimal("85300"))
+
+
+@pytest.mark.parametrize("field", ["ord_alow_amt", "entr", "100stk_ord_alow_amt", "d2_entra"])
+def test_pinned_cash_uses_every_cap_and_clamps_deficits(field):
+    body = PINNED["kt00001"]["response"]
+    assert make({**RESPONSES, "kt00001": body})[0].available_cash() == Decimal("12550")
+    for value, expected in (("000000000000100", Decimal("100")), ("-000000000000100", Decimal(0))):
+        derived = {**body, field: value}
+        assert make({**RESPONSES, "kt00001": derived})[0].available_cash() == expected
+        assert make({**RESPONSES, "kt00001": derived})[0].get_balance().cash_available == expected
+
+
+def test_pinned_kr_orderable_quantity_reads_no_debt_column():
+    sample = PINNED["kt00011"]["response"]
+    broker, made = make({"kt00011": sample})
+    assert broker.orderable_quantity("A005930", Decimal("70000")) == 0
+    call = made[0].calls[0]
+    assert call["path"] == "/api/dostk/acnt" and call["headers"]["api-id"] == "kt00011"
+    assert call["json"] == {"stk_cd": "005930", "uv": "70000"}
+    # Derived nonzero no-debt quantity; margin-based columns cannot inflate it.
+    assert (
+        make({"kt00011": {**sample, "min_ord_alowq": "000000000003", "profa_20ord_alowq": "99999"}})[
+            0
+        ].orderable_quantity("005930", Decimal("70000"))
+        == 3
+    )
+
+
+@pytest.mark.parametrize("price", [Decimal("0"), Decimal("70000.5")])
+def test_kr_orderable_quantity_refuses_invalid_price_before_call(price):
+    broker, made = make({"kt00011": PINNED["kt00011"]["response"]})
+    with pytest.raises(ConfigurationError):
+        broker.orderable_quantity("005930", price)
+    assert made[0].calls == []
+
+
+@pytest.mark.parametrize("quantity", ["-1", "NaN", "1.5", ""])
+def test_kr_orderable_quantity_does_not_apply_price_sign_logic(quantity):
+    body = {**PINNED["kt00011"]["response"], "min_ord_alowq": quantity}
+    with pytest.raises(InvalidResponseError):
+        make({"kt00011": body})[0].orderable_quantity("005930", Decimal("70000"))
+
+
+def test_experimental_balance_is_blocked_before_transport():
+    from pykbroker.exceptions import SpecUnverifiedError
+    from pykbroker.experimental.kiwoom import Kiwoom as OldKiwoom
+
+    class NeverCalled:
+        def request(self, *args, **kwargs):
+            pytest.fail("experimental balance must not call a broker")
+
+    # The official asset-value field is large; it must never be surfaced as spendable cash.
+    assert Decimal(OFFICIAL["kt00018"]["prsm_dpst_aset_amt"]) > Decimal("12550")
+    with pytest.raises(SpecUnverifiedError, match="balance is disabled"):
+        OldKiwoom(account="fixture-account", client=NeverCalled()).get_balance()
+
+
+def test_pinned_flow_errors_stay_explicit_rejections_without_new_classification():
+    errors = json.loads((Path(__file__).parent / "fixtures/kiwoom/official/error_codes.json").read_text())
+    assert {row["오류코드"] for row in errors} == {"1700", "1701", "1702"}
+    for error in errors:
+        assert "요청 개수를 초과" in error["오류메시지"]
+        for write in (False, True):
+            with pytest.raises(BrokerRejectedError):
+                module._unpack(({"return_code": int(error["오류코드"])}, {}), write=write)
