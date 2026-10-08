@@ -1,0 +1,275 @@
+{
+  "version": "20261007070834325",
+  "defaults": {
+    "method": "POST",
+    "fieldRequired": true
+  },
+  "path": "/overseas-stock/order",
+  "commonHeaders": {
+    "request": [
+      {
+        "element": "content-type",
+        "name": "컨텐츠타입",
+        "type": "String",
+        "length": "100",
+        "description": "LS증권 제공 API를 호출하기 위한 Request Body 데이터 포맷으로 \"application/json; charset=utf-8 설정\""
+      },
+      {
+        "element": "authorization",
+        "name": "접근토큰",
+        "type": "String",
+        "length": "1000",
+        "description": "OAuth토큰이필요한API경우발급한AccessToken을설정하기위한RequestHeaederParameter"
+      },
+      {
+        "element": "tr_cd",
+        "name": "거래CD",
+        "type": "String",
+        "length": "10",
+        "description": "LS증권거래코드"
+      },
+      {
+        "element": "tr_cont",
+        "name": "연속거래여부",
+        "type": "String",
+        "length": "1",
+        "description": "연속거래여부Y:연속○N:연속×"
+      },
+      {
+        "element": "tr_cont_key",
+        "name": "연속거래Key",
+        "type": "String",
+        "length": "18",
+        "description": "연속일경우그전에내려온연속키값올림"
+      },
+      {
+        "element": "mac_address",
+        "name": "MAC주소",
+        "type": "String",
+        "length": "12",
+        "description": "법인인경우필수세팅"
+      }
+    ],
+    "response": [
+      {
+        "element": "content-type",
+        "name": "컨텐츠타입",
+        "type": "String",
+        "length": "100",
+        "description": "LS증권 제공 API를 호출하기 위한 Request Body 데이터 포맷으로 \"application/json; charset=utf-8 설정\""
+      },
+      {
+        "element": "tr_cd",
+        "name": "거래CD",
+        "type": "String",
+        "length": "10",
+        "description": "LS증권거래코드"
+      },
+      {
+        "element": "tr_cont",
+        "name": "연속거래여부",
+        "type": "String",
+        "length": "1",
+        "description": "연속거래여부Y:연속○N:연속×"
+      },
+      {
+        "element": "tr_cont_key",
+        "name": "연속거래Key",
+        "type": "String",
+        "length": "18",
+        "description": "연속일경우그전에내려온연속키값올림"
+      }
+    ]
+  },
+  "transaction": {
+    "code": "COSAT00301",
+    "name": "미국시장주문 API",
+    "transactionPerSec": "10",
+    "request": {
+      "body": [
+        {
+          "element": "COSAT00301InBlock1",
+          "name": "COSAT00301InBlock1",
+          "type": "Object",
+          "fields": [
+            {
+              "element": "RecCnt",
+              "name": "레코드갯수",
+              "type": "Number",
+              "length": "5",
+              "description": "00001"
+            },
+            {
+              "element": "OrdPtnCode",
+              "name": "주문유형코드",
+              "type": "String",
+              "length": "2",
+              "description": "01 : 매도주문\n02 : 매수주문\n08 : 취소주문"
+            },
+            {
+              "element": "OrgOrdNo",
+              "name": "원주문번호",
+              "type": "Number",
+              "length": "10",
+              "required": false,
+              "description": "취소주문인 경우만 필수 입력"
+            },
+            {
+              "element": "OrdMktCode",
+              "name": "주문시장코드",
+              "type": "String",
+              "length": "2",
+              "description": "81 : 뉴욕거래소\n82 : NASDAQ"
+            },
+            {
+              "element": "IsuNo",
+              "name": "종목번호",
+              "type": "String",
+              "length": "12",
+              "description": "단축종목코드\nex.TSLA"
+            },
+            {
+              "element": "OrdQty",
+              "name": "주문수량",
+              "type": "Number",
+              "length": "16"
+            },
+            {
+              "element": "OvrsOrdPrc",
+              "name": "해외주문가",
+              "type": "Number",
+              "length": "28.7"
+            },
+            {
+              "element": "OrdprcPtnCode",
+              "name": "호가유형코드",
+              "type": "String",
+              "length": "2",
+              "description": "00@지정가\nM1@LOO\nM2@LOC\n\n매도인경우 호가유형 확대\n03@시장가\nM3@MOO\nM4@MOC"
+            },
+            {
+              "element": "BrkTpCode",
+              "name": "중개인구분코드",
+              "type": "String",
+              "length": "2"
+            }
+          ]
+        }
+      ]
+    },
+    "response": {
+      "body": [
+        {
+          "element": "COSAT00301OutBlock1",
+          "name": "COSAT00301OutBlock1",
+          "type": "Object",
+          "fields": [
+            {
+              "element": "RecCnt",
+              "name": "레코드갯수",
+              "type": "Number",
+              "length": "5"
+            },
+            {
+              "element": "OrdPtnCode",
+              "name": "주문유형코드",
+              "type": "String",
+              "length": "2"
+            },
+            {
+              "element": "OrgOrdNo",
+              "name": "원주문번호",
+              "type": "Number",
+              "length": "10"
+            },
+            {
+              "element": "AcntNo",
+              "name": "계좌번호",
+              "type": "String",
+              "length": "20"
+            },
+            {
+              "element": "InptPwd",
+              "name": "입력비밀번호",
+              "type": "String",
+              "length": "8"
+            },
+            {
+              "element": "OrdMktCode",
+              "name": "주문시장코드",
+              "type": "String",
+              "length": "2"
+            },
+            {
+              "element": "IsuNo",
+              "name": "종목번호",
+              "type": "String",
+              "length": "12"
+            },
+            {
+              "element": "OrdQty",
+              "name": "주문수량",
+              "type": "Number",
+              "length": "16"
+            },
+            {
+              "element": "OvrsOrdPrc",
+              "name": "해외주문가",
+              "type": "Number",
+              "length": "28.7"
+            },
+            {
+              "element": "OrdprcPtnCode",
+              "name": "호가유형코드",
+              "type": "String",
+              "length": "2"
+            },
+            {
+              "element": "RegCommdaCode",
+              "name": "등록통신매체코드",
+              "type": "String",
+              "length": "2"
+            },
+            {
+              "element": "BrkTpCode",
+              "name": "중개인구분코드",
+              "type": "String",
+              "length": "2"
+            }
+          ]
+        },
+        {
+          "element": "COSAT00301OutBlock2",
+          "name": "COSAT00301OutBlock2",
+          "type": "Object",
+          "fields": [
+            {
+              "element": "RecCnt",
+              "name": "레코드갯수",
+              "type": "Number",
+              "length": "5"
+            },
+            {
+              "element": "OrdNo",
+              "name": "주문번호",
+              "type": "Number",
+              "length": "10"
+            },
+            {
+              "element": "AcntNm",
+              "name": "계좌명",
+              "type": "String",
+              "length": "40"
+            },
+            {
+              "element": "IsuNm",
+              "name": "종목명",
+              "type": "String",
+              "length": "40"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

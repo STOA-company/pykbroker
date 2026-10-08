@@ -1,0 +1,501 @@
+{
+  "version": "20261007070834325",
+  "defaults": {
+    "method": "POST",
+    "fieldRequired": true
+  },
+  "path": "/overseas-stock/accno",
+  "commonHeaders": {
+    "request": [
+      {
+        "element": "content-type",
+        "name": "컨텐츠타입",
+        "type": "String",
+        "length": "100",
+        "description": "LS증권 제공 API를 호출하기 위한 Request Body 데이터 포맷으로 \"application/json; charset=utf-8 설정\""
+      },
+      {
+        "element": "authorization",
+        "name": "접근토큰",
+        "type": "String",
+        "length": "1000",
+        "description": "OAuth토큰이필요한API경우발급한AccessToken을설정하기위한RequestHeaederParameter"
+      },
+      {
+        "element": "tr_cd",
+        "name": "거래CD",
+        "type": "String",
+        "length": "10",
+        "description": "LS증권거래코드"
+      },
+      {
+        "element": "tr_cont",
+        "name": "연속거래여부",
+        "type": "String",
+        "length": "1",
+        "description": "연속거래여부Y:연속○N:연속×"
+      },
+      {
+        "element": "tr_cont_key",
+        "name": "연속거래Key",
+        "type": "String",
+        "length": "18",
+        "description": "연속일경우그전에내려온연속키값올림"
+      },
+      {
+        "element": "mac_address",
+        "name": "MAC주소",
+        "type": "String",
+        "length": "12",
+        "description": "법인인경우필수세팅"
+      }
+    ],
+    "response": [
+      {
+        "element": "content-type",
+        "name": "컨텐츠타입",
+        "type": "String",
+        "length": "100",
+        "description": "LS증권 제공 API를 호출하기 위한 Request Body 데이터 포맷으로 \"application/json; charset=utf-8 설정\""
+      },
+      {
+        "element": "tr_cd",
+        "name": "거래CD",
+        "type": "String",
+        "length": "10",
+        "description": "LS증권거래코드"
+      },
+      {
+        "element": "tr_cont",
+        "name": "연속거래여부",
+        "type": "String",
+        "length": "1",
+        "description": "연속거래여부Y:연속○N:연속×"
+      },
+      {
+        "element": "tr_cont_key",
+        "name": "연속거래Key",
+        "type": "String",
+        "length": "18",
+        "description": "연속일경우그전에내려온연속키값올림"
+      }
+    ]
+  },
+  "transaction": {
+    "code": "COSOQ00201",
+    "name": "해외주식 종합잔고평가 API",
+    "transactionPerSec": "1",
+    "request": {
+      "body": [
+        {
+          "element": "COSOQ00201InBlock1",
+          "name": "COSOQ00201InBlock1",
+          "type": "Object",
+          "fields": [
+            {
+              "element": "RecCnt",
+              "name": "레코드갯수",
+              "type": "Number",
+              "length": "5",
+              "description": "00001"
+            },
+            {
+              "element": "BaseDt",
+              "name": "기준일자",
+              "type": "String",
+              "length": "8"
+            },
+            {
+              "element": "CrcyCode",
+              "name": "통화코드",
+              "type": "String",
+              "length": "3",
+              "description": "ALL@전체\nUSD@미국"
+            },
+            {
+              "element": "AstkBalTpCode",
+              "name": "해외증권잔고구분코드",
+              "type": "String",
+              "length": "2",
+              "description": "00 전체\n10 일반\n20 소수점"
+            }
+          ]
+        }
+      ]
+    },
+    "response": {
+      "body": [
+        {
+          "element": "COSOQ00201OutBlock1",
+          "name": "COSOQ00201OutBlock1",
+          "type": "Object",
+          "fields": [
+            {
+              "element": "RecCnt",
+              "name": "레코드갯수",
+              "type": "Number",
+              "length": "5"
+            },
+            {
+              "element": "AcntNo",
+              "name": "계좌번호",
+              "type": "String",
+              "length": "20"
+            },
+            {
+              "element": "Pwd",
+              "name": "비밀번호",
+              "type": "String",
+              "length": "8"
+            },
+            {
+              "element": "BaseDt",
+              "name": "기준일자",
+              "type": "String",
+              "length": "8"
+            },
+            {
+              "element": "CrcyCode",
+              "name": "통화코드",
+              "type": "String",
+              "length": "3"
+            },
+            {
+              "element": "AstkBalTpCode",
+              "name": "해외증권잔고구분코드",
+              "type": "String",
+              "length": "2"
+            }
+          ]
+        },
+        {
+          "element": "COSOQ00201OutBlock2",
+          "name": "COSOQ00201OutBlock2",
+          "type": "Object",
+          "fields": [
+            {
+              "element": "RecCnt",
+              "name": "레코드갯수",
+              "type": "Number",
+              "length": "5"
+            },
+            {
+              "element": "ErnRat",
+              "name": "수익율",
+              "type": "Number",
+              "length": "18.6"
+            },
+            {
+              "element": "DpsConvEvalAmt",
+              "name": "예수금환산평가금액",
+              "type": "Number",
+              "length": "16"
+            },
+            {
+              "element": "StkConvEvalAmt",
+              "name": "주식환산평가금액",
+              "type": "Number",
+              "length": "16"
+            },
+            {
+              "element": "DpsastConvEvalAmt",
+              "name": "예탁자산환산평가금액",
+              "type": "Number",
+              "length": "16"
+            },
+            {
+              "element": "WonEvalSumAmt",
+              "name": "원화평가합계금액",
+              "type": "Number",
+              "length": "16"
+            },
+            {
+              "element": "ConvEvalPnlAmt",
+              "name": "환산평가손익금액",
+              "type": "Number",
+              "length": "16"
+            },
+            {
+              "element": "WonDpsBalAmt",
+              "name": "원화예수금잔고금액",
+              "type": "Number",
+              "length": "16"
+            },
+            {
+              "element": "D2EstiDps",
+              "name": "D2추정예수금",
+              "type": "Number",
+              "length": "16"
+            },
+            {
+              "element": "LoanAmt",
+              "name": "대출금액",
+              "type": "Number",
+              "length": "16"
+            }
+          ]
+        },
+        {
+          "element": "COSOQ00201OutBlock3",
+          "name": "COSOQ00201OutBlock3",
+          "type": "Object",
+          "fields": [
+            {
+              "element": "CrcyCode",
+              "name": "통화코드",
+              "type": "String",
+              "length": "3"
+            },
+            {
+              "element": "FcurrDps",
+              "name": "외화예수금",
+              "type": "Number",
+              "length": "21.4"
+            },
+            {
+              "element": "FcurrEvalAmt",
+              "name": "외화평가금액",
+              "type": "Number",
+              "length": "21.4"
+            },
+            {
+              "element": "FcurrEvalPnlAmt",
+              "name": "외화평가손익금액",
+              "type": "Number",
+              "length": "21.4"
+            },
+            {
+              "element": "PnlRat",
+              "name": "손익율",
+              "type": "Number",
+              "length": "18.6"
+            },
+            {
+              "element": "BaseXchrat",
+              "name": "기준환율",
+              "type": "Number",
+              "length": "15.4"
+            },
+            {
+              "element": "DpsConvEvalAmt",
+              "name": "예수금환산평가금액",
+              "type": "Number",
+              "length": "16"
+            },
+            {
+              "element": "PchsAmt",
+              "name": "매입금액",
+              "type": "Number",
+              "length": "16"
+            },
+            {
+              "element": "StkConvEvalAmt",
+              "name": "주식환산평가금액",
+              "type": "Number",
+              "length": "16"
+            },
+            {
+              "element": "ConvEvalPnlAmt",
+              "name": "환산평가손익금액",
+              "type": "Number",
+              "length": "16"
+            },
+            {
+              "element": "FcurrBuyAmt",
+              "name": "외화매수금액",
+              "type": "Number",
+              "length": "21.4"
+            },
+            {
+              "element": "FcurrOrdAbleAmt",
+              "name": "외화주문가능금액",
+              "type": "Number",
+              "length": "19.2"
+            },
+            {
+              "element": "LoanAmt",
+              "name": "대출금액",
+              "type": "Number",
+              "length": "16"
+            }
+          ]
+        },
+        {
+          "element": "COSOQ00201OutBlock4",
+          "name": "COSOQ00201OutBlock4",
+          "type": "Object",
+          "fields": [
+            {
+              "element": "CrcyCode",
+              "name": "통화코드",
+              "type": "String",
+              "length": "3"
+            },
+            {
+              "element": "ShtnIsuNo",
+              "name": "단축종목번호",
+              "type": "String",
+              "length": "9"
+            },
+            {
+              "element": "IsuNo",
+              "name": "종목번호",
+              "type": "String",
+              "length": "12"
+            },
+            {
+              "element": "JpnMktHanglIsuNm",
+              "name": "일본시장한글종목명",
+              "type": "String",
+              "length": "100"
+            },
+            {
+              "element": "AstkBalTpCode",
+              "name": "해외증권잔고구분코드",
+              "type": "String",
+              "length": "2"
+            },
+            {
+              "element": "AstkBalTpCodeNm",
+              "name": "해외증권잔고구분코드명",
+              "type": "String",
+              "length": "40"
+            },
+            {
+              "element": "AstkBalQty",
+              "name": "해외증권잔고수량",
+              "type": "Number",
+              "length": "28.6"
+            },
+            {
+              "element": "AstkSellAbleQty",
+              "name": "해외증권매도가능수량",
+              "type": "Number",
+              "length": "28.6"
+            },
+            {
+              "element": "FcstckUprc",
+              "name": "외화증권단가",
+              "type": "Number",
+              "length": "24.4"
+            },
+            {
+              "element": "FcurrBuyAmt",
+              "name": "외화매수금액",
+              "type": "Number",
+              "length": "21.4"
+            },
+            {
+              "element": "FcstckMktIsuCode",
+              "name": "외화증권시장종목코드",
+              "type": "String",
+              "length": "18"
+            },
+            {
+              "element": "OvrsScrtsCurpri",
+              "name": "해외증권시세",
+              "type": "Number",
+              "length": "28.7"
+            },
+            {
+              "element": "FcurrEvalAmt",
+              "name": "외화평가금액",
+              "type": "Number",
+              "length": "21.4"
+            },
+            {
+              "element": "FcurrEvalPnlAmt",
+              "name": "외화평가손익금액",
+              "type": "Number",
+              "length": "21.4"
+            },
+            {
+              "element": "PnlRat",
+              "name": "손익율",
+              "type": "Number",
+              "length": "18.6"
+            },
+            {
+              "element": "BaseXchrat",
+              "name": "기준환율",
+              "type": "Number",
+              "length": "15.4"
+            },
+            {
+              "element": "PchsAmt",
+              "name": "매입금액",
+              "type": "Number",
+              "length": "16"
+            },
+            {
+              "element": "DpsConvEvalAmt",
+              "name": "예수금환산평가금액",
+              "type": "Number",
+              "length": "16"
+            },
+            {
+              "element": "StkConvEvalAmt",
+              "name": "주식환산평가금액",
+              "type": "Number",
+              "length": "16"
+            },
+            {
+              "element": "ConvEvalPnlAmt",
+              "name": "환산평가손익금액",
+              "type": "Number",
+              "length": "16"
+            },
+            {
+              "element": "AstkSettQty",
+              "name": "해외증권결제수량",
+              "type": "Number",
+              "length": "28.6"
+            },
+            {
+              "element": "MktTpNm",
+              "name": "시장구분명",
+              "type": "String",
+              "length": "20"
+            },
+            {
+              "element": "FcurrMktCode",
+              "name": "외화시장코드",
+              "type": "String",
+              "length": "2"
+            },
+            {
+              "element": "LoanDt",
+              "name": "대출일자",
+              "type": "String",
+              "length": "8"
+            },
+            {
+              "element": "LoanDtlClssCode",
+              "name": "대출상세분류코드",
+              "type": "String",
+              "length": "2"
+            },
+            {
+              "element": "LoanAmt",
+              "name": "대출금액",
+              "type": "Number",
+              "length": "16"
+            },
+            {
+              "element": "DueDt",
+              "name": "만기일자",
+              "type": "String",
+              "length": "8"
+            },
+            {
+              "element": "AstkBasePrc",
+              "name": "해외증권기준가격",
+              "type": "Number",
+              "length": "28.6"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
