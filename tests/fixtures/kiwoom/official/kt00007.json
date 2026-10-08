@@ -1,0 +1,41 @@
+{
+  "request": {
+    "ord_dt": "",
+    "qry_tp": "1",
+    "stk_bond_tp": "0",
+    "sell_tp": "0",
+    "stk_cd": "005930",
+    "fr_ord_no": "",
+    "dmst_stex_tp": "%"
+  },
+  "response": {
+    "acnt_ord_cntr_prps_dtl": [
+      {
+        "ord_no": "0000050",
+        "stk_cd": "A069500",
+        "trde_tp": "시장가",
+        "crd_tp": "보통매매",
+        "ord_qty": "0000000001",
+        "ord_uv": "0000000000",
+        "cnfm_qty": "0000000000",
+        "acpt_tp": "접수",
+        "rsrv_tp": "",
+        "ord_tm": "13:05:43",
+        "ori_ord": "0000000",
+        "stk_nm": "KODEX 200",
+        "io_tp_nm": "현금매수",
+        "loan_dt": "",
+        "cntr_qty": "0000000001",
+        "cntr_uv": "0000004900",
+        "ord_remnq": "0000000000",
+        "comm_ord_tp": "영웅문4",
+        "mdfy_cncl": "",
+        "cnfm_tm": "",
+        "dmst_stex_tp": "KRX",
+        "cond_uv": "0000000000"
+      }
+    ],
+    "return_code": 0,
+    "return_msg": "조회가 완료되었습니다"
+  }
+}

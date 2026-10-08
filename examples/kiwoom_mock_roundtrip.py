@@ -75,7 +75,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from pykbroker.brokers.kiwoom import KIWOOM_API_BASE_URL, KIWOOM_MOCK_BASE_URL, Kiwoom
-from pykbroker.exceptions import BrokerError, BrokerRejectedError, SpecUnverifiedError
+from pykbroker.exceptions import BrokerError, BrokerRejectedError
 from pykbroker.models import CancelRequest, OrderRequest
 from pykbroker.safety.gate import OrderSafety
 from pykbroker.safety.idempotency import MemoryIdempotencyStore
@@ -215,7 +215,7 @@ def run(
             result["status"] = "dry_run"
             result["would_do"] = [
                 "issue_token (au10001, mock host)",
-                f"get_quote({SYMBOL}) -- record whether a signed price is refused (SpecUnverifiedError)",
+                f"get_quote({SYMBOL}) -- read direction-signed prices as magnitudes",
                 f"get_rules({SYMBOL}) -- read the daily lower limit (하한가) and tick",
                 f"place_order(buy {QUANTITY} {SYMBOL} @ 하한가, limit)",
                 "list_orders -- confirm accepted and still open (not filled)",
@@ -255,11 +255,6 @@ def run(
 
         try:
             quote = broker.get_quote(SYMBOL, market="KR")
-        except SpecUnverifiedError:
-            step("read_quote", False, error="SpecUnverifiedError", minus_sign_seen=True)
-            raise RoundTripAbort(
-                "현재가에 '-' 부호가 있어 어댑터가 거부(SpecUnverifiedError) -- 부호 의미 미확정", manual_check=True
-            ) from None
         except RoundTripAbort:
             raise
         except BrokerError as exc:
@@ -268,23 +263,17 @@ def run(
         step(
             "read_quote",
             True,
-            minus_sign_seen=False,
             last=str(quote.last),
             bid=str(quote.bid) if quote.bid is not None else None,
             ask=str(quote.ask) if quote.ask is not None else None,
         )
         result["price_sign_note"] = (
-            "this read carried no '-' prefix; the sign's meaning (direction vs. value) is still not "
-            "fully settled -- recheck on a day the stock is down, per plans/kiwoom_rest_spec.md §부호"
+            "price direction signs are read as magnitudes from official examples; "
+            "this round trip does not expose the raw sign, so confirm a down-day raw response separately"
         )
 
         try:
             rules = broker.get_rules(SYMBOL)
-        except SpecUnverifiedError:
-            step("read_rules", False, error="SpecUnverifiedError", minus_sign_seen=True)
-            raise RoundTripAbort(
-                "하한가/상한가에 '-' 부호가 있어 어댑터가 거부 -- 수동 확인 필요", manual_check=True
-            ) from None
         except RoundTripAbort:
             raise
         except BrokerError as exc:

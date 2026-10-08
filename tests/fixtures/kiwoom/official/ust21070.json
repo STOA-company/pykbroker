@@ -1,0 +1,52 @@
+{
+  "request": {
+    "stex_tp": "",
+    "stk_cd": ""
+  },
+  "response": {
+    "stex_tp": "000030",
+    "crnc_code": "USD",
+    "tot_evlt_amt": "156464.6701",
+    "tot_prch_amt": "157279.9717",
+    "tot_pl_amt": "-1599.6616",
+    "tot_pl_rt": "-1.01",
+    "tdy_book_amt": "0.0000",
+    "tdy_pl_amt": "0.0000",
+    "tdy_pl_rt": "0.00",
+    "tot_evlt_amt_krw": "000000238530390",
+    "tot_prch_amt_krw": "000000239773317",
+    "tot_pl_amt_krw": "-00000002438684",
+    "tdy_book_amt_krw": "000000000000000",
+    "tdy_pl_amt_krw": "000000000000000",
+    "result_list": [
+      {
+        "stex_nm": "미국",
+        "crnc_code": "USD",
+        "stk_cd": "AAPL",
+        "frgn_stk_nm": "애플",
+        "qty": "000000000395",
+        "poss_qty": "000000000395",
+        "sell_alowq": "000000000395",
+        "pred_cntr_sellq": "000000000000",
+        "pred_cntr_buyq": "000000000000",
+        "tdy_cntr_sellq": "000000000000",
+        "tdy_cntr_buyq": "000000000000",
+        "frgn_stk_book_uv": "282.1603",
+        "now_pric": "275.2400",
+        "evlt_amt": "108719.8000",
+        "pl_amt": "-3283.9512",
+        "pl_rt": "-2.94",
+        "evlt_amt_krw": "000165743335",
+        "pl_amt_krw": "-00005006383",
+        "natn_nm": "미국",
+        "exch_rate": "1524.50",
+        "frgn_stk_book_uv_krw": "000000430153",
+        "now_pric_krw": "000000419603",
+        "frgn_stk_book_amt": "111453.3212",
+        "frgn_stk_book_amt_krw": "000169910588"
+      }
+    ],
+    "return_code": 0,
+    "return_msg": "계좌잔고내역이 조회되었습니다."
+  }
+}
