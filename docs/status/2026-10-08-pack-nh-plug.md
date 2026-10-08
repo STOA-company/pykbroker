@@ -4,10 +4,10 @@
 - #20(0730bd5e) 대비 남은 차이는 US 규칙·이전 종가이며 기존 안전 수정은 되돌리지 않았다.
 - 증권사 호출 0건; 운영 VM·DB·키 발급·실/모의 거래·배포·독립 리뷰·머지 없음.
 ## 고친 것
-- 국내 현금은 있는 dca·orr_pbl_amt4(100%)·구 응답 orr_pbl_amt의 최솟값.
-- 30%·40% 기준 orr_pbl_amt2/3는 현금으로 쓰지 않는다; 후보 없음/잘못된 값은 실패.
+- 국내 현금은 dca와 주문 가능 금액(orr_pbl_amt4 100% 또는 구 응답 orr_pbl_amt)이 함께 있어야 확인; 있는 값 모두의 최솟값.
+- 30%·40% 기준 orr_pbl_amt2/3는 쓰지 않는다; 예수금/주문 가능 금액 누락이나 있는 값의 오류는 실패.
 - 잔고 필드·보수적 현금 매핑은 **모의 응답으로 확정 전**.
-- dailyOrderExecution은 공식 Output_0 배열 우선; 빈 배열도 우선, 구 Output_1 호환은 보존.
+- dailyOrderExecution은 한 블록만 있으면 수용; 둘 다 있으면 같은 내용만 Output_0 수용, 불일치는 목록·status·이어받기 모두 실패.
 - client_options.brand=nhplug(나무 기본)/n2plug(N2); factory 옵션·환경 JSON 전달을 시험.
 - 허용 주소는 HTTPS :8443의 api/moapi.nhplug.com 및 api/moapi.n2plug.com 네 곳.
 - 토큰·계좌 확인·시세는 같은 브랜드 api, 모의 계좌·주문·취소는 같은 브랜드 moapi.

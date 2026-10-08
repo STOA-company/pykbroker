@@ -9,7 +9,7 @@ import pytest
 
 from pykbroker.brokers.nh import NH
 from pykbroker.exceptions import ConfigurationError, InvalidResponseError, SafetyError
-from pykbroker.models import CancelRequest, OrderRequest
+from pykbroker.models import CancelRequest, Order, OrderRequest
 from tests.test_nh_order_contract import make as make_order
 from tests.test_nh_order_contract import reply as order_reply
 from tests.test_nh_read_contract import make as make_read
@@ -99,13 +99,22 @@ def test_official_balance_also_caps_cash_by_present_legacy_field(legacy, expecte
     assert broker.get_balance().cash_available == expected
 
 
-@pytest.mark.parametrize("field", ["dca", "orr_pbl_amt4", "orr_pbl_amt"])
-def test_cash_accepts_one_present_candidate(field):
-    row = {field: 123, "tot_eal_amt": 0}
-    if field != "orr_pbl_amt":
-        check_fields(response_schema("krstock", BALANCE), row)
+@pytest.mark.parametrize(
+    "fields",
+    [{"dca": 123}, {"orr_pbl_amt4": 123}, {"orr_pbl_amt": 123}, {"orr_pbl_amt4": 123, "orr_pbl_amt": 100}],
+)
+def test_cash_requires_deposit_and_orderable_amount(fields):
+    row = {**fields, "tot_eal_amt": 0}
     broker, _ = make_read({BALANCE: reply({"rsp_cd": "00000", "Output_0": row})})
-    assert broker.get_balance().cash_available == 123
+    with pytest.raises(InvalidResponseError, match="cash balance fields are missing"):
+        broker.get_balance()
+
+
+@pytest.mark.parametrize("deposit,orderable,expected", [(50000, 40000, 40000), (30000, 40000, 30000), (0, 0, 0)])
+def test_balance_uses_deposit_and_legacy_orderable_cash(deposit, orderable, expected):
+    row = {"dca": deposit, "orr_pbl_amt": orderable, "tot_eal_amt": 0}
+    broker, _ = make_read({BALANCE: reply({"rsp_cd": "00000", "Output_0": row})})
+    assert broker.get_balance().cash_available == expected
 
 
 def test_official_margin_only_balance_fails_closed():
@@ -139,19 +148,45 @@ def kr_row(number=456):
     return row
 
 
-@pytest.mark.parametrize("legacy", [[], [kr_row(789)], "malformed"])
-def test_official_daily_output_zero_has_priority_over_legacy_one(legacy):
-    body = {"rsp_cd": "00000", "Output_0": [kr_row()], "Output_1": legacy}
+@pytest.mark.parametrize("blocks", ["Output_0", "Output_1", "both"])
+@pytest.mark.parametrize("empty", [False, True])
+def test_daily_accepts_single_or_identical_blocks(blocks, empty):
+    rows = [] if empty else [kr_row()]
+    body = {"rsp_cd": "00000"}
+    for block in ("Output_0", "Output_1") if blocks == "both" else (blocks,):
+        body[block] = [dict(row) for row in rows]
     broker, calls = make_order({DAILY: [(200, body, {})]})
-    (order,) = broker.list_orders()
-    assert (order.id, order.status, order.fill_price) == ("itg:456", "filled", Decimal(69950))
+    orders = broker.list_orders()
+    if empty:
+        assert orders == []
+    else:
+        (order,) = orders
+        assert (order.id, order.status, order.fill_price) == ("itg:456", "filled", Decimal(69950))
     check_input("krstock", DAILY, calls[0][3])
 
 
-def test_official_empty_daily_output_zero_does_not_use_legacy_rows():
-    check_fields(response_schema("krstock", DAILY), [])
-    broker, _ = make_order({DAILY: [(200, {"rsp_cd": "00000", "Output_0": [], "Output_1": [kr_row()]}, {})]})
-    assert broker.list_orders() == []
+@pytest.mark.parametrize(
+    "blocks", [([], [kr_row()]), ([kr_row()], []), ([kr_row()], [kr_row(789)]), ([kr_row()], "malformed")]
+)
+@pytest.mark.parametrize("page_index", [0, 1])
+@pytest.mark.parametrize("method", ["list_orders", "status"])
+def test_daily_conflicting_blocks_fail_closed_for_list_status_and_pages(blocks, page_index, method):
+    pages = []
+    if page_index:
+        pages.append(
+            (200, {"rsp_cd": "00165", "Output_0": [kr_row()], "Output_1": [kr_row()]},
+             {"cts_flag": "Y", "cts": "next"})
+        )
+    pages.append((200, {"rsp_cd": "00000", "Output_0": blocks[0], "Output_1": blocks[1]}, {}))
+    broker, calls = make_order({DAILY: pages})
+    with pytest.raises(InvalidResponseError, match="daily order rows are invalid"):
+        if method == "status":
+            broker.status(Order(id="itg:456", symbol="005930", status="accepted"))
+        else:
+            broker.list_orders()
+    assert len(calls) == page_index + 1
+    if page_index:
+        assert calls[1][2]["cts"] == "next"
 
 
 @pytest.mark.parametrize("invalid", [None, {}, "bad"])
@@ -161,9 +196,11 @@ def test_invalid_official_daily_block_does_not_fall_back_to_legacy(invalid):
         broker.list_orders()
 
 
-def test_official_daily_pages_prefer_output_zero_on_each_page():
-    first = (200, {"rsp_cd": "00165", "Output_0": [kr_row()], "Output_1": []}, {"cts_flag": "Y", "cts": "next"})
-    last = (200, {"rsp_cd": "00000", "Output_0": [kr_row(789)], "Output_1": []}, {"cts_flag": "N"})
+def test_official_daily_pages_accept_identical_blocks_on_each_page():
+    first = (
+        200, {"rsp_cd": "00165", "Output_0": [kr_row()], "Output_1": [kr_row()]}, {"cts_flag": "Y", "cts": "next"}
+    )
+    last = (200, {"rsp_cd": "00000", "Output_0": [kr_row(789)], "Output_1": [kr_row(789)]}, {"cts_flag": "N"})
     broker, calls = make_order({DAILY: [first, last]})
     assert [order.id for order in broker.list_orders()] == ["itg:456", "itg:789"]
     assert calls[1][2]["cts"] == "next"

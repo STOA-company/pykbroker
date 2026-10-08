@@ -525,9 +525,9 @@ class NH(BaseBroker):
             if not isinstance(row, Mapping):
                 raise InvalidResponseError("NH balance block is invalid")
             # Never count margin or unsettled assets as spendable cash.
-            candidates = [decimal(row[name]) for name in ("dca", "orr_pbl_amt4", "orr_pbl_amt") if name in row]
-            if not candidates:
+            if "dca" not in row or not any(name in row for name in ("orr_pbl_amt4", "orr_pbl_amt")):
                 raise InvalidResponseError("NH cash balance fields are missing")
+            candidates = [decimal(row[name]) for name in ("dca", "orr_pbl_amt4", "orr_pbl_amt") if name in row]
             cash = min(candidates)
             return Balance(cash_available=cash, position_value=decimal(row["tot_eal_amt"]))
 
@@ -758,6 +758,8 @@ class NH(BaseBroker):
         for _ in range(NH_MAX_BALANCE_PAGES):
             body, headers = self._read_response("/krstock/inquiry/v1/dailyOrderExecution", payload, None, cts=cts)
             # Current official schema uses Output_0; older fixtures/wire used Output_1.
+            if "Output_0" in body and "Output_1" in body and body["Output_0"] != body["Output_1"]:
+                raise InvalidResponseError("NH daily order rows are invalid")
             page = body.get("Output_0") if "Output_0" in body else body.get("Output_1")
             if page is None:
                 if str(body.get("rsp_cd", "")).strip() != "13578":
