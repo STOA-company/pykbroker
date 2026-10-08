@@ -27,7 +27,7 @@ All fixture identities are fake. Mutated test cases are synthetic, not additiona
 
 SPQM2226 is inconsistent: grid_cnt2=1, Record2=[], positive securities valuation; Record1 exceeds its schema capacity of 5 and contains displaced TSLA text. It cannot establish an empty account or justify dropping a missing holding.
 XLSX only labels grid counts; no definition of cumulative totals or cn_f values. Continuation follows nxt_key, each nonempty page must remain complete. No guessed cn_f value is sent.
-KR holdings use ec_q (settlement quantity), not hld_q plus ec_q; SSQM2952 sample blank currency belongs to the domestic KRX row.
+SSQM2952 sheet42:51-55,68-72 names all ten quantity fields but gives no formula. The JSON sample (hld_q=0, nstmt_b_q=1, nstmt_s_q=0, ec_q=1) cannot disambiguate total vs unsettled settlement quantity. Any nonzero quantity (including P6) or positive row valuation is rejected with SpecUnverifiedError pending verification; neither quantity nor sellable shares are inferred.
 SSAM1806 sheet28:13 describes 1=일부정정, 2=전부정정; its explicit cancel JSON uses 1 with quantity and reports successful cancellation. Use that demonstrated quantity-specific request, never infer value 2.
 SKAM2101 sheet63:15 and SKAM2102 sheet64:14 specify P4 String(15). The input sample has integer prices; live fractional input acceptance remains unverified.
 SPQM2204 sheet71:11-12 has no timezone definition. Preserve New York default and explicit order_date; live rollover must be checked.

@@ -161,11 +161,15 @@ class KB(BaseBroker):
         if getattr(client, "base_url", None) != KB_API_BASE_URL:
             raise ConfigurationError("KB token client must use the official production URL")
         credential_rate_limiter("kb", app_key, {"request": 1.0}).wait("request")
+        failed = False
         try:
             result = client.post("/oauth2/token", headers={"Content-Type": "application/json"},
                                  body={"dataHeader": {"ipAddr": "", "macAddr": ""}, "dataBody": body})
         except Exception:
-            # An injected transport can include credentials in its exception. Never echo it.
+            # Leave the handler before raising: `from None` alone retains the
+            # injected exception (and possibly credentials) in __context__.
+            failed = True
+        if failed:
             raise TransportError("KB token issuance failed; reconcile token state before retrying") from None
         try:
             data = _response_body(result)
@@ -177,7 +181,8 @@ class KB(BaseBroker):
                 raise ValueError
             return {"access_token": token, "token_type": kind, "expires_in": expiry}
         except (KeyError, TypeError, ValueError, InvalidResponseError):
-            raise InvalidResponseError("KB token response is invalid") from None
+            pass
+        raise InvalidResponseError("KB token response is invalid") from None
 
     def capabilities(self) -> Capabilities:
         return Capabilities(
@@ -329,15 +334,40 @@ class KB(BaseBroker):
             raise InvalidResponseError("KB funding row count is inconsistent")
         return active
 
+    @staticmethod
+    def _verify_empty_foreign_holdings(page):
+        """An empty Record2/count cannot override valuation or displaced stock data."""
+        message = "KB foreign holdings response is incomplete; verification required (확인 필요)"
+        # SPQM2226 sheet59:22,24,30,33. Do not derive holdings from these totals.
+        totals = ("tl_scrts_exch_val_amt", "tl_krw_val_amt", "tl_asts_exch_val_amt", "asts_val_amt")
+        if whole(page["grid_cnt2"]) != 0 or any(decimal(page.get(key, 0)) > 0 for key in totals):
+            raise SpecUnverifiedError(message)
+        funding = page.get("Record1", [])
+        # sheet59:35 defines five currency funding rows. The official damaged
+        # export has seven, with TSLA text displaced into numeric funding fields.
+        if not isinstance(funding, list) or len(funding) > 5:
+            raise SpecUnverifiedError(message)
+        for row in funding:
+            if not isinstance(row, Mapping):
+                raise SpecUnverifiedError(message)
+            for key, value in row.items():
+                if key == "crncy_clsf_nm":
+                    continue
+                if key in {"is_cd", "is_nm", "frgn_hld_q_p6", "frgn_ordr_psbl_q_p6"}:
+                    if str(value).strip():
+                        raise SpecUnverifiedError(message)
+                    continue
+                try:
+                    decimal(value)
+                except InvalidResponseError:
+                    raise SpecUnverifiedError(message) from None
+
     def _pages(self, tr, body, block, count):
         cursor, seen = "", set()
         for _ in range(100):
             page = self._response(tr, {**body, "nxt_key": cursor})
-            if tr == "spqm2226" and page.get(block) == [] and whole(page[count]) != 0:
-                # Official SPQM2226 export contains a displaced holding in Record1,
-                # positive valuation and no Record2. A final-key/message is not
-                # permission to silently erase that holding. Do not reconstruct it.
-                raise SpecUnverifiedError("KB foreign holdings response is incomplete; verify the native row block")
+            if tr == "spqm2226" and page.get(block) == []:
+                self._verify_empty_foreign_holdings(page)
             yield self._rows(page, block, count)
             cursor = page.get("nxt_key")
             if not isinstance(cursor, str):
@@ -382,20 +412,16 @@ class KB(BaseBroker):
                     raise SpecUnverifiedError("KB KR holdings are truncated; no continuation input is documented")
                 result = []
                 for row in rows:
-                    currency = row["crncy_cd"].strip()
-                    if currency not in {"", "KRW"}:
-                        continue
-                    # SSQM2952 is execution-based: ec_q includes unsettled buys/sells.
-                    # Official sample has hld_q=0, ec_q=1. These are not additive.
-                    quantity = whole(row["ec_q"])
-                    if not quantity:
-                        continue
-                    result.append(Position(
-                        symbol=self._response_symbol(row["is_cd"], "KR"), name=row["is_nm"], market="KR",
-                        quantity=quantity, sellable=whole(row["ordr_psbl_q"]),
-                        average_price=decimal(row["byng_avr_prc"]), last=decimal(row["now_prc"]),
-                        market_value=decimal(row["val_amt"]),
-                    ))
+                    # sheet42:51-55,68-72 only name the ten quantity fields;
+                    # neither XLSX nor JSON defines their relationship. In
+                    # particular 0+1-0=1 cannot establish ec_q semantics.
+                    quantities = ("hld_q", "ordr_psbl_q", "nstmt_s_q", "nstmt_b_q", "ec_q")
+                    values = [decimal(row[key]) for key in quantities]
+                    values.extend(decimal(row.get(key + "_p6", 0)) for key in quantities)
+                    if any(value != 0 for value in values) or decimal(row["val_amt"]) > 0:
+                        raise SpecUnverifiedError(
+                            "KB KR holding quantity semantics require verification (확인 필요)"
+                        )
                 return result
             result = []
             for page in self._pages("spqm2226", {"std_crncy_f": "1"}, "Record2", "grid_cnt2"):

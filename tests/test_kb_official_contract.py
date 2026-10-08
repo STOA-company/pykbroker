@@ -72,19 +72,50 @@ def cancel(market="KR", **changes):
 def test_kr_official_unsettled_holding_is_not_lost():
     client = FakeClient({"/api/v1/ssqm2952": sample("SSQM2952")["output"]})
     b = broker(client)
-    positions = b.get_positions()
-    assert len(positions) == 1
-    position = positions[0]
-    assert (position.symbol, position.quantity, position.sellable) == ("005930", 1, 1)
-    assert position.market_value == Decimal("426500")
-    assert b.available_qty("A005930") == 1
+    # Field labels and this one sample do not establish the settlement formula.
+    for read in [b.get_positions, lambda: b.available_qty("A005930")]:
+        with pytest.raises(SpecUnverifiedError, match="확인 필요"):
+            read()
     assert [c[0] for c in client.calls] == ["/api/v1/ssqm2952"] * 2
 
 
-def test_kr_settlement_quantity_is_not_added_to_held_quantity():
+@pytest.mark.parametrize("changes", [
+    {"hld_q": "10", "ec_q": "0", "nstmt_b_q": "0", "nstmt_s_q": "0"},
+    {"hld_q": "10", "ec_q": "8", "nstmt_b_q": "0", "nstmt_s_q": "2"},
+    {"hld_q": "10", "ec_q": "3", "nstmt_b_q": "1", "nstmt_s_q": "0"},
+    {"hld_q": "3", "ec_q": "4", "ordr_psbl_q": "4", "nstmt_b_q": "1"},
+])
+def test_kr_existing_unsettled_sell_and_conflicting_quantities_require_verification(changes):
     response = sample("SSQM2952")["output"]
-    response["dataBody"]["Record1"][0].update(hld_q="3", ec_q="4", ordr_psbl_q="4", nstmt_b_q="1")
-    assert broker(FakeClient({"/api/v1/ssqm2952": response})).get_positions()[0].quantity == 4
+    response["dataBody"]["Record1"][0].update(changes)
+    with pytest.raises(SpecUnverifiedError, match="확인 필요"):
+        broker(FakeClient({"/api/v1/ssqm2952": response})).get_positions()
+
+
+KR_QUANTITIES = ("hld_q", "ordr_psbl_q", "nstmt_s_q", "nstmt_b_q", "ec_q",
+                 "hld_q_p6", "ordr_psbl_q_p6", "nstmt_s_q_p6", "nstmt_b_q_p6", "ec_q_p6")
+US_VALUATIONS = ("tl_scrts_exch_val_amt", "tl_krw_val_amt", "tl_asts_exch_val_amt", "asts_val_amt")
+
+
+@pytest.mark.parametrize("field", [*KR_QUANTITIES, "val_amt"])
+def test_kr_any_quantity_or_valuation_cannot_silently_disappear(field):
+    response = sample("SSQM2952")["output"]
+    row = response["dataBody"]["Record1"][0]
+    row.update(dict.fromkeys([*KR_QUANTITIES, "val_amt"], "0"))
+    row[field] = "0.000001" if field.endswith("_p6") else "1"
+    client = FakeClient({"/api/v1/ssqm2952": response, "/api/v1/ssqm0004": {
+        "dataHeader": response["dataHeader"], "dataBody": {"ordr_psbl_csh": "0"},
+    }})
+    with pytest.raises(SpecUnverifiedError, match="확인 필요"):
+        broker(client).get_positions()
+    with pytest.raises(SpecUnverifiedError, match="확인 필요"):
+        broker(client).get_balance()
+
+
+def test_kr_verified_zero_quantities_and_valuation_allow_empty_positions():
+    response = sample("SSQM2952")["output"]
+    response["dataBody"]["Record1"][0].update(dict.fromkeys([*KR_QUANTITIES, "val_amt"], "0"))
+    assert broker(FakeClient({"/api/v1/ssqm2952": response})).get_positions() == []
 
 
 @pytest.mark.parametrize("field,value", [("grid_cnt1", "2"), ("tl_data_cnt", "2")])
@@ -100,7 +131,8 @@ def test_us_funding_official_fixed_array_padding_is_not_counted():
     # SPQM2226 official export is corrupt; this explicit synthetic empty page
     # isolates funding parsing without treating the corrupt example as empty.
     holdings = sample("SPQM2226")["output"]
-    holdings["dataBody"].update(grid_cnt2="0", tl_scrts_exch_val_amt="0", Record1=[])
+    holdings["dataBody"].update(dict.fromkeys(US_VALUATIONS, "0"))
+    holdings["dataBody"].update(grid_cnt2="0", Record1=[])
     client = FakeClient({"/api/v1/skqm3350": funding, "/api/v1/spqm2226": holdings})
     balance = broker(client, "US").get_balance()
     assert balance.currency == "USD" and balance.cash_available == 0 and balance.position_value == 0
@@ -135,6 +167,41 @@ def test_us_official_displaced_holding_is_not_silently_an_empty_account():
         broker(FakeClient({"/api/v1/spqm2226": response}), "US").get_positions()
 
 
+def test_us_review_zero_count_official_variant_is_not_an_empty_balance():
+    response = sample("SPQM2226")["output"]
+    response["dataBody"]["grid_cnt2"] = "0000"
+    client = FakeClient({"/api/v1/spqm2226": response,
+                         "/api/v1/skqm3350": sample("SKQM3350")["output"]})
+    for read in [broker(client, "US").get_positions, broker(client, "US").get_balance]:
+        with pytest.raises(SpecUnverifiedError, match="확인 필요"):
+            read()
+
+
+@pytest.mark.parametrize("field", US_VALUATIONS)
+def test_us_zero_count_with_positive_valuation_requires_verification(field):
+    response = sample("SPQM2226")["output"]
+    response["dataBody"].update(dict.fromkeys(US_VALUATIONS, "0"))
+    response["dataBody"].update(grid_cnt2="0000", Record1=[])
+    response["dataBody"][field] = "1207805"
+    client = FakeClient({"/api/v1/spqm2226": response,
+                         "/api/v1/skqm3350": sample("SKQM3350")["output"]})
+    for read in [broker(client, "US").get_positions, broker(client, "US").get_balance]:
+        with pytest.raises(SpecUnverifiedError, match="확인 필요"):
+            read()
+
+
+@pytest.mark.parametrize("rows", [None, [{"is_cd": "TSLA"}], [{"is_nm": "fixture-stock"}],
+                                  [{"tfnd": "스닥USD       TS", "mgn_p2": "LA        테슬라"}]])
+def test_us_zero_count_with_displaced_stock_data_requires_verification(rows):
+    response = sample("SPQM2226")["output"]
+    response["dataBody"].update(dict.fromkeys(US_VALUATIONS, "0"))
+    response["dataBody"]["grid_cnt2"] = "0000"
+    if rows is not None:
+        response["dataBody"]["Record1"] = rows
+    with pytest.raises(SpecUnverifiedError, match="확인 필요"):
+        broker(FakeClient({"/api/v1/spqm2226": response}), "US").get_positions()
+
+
 def test_us_pages_require_complete_rows_and_follow_next_key():
     # XLSX Record2 fields, attached to a mutated official envelope.
     response = sample("SPQM2226")["output"]
@@ -144,6 +211,7 @@ def test_us_pages_require_complete_rows_and_follow_next_key():
         "now_prc_p4": "1.2500", "byng_avr_prc_p4": "1.0000",
     }], nxt_key="fixture-next")
     last = copy.deepcopy(response)
+    last["dataBody"].update(dict.fromkeys(US_VALUATIONS, "0"))
     last["dataBody"].update(grid_cnt2="0", Record2=[], nxt_key=" ")
 
     class Pages(FakeClient):
@@ -335,19 +403,26 @@ def test_token_invalid_official_envelope_is_rejected_without_raw_values(changes)
     response = sample("token")["output"]
     response["dataBody"].update(changes)
     client = FakeClient({"/oauth2/token": response})
-    with pytest.raises(InvalidResponseError, match="KB token response is invalid"):
+    with pytest.raises(InvalidResponseError, match="KB token response is invalid") as error:
         KB.issue_token(app_key="k" * 36, secret_key="s" * 32, client_factory=lambda: client)
+    assert error.value.__context__ is error.value.__cause__ is None
 
 
 def test_token_error_does_not_echo_secret_or_response(capsys):
     class Failure(FakeClient):
         def post(self, *args, **kwargs):
-            raise RuntimeError("s" * 32)
+            try:
+                raise ValueError("k" * 36)
+            except ValueError as cause:
+                raise RuntimeError("s" * 32) from cause
 
     with pytest.raises(TransportError) as error:
         KB.issue_token(app_key="k" * 36, secret_key="s" * 32, client_factory=Failure)
     assert "s" * 32 not in str(error.value)
-    assert error.value.__suppress_context__
+    assert error.value.__context__ is None
+    assert error.value.__cause__ is None
+    assert "s" * 32 not in repr(error.value.__context__)
+    assert "s" * 32 not in repr(error.value.__cause__)
     captured = capsys.readouterr()
     assert captured.out == captured.err == ""
 
