@@ -188,7 +188,7 @@ def test_daily_list_and_status_use_integrated_number_without_guessing_market_num
         "tot_cns_qty": 1,
         "ny_cns_qty": 1,
     }
-    page = reply([], message="조회완료", code="00000")
+    page = reply(message="조회완료", code="00000")  # Legacy Output_1-only response.
     page[1]["Output_1"] = [row]
     broker, calls = make({DAILY: [page, page]})
     (listed,) = broker.list_orders("005930")
@@ -229,7 +229,7 @@ def test_daily_changed_rejected_or_zero_quantity_rows_stay_unknown(changes):
         "ny_cns_qty": 2,
         **changes,
     }
-    page = reply([], message="조회완료", code="00000")
+    page = reply(message="조회완료", code="00000")  # Legacy Output_1-only response.
     page[1]["Output_1"] = [row]
     broker, _ = make({DAILY: [page]})
     (listed,) = broker.list_orders()
@@ -241,7 +241,7 @@ def test_daily_changed_rejected_or_zero_quantity_rows_stay_unknown(changes):
 def test_daily_child_row_makes_parent_state_unknown(reference_field, reference_value):
     parent = {"itg_orr_no": 456, "iem_cd": "005930", "orr_qty": 2, "orr_pr": 70000, "tot_cns_qty": 0, "ny_cns_qty": 2}
     child = {**parent, "itg_orr_no": 789, reference_field: reference_value, "cor_can_dit_cd_nm": "취소"}
-    page = reply([], message="조회완료", code="00000")
+    page = reply(message="조회완료", code="00000")  # Legacy Output_1-only response.
     page[1]["Output_1"] = [parent, child]
     broker, _ = make({DAILY: [page]})
     assert [item.status for item in broker.list_orders()] == ["unknown", "unknown"]
