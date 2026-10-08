@@ -29,7 +29,11 @@ TODO: LS US request mappings lacked verified enum values in the source; only dom
 
 Official ka10095 lower limit `-85200` and ka10001 yearly low `-91200` establish direction-signed price strings: `+` and `-` preserve magnitude. Band consistency checks remain; quantity parsing receives no price-sign conversion.
 
+The same magnitude conversion applies to US quotes, bid/ask prices, holding cost/current prices, order prices and execution unit prices. Pinned official US examples include usa20100's yearly low `-164.2700`, usa20101, ust21070 and ust21050; negative-price tests derive down-day cases by changing price signs only. US down-day prices previously rejected are now read as absolute values, opening the order path for those instruments. US rate budgets, cash handling, halt checks and order safety gates remain unchanged.
+
 KR cash is the minimum of kt00001 `ord_alow_amt`, `entr`, `100stk_ord_alow_amt`, and `d2_entra`, with deficits clamped to zero (official example: KRW 12,550). KR `orderable_quantity` reads kt00011 `min_ord_alowq`. Open-order average execution price uses positive ka10075 `cntr_tot_amt / cntr_qty`. Confirmed kt00007 cancel rows must link the original number, symbol and KRX, and conserve ordered = filled + confirmed cancelled + remaining quantities. Zero remainder with a confirmed cancellation is `cancelled`.
+
+A positive original quantity with filled = ordered and zero remainder is `filled`, regardless of later amendment/cancel labels. Partial fills retain the cancel-quantity conservation rules above; unrecognized amendment/cancel labels remain `unknown`.
 
 Legacy `experimental.kiwoom.get_balance` is blocked before transport because it returned estimated asset value as cash. Use the registered adapter. The official 1700–1702 errors are flow limits; this HEAD has no retryable-rejection classification, so existing `BrokerRejectedError` remains without automatic retries.
 

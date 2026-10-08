@@ -7,13 +7,16 @@
 ## 고친 것·동일 종류 범위
 - A1: 가격 문자열 부호를 방향으로 읽어 절댓값. ka10001 연중최저 -91200·ka10095 하한가 -85200 근거.
 - 대상: 현재가·매수/매도호가·상/하한가·기준가·매입/잔고현재가·미체결 주문가·체결단가.
+- 미국 시세·호가·잔고 매입/현재가·주문가·체결단가도 같은 절댓값 변환. 미국 하락 종목 가격을 거절하던 주문 경로가 열림.
+- 미국 usa20100 연중최저 -164.2700·usa20101·ust21070·ust21050 공식 예시 고정; 음수 가격은 부호만 바꾼 파생 시험.
 - 가격 밴드 모순 거절 유지. 수량은 절댓값 변환 없음. 원본 ka10001 어긋난 값은 계속 거절.
 - A4: kt00001 ord_alow_amt·entr·100stk_ord_alow_amt·d2_entra 최솟값, 음수 후보는 0원.
 - 공식 예시 85,341 주문가능·17,534 예수금·12,550 100%/D+2 → 현금 12,550원.
 - 기존 orderable_quantity에 KR kt00011(min_ord_alowq) 분기 추가, 양수 정수 원 가격만 조회.
-- KR 조회 5/s 유지: kt00001을 0.5/s로, 신규 kt00011도 0.5/s. US 예산/동작 유지.
+- KR 조회 5/s 유지: kt00001을 0.5/s로, 신규 kt00011도 0.5/s. US 예산·현금·정지·안전 게이트 유지; 가격 부호 변환 적용.
 - A5: kt00007 취소확인의 ori_ord·종목·KRX 대조, cnfm_qty 합산; 주문=체결+취소+잔량일 때 판정.
-- 확인취소>0·잔량0은 cancelled. 불일치·중복·다른 종목·취소접수는 unknown; 정정의 기존 완전체결 유지.
+- 원주문>0·체결=주문·잔량0은 뒤따른 정정·취소 글자와 관계없이 filled(P1-2). 나머지는 기존 취소 수량 보존 규칙.
+- 확인취소>0·잔량0은 cancelled. 완전체결 외 불일치·중복·다른 종목·취소접수·모르는 글자는 unknown.
 - ka10075 평균 체결가: 양수 cntr_tot_amt / cntr_qty만 채움. 누락·0이면 None.
 - A7: experimental.kiwoom.get_balance 호출 전 오류; 추정예탁자산(prsm_dpst_aset_amt) 현금 반환 제거.
 - README·한/영 BROKER_MATRIX·모의 예제의 가격 부호 설명 동기화.
@@ -22,10 +25,11 @@
 - #19 대조: 빠진 국내 동작 없음. 옛 fc_ord_alowa 현금·US 정지 확인 제거는 범위 밖/방어 후퇴라 제외.
 ## 검증
 - 명령: PYTHONPATH=src /home/quantus/coding/pykbroker/.venv/bin/python -m pytest -q tests -p no:cacheprovider
-- 기준선: 1318 passed / 19 skipped / 5 failed; 끝: 1354 passed / 19 skipped / 같은 5 failed.
+- 기준선: 1318 passed / 19 skipped / 5 failed; 초기 PR: 1354 passed; P1 수정 끝: 1365 passed / 19 skipped / 같은 5 failed.
 - 기존 실패: contract_uniformity factory 목록·US-NH, dbfi 현금, locks LS flag, rules_contract KIS US 규칙.
 - 키움 4파일: 283 passed. 변경을 되돌린 회귀 확인: 12 failed / 6 passed(의도된 실패); 수정 파일 복원.
-- 변경 Python 파일 ruff check·git diff --check 통과. pytest 5/8회, no_network 소켓 차단.
+- P1: 완전체결+늦은 취소/정정 8건, 미국 공식/음수 파생 2건, 모르는 글자 1건 추가. 수정 전 7 failed / 3 passed; 수정 후 관련 22 passed.
+- 변경 Python 파일 ruff check·git diff --check 통과. 초기 pytest 5/8회; P1 수정 3/4회, no_network 소켓 차단.
 ## 모의·실계좌에서만 확인할 것 (안 걸어 봄)
 - A2: 모의 왕복·하락 종목 raw 부호·HTTP 오류 위치. 실제 호출 금지여서 시행 안 함.
 - A4: qry_tp=2 현금·오늘 매수 정산·kt00011 종목/가격별 수량을 실계좌로 대사.

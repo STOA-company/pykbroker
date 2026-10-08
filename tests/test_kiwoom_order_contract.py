@@ -679,6 +679,29 @@ def test_pinned_cancel_state_requires_conserved_confirmed_quantities(filled, can
     "change",
     [
         {"mdfy_cncl": "취소접수"},
+        {"mdfy_cncl": "취소"},
+        {"mdfy_cncl": "취소거부"},
+        {"mdfy_cncl": "정정"},
+        {"mdfy_cncl": "알 수 없는 값"},
+        {"mdfy_cncl": "취소확인", "cnfm_qty": "1"},
+        {"mdfy_cncl": "취소확인", "dmst_stex_tp": "NXT"},
+        {"mdfy_cncl": "정정확인"},
+    ],
+)
+def test_pinned_fully_filled_order_survives_late_cancel_or_amend_rows(change):
+    # Derived late changes: the official ledger sample has one share fully executed.
+    body = PINNED["kt00007"]["response"]
+    original = body[LEDGER][0]
+    late = {**original, "ord_no": "0000051", "ori_ord": original["ord_no"], **change}
+    result = make({"kt00007": [{**body, LEDGER: [original, late]}]})[0].status(held())
+    assert (result.status, result.quantity, result.filled, result.remaining) == ("filled", 1, 1, 0)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"mdfy_cncl": "취소접수"},
+        {"mdfy_cncl": "알 수 없는 값"},
         {"mdfy_cncl": "정정확인"},
         {"stk_cd": "A005930"},
         {"dmst_stex_tp": "NXT"},

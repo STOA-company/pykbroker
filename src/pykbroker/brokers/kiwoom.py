@@ -536,31 +536,26 @@ class Kiwoom(BaseBroker):
             changes = [
                 row for row in rows if row.get("ori_ord") == order.id and str(row.get("mdfy_cncl") or "").strip()
             ]
-            # kt00007 cnfm_qty is confirmed quantity, not the requested ord_qty.
-            cancel_ids = [row.get("ord_no") for row in changes]
-            confirmed = all(
-                row.get("mdfy_cncl") == "취소확인"
-                and self._symbol(row["stk_cd"], "KR") == code
-                and row.get("dmst_stex_tp") == "KRX"
-                and row.get("ord_no") != order.id
-                for row in changes
-            ) and len(set(cancel_ids)) == len(cancel_ids)
-            cancelled = sum(whole(row["cnfm_qty"]) for row in changes) if confirmed else 0
             status = "unknown"
-            if confirmed and quantity > 0 and filled + cancelled + remaining == quantity:
-                if cancelled and not remaining:
-                    status = "cancelled"
-                elif filled == quantity and not remaining:
-                    status = "filled"
-                elif remaining and (not changes or cancelled > 0):
-                    status = "partial" if filled else "open"
-            elif (
-                filled == quantity
-                and quantity > 0
-                and not remaining
-                and all(row.get("mdfy_cncl") == "정정확인" for row in changes)
-            ):
-                status = "filled"  # preserve the existing fully-executed amendment case
+            if quantity > 0 and filled == quantity and not remaining:
+                # A late amendment/cancel row cannot undo the original order's complete execution.
+                status = "filled"
+            else:
+                # kt00007 cnfm_qty is confirmed quantity, not the requested ord_qty.
+                cancel_ids = [row.get("ord_no") for row in changes]
+                confirmed = all(
+                    row.get("mdfy_cncl") == "취소확인"
+                    and self._symbol(row["stk_cd"], "KR") == code
+                    and row.get("dmst_stex_tp") == "KRX"
+                    and row.get("ord_no") != order.id
+                    for row in changes
+                ) and len(set(cancel_ids)) == len(cancel_ids)
+                cancelled = sum(whole(row["cnfm_qty"]) for row in changes) if confirmed else 0
+                if confirmed and quantity > 0 and filled + cancelled + remaining == quantity:
+                    if cancelled and not remaining:
+                        status = "cancelled"
+                    elif remaining and (not changes or cancelled > 0):
+                        status = "partial" if filled else "open"
             return order.model_copy(
                 update={
                     "status": status,

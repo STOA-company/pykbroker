@@ -760,6 +760,47 @@ def test_pinned_official_direction_prices_and_rules():
     assert (quote.last, quote.bid, quote.ask) == (Decimal("85200"), Decimal("85200"), Decimal("85300"))
 
 
+@pytest.mark.parametrize("down_day", [False, True])
+def test_pinned_us_direction_prices_cover_quote_positions_and_order_prices(down_day):
+    # False uses verbatim official US examples; True derives a down-day by changing price signs only.
+    basic = dict(PINNED["usa20100"]["response"])
+    book = dict(PINNED["usa20101"]["response"])
+    positions = PINNED["ust21070"]["response"]
+    holding = dict(positions["result_list"][0])
+    orders = PINNED["ust21050"]["response"]
+    row = dict(orders["result_list"][0])
+    if down_day:
+        for body, fields in (
+            (basic, ("cur_prc", "base_close_pric")),
+            (book, ("fpr_buy_bid", "fpr_sel_bid")),
+            (holding, ("frgn_stk_book_uv", "now_pric")),
+            (row, ("ord_uv",)),
+        ):
+            for field in fields:
+                body[field] = "-" + body[field].lstrip("+-")
+        # Derived single-share execution also exercises the US execution-unit price reader.
+        row.update(cntr_qty="1", ord_remnq="4", cntr_uv="-200.0000")
+    broker = us_read(
+        {
+            "usa20100": basic,
+            "usa20101": book,
+            "ust21070": {**positions, "result_list": [holding]},
+            "ust21050": {**orders, "result_list": [row]},
+        }
+    )
+    # The official yearly low is already negative and establishes the US sign convention.
+    assert module._price(basic["oyr_lwst"]) == Decimal("164.2700")
+    quote = broker.get_quote("NVDA", market="US")
+    assert (quote.last, quote.bid, quote.ask, quote.prev_close) == (
+        Decimal("201.4700"), Decimal("201.4200"), Decimal("201.5300"), Decimal("200.0400")
+    )
+    (position,) = broker.positions()
+    assert (position.average_price, position.last) == (Decimal("282.1603"), Decimal("275.2400"))
+    (order,) = broker.list_orders("NVDA")
+    assert (order.price, order.quantity, order.remaining) == (Decimal("200.0000"), 5, 4 if down_day else 5)
+    assert order.fill_price == (Decimal("200.0000") if down_day else None)
+
+
 @pytest.mark.parametrize("field", ["ord_alow_amt", "entr", "100stk_ord_alow_amt", "d2_entra"])
 def test_pinned_cash_uses_every_cap_and_clamps_deficits(field):
     body = PINNED["kt00001"]["response"]
