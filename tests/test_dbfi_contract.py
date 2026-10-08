@@ -102,12 +102,15 @@ def test_dbfi_missing_execution_price_never_uses_limit(dbfi, average):
     assert broker.list_orders()[0].fill_price is None
 
 
-def test_dbfi_cash_requeries_orderable_amount_and_ignores_d2_deposit(dbfi):
+def test_dbfi_balance_keeps_d2_deposit_and_available_cash_requeries_buying_power(dbfi):
     broker, client, _ = dbfi
     client.get_able_order_quantity.return_value = {
         "rsp_cd": "00000", "Out": {"MgnRat100pctOrdAbleAmt": "100000", "Dps": "900000"}}
-    assert broker.get_balance().cash_available == Decimal("100000")
+    assert broker.get_balance().cash_available == Decimal("200000")
+    client.get_able_order_quantity.assert_not_called()
     assert broker.available_cash(symbol="A005930", price=Decimal("70000")) == Decimal("100000")
+    client.get_able_order_quantity.return_value["Out"]["MgnRat100pctOrdAbleAmt"] = "150000"
+    assert broker.available_cash(symbol="005930", price=Decimal("70000")) == Decimal("150000")
     client.get_able_order_quantity.assert_called_with(
         region="domestic", stock_code="005930", order_type="2", price=70000)
     assert client.get_able_order_quantity.call_count == 2
