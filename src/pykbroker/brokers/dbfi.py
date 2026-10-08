@@ -31,12 +31,16 @@ class DBFI(BaseBroker):
         market: str = "KR",
         venue: str | None = None,
         cash_provider: Callable[[Any], Decimal] | None = None,
+        is_integrated: bool = False,
         virtual: bool = False,
         halt_provider: Callable[[str], bool] | None = None,
     ) -> None:
         super().__init__(account=account, safety=safety, market=market, virtual=virtual, halt_provider=halt_provider)
         if market == "US" and venue not in US_VENUES:
             raise ConfigurationError("US DBFI requires NYSE, NASDAQ, or AMEX venue")
+        if not isinstance(is_integrated, bool):
+            raise ConfigurationError("is_integrated must be an explicit boolean")
+        self.is_integrated = is_integrated
         self.venue, self._cash_provider = venue, cash_provider
         self.region = "domestic" if market == "KR" else "overseas"
         self._client, self._api = client, api
@@ -75,10 +79,12 @@ class DBFI(BaseBroker):
         now: datetime | None = None,
         trading_day: Callable[[date], bool] | None = None,
     ) -> Rules:
-        """Same contract as KIS. The DB price payload carries no prev close and no verified
-        halt field, so the band and the halt stay unknown unless a halt_provider answers."""
-        if self.market != "KR":
-            return super().get_rules(symbol, now=now, trading_day=trading_day)
+        """KR may use the caller's halt provider; US requires documented native evidence."""
+        if self.market == "US":
+            code = self._symbol(symbol, "US")
+            rules = super().get_rules(code, now=now, trading_day=trading_day)
+            # No verified US native enum: a caller True may veto, False cannot clear unknown.
+            return rules.model_copy(update={"halted": True if rules.halted is True else None})
         code = self._symbol(symbol, "KR")
 
         def read() -> Rules:
@@ -124,17 +130,54 @@ class DBFI(BaseBroker):
             raise InvalidResponseError("DBFI balance page missing")
         return [check_response(page, "dbfi") for page in pages]
 
+    def available_cash(self, *, symbol: str | None = None, price: Decimal | None = None) -> Decimal:
+        """Broker buying power, never deposits/equity or a locally converted FX amount.
+
+        Pass the intended symbol/price for a pre-order check. The no-argument USD
+        snapshot reuses Pydb.services.get_balance_overseas's AAPL/1 query.
+        """
+        code = self._symbol(symbol or ("005930" if self.market == "KR" else "AAPL"), self.market)
+        order_price = decimal(price) if price is not None else Decimal(0 if self.market == "KR" else 1)
+        if self.market == "KR" and order_price != order_price.to_integral_value():
+            raise ConfigurationError("Domestic DBFI price must be whole won")
+
+        def read() -> Decimal:
+            client, _ = self._connect()
+            if self._cash_provider is not None:
+                return decimal(self._cash_provider(client))
+            kwargs = dict(region=self.region, stock_code=code, order_type="2",
+                          price=int(order_price) if self.market == "KR" else float(order_price))
+            if self.market == "US":
+                kwargs["won_fcurr_type"] = "2"  # Native currency, not KRW converted values.
+            data = check_response(client.get_able_order_quantity(**kwargs), "dbfi")
+            if data.get("rsp_cd") != "00000":
+                raise InvalidResponseError("DBFI buying power lacks a success status")
+            output = data["Out"]
+            if self.market == "KR":
+                # CSPBQ00100: 100% margin amount excludes a credit/debit buying-power boost.
+                return decimal(output["MgnRat100pctOrdAbleAmt"])
+            # CAZCQ01300: Amt0 is integrated margin, Amt1 includes debit and is never used.
+            if self.is_integrated and output.get("CsldtMgnUseYn") != "Y":
+                raise InvalidResponseError("DBFI integrated margin is not confirmed by the broker")
+            key = "AstkOrdAbleAmt0" if self.is_integrated else "AstkOrdAbleAmt"
+            return decimal(output[key])
+
+        return self._call(read)
+
     def get_balance(self) -> Balance:
         def read() -> Balance:
             if self.market == "US":
                 client, _ = self._connect()
-                if self._cash_provider is None:
-                    raise ConfigurationError("US cash requires a caller-supplied cash_provider")
-                return Balance(
-                    currency="USD",
-                    cash_available=decimal(self._cash_provider(client)),
-                    position_value=sum((p.market_value for p in self.get_positions()), Decimal(0)),
-                )
+                if self._cash_provider is not None:
+                    cash = decimal(self._cash_provider(client))
+                else:
+                    usd = [row for page in self._balance_pages() for row in page["Out1"]
+                           if row.get("CrcyCode") == "USD"]
+                    if len(usd) != 1:
+                        raise InvalidResponseError("DBFI native cash requires one USD row")
+                    cash = min(decimal(usd[0]["FcurrDps"]), decimal(usd[0]["AstkMnyoutAbleAmt"]))
+                return Balance(currency="USD", cash_available=cash,
+                               position_value=sum((p.market_value for p in self.get_positions()), Decimal(0)))
             data = self._balance_pages()[0]["Out"]
             return Balance(cash_available=decimal(data["Dps2"]), position_value=decimal(data["TotEvalAmt"]))
 
@@ -186,7 +229,7 @@ class DBFI(BaseBroker):
             client, _ = self._connect()
             kwargs = dict(region=self.region, execution_status="0", order_type="0")
             if self.market == "US":
-                kwargs["stock_code"] = symbol or ""
+                kwargs.update(stock_code=symbol or "", query_type="0", won_fcurr_type="2")
             response = client.get_transaction_history(**kwargs)
             pages = response if isinstance(response, list) else [response]
             result = []
@@ -197,12 +240,30 @@ class DBFI(BaseBroker):
                         continue
                     filled = whole(row["AllExecQty"] if self.market == "KR" else row["AstkExecQty"])
                     remaining = whole(row["MrcAbleQty"] if self.market == "KR" else row["AstkOrdRmqty"])
-                    # Zero cancellable quantity can mean rejected/cancelled/filled.
-                    status = "partial" if filled and remaining else "open" if remaining else "unknown"
+                    quantity_key = "OrdQty" if self.market == "KR" else "AstkOrdQty"
+                    quantity = whole(row[quantity_key]) if quantity_key in row else None
+                    if quantity is not None and (filled > quantity or remaining > quantity - filled):
+                        raise InvalidResponseError("DBFI execution quantities exceed the order")
+                    # Zero cancellable quantity alone never proves completion.
+                    status = "filled" if filled and quantity == filled and remaining == 0 else (
+                        "partial" if filled and remaining else "open" if remaining else "unknown")
+                    fill_price = None
+                    if filled:
+                        if self.market == "KR":
+                            fill_price = optional_price(row.get("AvrExecPrc"))
+                        elif row.get("AstkExecAmt") not in (None, ""):
+                            if row.get("CrcyCode") != "USD":
+                                raise InvalidResponseError("DBFI US execution currency is not USD")
+                            # CAZCQ00100 aggregate mode: native execution amount / executed shares.
+                            fill_price = decimal(row["AstkExecAmt"]) / filled
+                        if fill_price is not None and fill_price <= 0:
+                            fill_price = None
                     result.append(
                         Order(
                             id=str(row["OrdNo"]),
                             symbol=code,
+                            quantity=quantity,
+                            fill_price=fill_price,
                             filled=filled,
                             remaining=remaining,
                             status=status,

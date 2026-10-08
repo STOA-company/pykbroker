@@ -72,6 +72,9 @@ class VendorAccountScope:
             rows = [row for row in rows if int(row["rmn_qty"]) > 0]
         return SimpleNamespace(orders=[SimpleNamespace(**row) for row in rows])
 
+    def daily_order_all(self, **kwargs: Any) -> Any:
+        return self.daily_order(**kwargs)
+
     # --- the path a mock account does not have ---------------------------
 
     def revisable_order(self, **_: Any) -> Any:

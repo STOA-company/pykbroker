@@ -597,10 +597,276 @@ def test_close_blocks_reads_without_owning_the_injected_client():
     limiter.wait.assert_not_called()
 
 
-def test_us_and_virtual_are_not_advertised_or_constructible():
-    with pytest.raises(NotSupportedError):
+def test_us_requires_venue_and_virtual_remains_unverified():
+    with pytest.raises(ConfigurationError):
         LS(account="fixture-account", market="US")
     # UNVERIFIED: no official distinct mock address in this repository.
     with pytest.raises(ConfigurationError, match="UNVERIFIED"):
         LS(account="fixture-account", virtual=True, client=FakeClient({}))
     assert not make()[0].capabilities().supports_virtual_account
+
+
+# Official US field contracts; synthetic responses, no vendor account recording.
+def us_make(responses=None, **kwargs):
+    return make(responses, market="US", venue="NASDAQ", **kwargs)
+
+
+def us_balance():
+    return {
+        "rsp_cd": "00000",
+        "COSOQ00201OutBlock3": [
+            {
+                "CrcyCode": "USD",
+                "FcurrOrdAbleAmt": "12.34",
+                "FcurrEvalAmt": "500.25",
+                "DpsastConvEvalAmt": "99999999",
+                "BaseXchrat": "1500",
+            }
+        ],
+        "COSOQ00201OutBlock4": [
+            {
+                "CrcyCode": "USD",
+                "ShtnIsuNo": "TSLA",
+                "JpnMktHanglIsuNm": "fixture",
+                "AstkBalQty": 3,
+                "AstkSellAbleQty": 2,
+                "FcstckUprc": "100.25",
+                "OvrsScrtsCurpri": "120.5",
+                "FcurrEvalAmt": "361.5",
+            }
+        ],
+    }
+
+
+def test_us_quote_uses_symbol_venue_without_fabricated_timestamp():
+    broker, client, _ = us_make(
+        {
+            "g3101": [
+                {
+                    "rsp_cd": "00000",
+                    "g3101OutBlock": {"symbol": "TSLA", "currency": "USD", "exchcd": "82", "price": "123.45"},
+                }
+            ],
+            "g3104": [
+                {
+                    "rsp_cd": "00000",
+                    "g3104OutBlock": {"symbol": "TSLA", "currency": "USD", "exchcd": "82",
+                                     "keysymbol": "82TSLA", "pcls": "120.25"},
+                }
+            ],
+        }
+    )
+    quote = broker.get_quote("TSLA")
+    assert quote.market == "US" and quote.last == Decimal("123.45") and quote.timestamp is None
+    assert quote.prev_close == Decimal("120.25")
+    assert client.calls[0][0] == "/overseas-stock/market-data"
+    assert client.calls[0][2] == {
+        "g3101InBlock": {"delaygb": "R", "keysymbol": "82TSLA", "exchcd": "82", "symbol": "TSLA"}
+    }
+    assert not broker.capabilities().supports_limit_order
+
+
+def test_us_cash_is_broker_usd_orderable_field_and_positions_are_sellable():
+    broker, client, _ = us_make({"COSOQ00201": [us_balance(), us_balance()]})
+    client.response_headers = {"tr_cont": "N", "tr_cont_key": ""}
+    balance = broker.get_balance()
+    assert balance.currency == "USD" and balance.cash_available == Decimal("12.34")
+    assert balance.position_value == Decimal("500.25")
+    position = broker.get_positions()[0]
+    assert (position.market, position.quantity, position.sellable) == ("US", 3, 2)
+
+
+@pytest.mark.parametrize("headers", [None, {}, {"tr_cont": "Y"}, {"tr_cont": "N", "tr_cont_key": "next"}])
+def test_us_incomplete_cash_snapshot_is_not_returned(headers):
+    broker, client, _ = us_make({"COSOQ00201": [us_balance()]})
+    client.response_headers = headers
+    with pytest.raises(SpecUnverifiedError):
+        broker.get_balance()
+
+
+def test_us_cash_missing_orderable_field_never_uses_assets_or_fx():
+    body = us_balance()
+    del body["COSOQ00201OutBlock3"][0]["FcurrOrdAbleAmt"]
+    broker, client, _ = us_make({"COSOQ00201": [body]})
+    client.response_headers = {"tr_cont": "N"}
+    with pytest.raises(InvalidResponseError):
+        broker.get_balance()
+
+
+def test_us_order_query_requires_broker_date_without_transport():
+    broker, client, _ = us_make()
+    with pytest.raises(ConfigurationError):
+        broker.list_orders()
+    assert client.calls == []
+
+
+def test_us_new_order_requires_broker_date_before_any_transport(live_safety):
+    client = FakeClient({})
+    broker = LS(account="12345678", market="US", venue="NASDAQ", client=client,
+                client_options={"token": "fixture-stored-token"}, allow_live_orders=True,
+                rate_limiter=Mock(spec=RateLimiter), safety=live_safety)
+    with pytest.raises(ConfigurationError, match="broker order_date"):
+        broker.place_order(buy(symbol="AAPL", market="US", venue="NASDAQ", price="100"))
+    assert client.calls == []
+
+
+def test_us_quantity_status_never_maps_execution_price_to_average_fill():
+    from datetime import date
+
+    body = {
+        "rsp_cd": "00000",
+        "COSAQ00102OutBlock3": [
+            {
+                "OrdNo": 42,
+                "ShtnIsuNo": "TSLA",
+                "CrcyCode": "USD",
+                "OrdMktCode": "82",
+                "OrdQty": 3,
+                "AllExecQty": 1,
+                "UnercQty": 2,
+                "OvrsOrdPrc": "100.25",
+                "OvrsExecPrc": "100.01",
+            }
+        ],
+    }
+    broker, client, _ = us_make({"COSAQ00102": [body]}, order_date=date(2026, 10, 2))
+    client.response_headers = {"tr_cont": "N"}
+    order = broker.list_orders("TSLA")[0]
+    assert (order.quantity, order.filled, order.remaining, order.status) == (3, 1, 2, "partial")
+    assert order.fill_price is None and order.price == Decimal("100.25")
+    assert client.calls[0][2]["COSAQ00102InBlock1"]["OrdDt"] == "20261002"
+
+
+def test_us_live_write_remains_locked_even_when_spec_flag_is_true(monkeypatch, live_safety):
+    monkeypatch.setattr(module, "LS_SPEC_VERIFIED", True)
+    broker, client, _ = us_make(spec_verified=True, safety=live_safety)
+    with pytest.raises(SpecUnverifiedError):
+        broker.place_order(buy(symbol="TSLA", market="US", venue="NASDAQ", price="100.25"))
+    with pytest.raises(SpecUnverifiedError):
+        broker.cancel_order(cancel(symbol="TSLA", market="US", venue="NASDAQ"))
+    assert client.calls == []
+
+
+def test_ls_margin_requires_documented_enrollment_contract():
+    with pytest.raises(SpecUnverifiedError):
+        us_make(is_integrated=True)
+
+
+def test_us_order_and_exact_id_cancel_use_official_tr_template():
+    body = {"rsp_cd": "00000", "COSAT00301OutBlock2": {"OrdNo": 43}}
+    broker, client, _ = us_make({"COSAT00301": [body, body]})
+    # Only the private translation is examined; public live writes remain vetoed.
+    broker._codes["broker_type"] = "fixture-reviewed-broker-type"
+    order = broker._place_order(buy(symbol="TSLA", market="US", venue="NASDAQ", price="100.25"))
+    result = broker._cancel_order(cancel(symbol="TSLA", market="US", venue="NASDAQ"))
+    assert order.id == "43" and result.id == "42" and result.status == "accepted"
+    submitted = client.calls[0][2]["COSAT00301InBlock1"]
+    cancelled = client.calls[1][2]["COSAT00301InBlock1"]
+    assert submitted["OrdPtnCode"] == "02" and submitted["OrdMktCode"] == "82"
+    assert submitted["OvrsOrdPrc"] == 100.25 and submitted["OrdprcPtnCode"] == "00"
+    assert cancelled["OrdPtnCode"] == "08" and cancelled["OrgOrdNo"] == 42
+    assert all(call[0] == "/overseas-stock/order" and call[1]["tr_cd"] == "COSAT00301" for call in client.calls)
+
+
+# The official token-present example resolves real transport, not demo payloads.
+def test_persisted_token_constructs_default_transport_without_request():
+    broker = LS(account="12345678", client_options={"token": "fixture-stored-token"})
+    assert broker._client.base_url == module.LS_API_BASE_URL
+    assert broker._client.response_headers == {}
+    assert not broker.capabilities().supports_limit_order
+    with pytest.raises(SpecUnverifiedError):
+        broker.place_order(buy())
+
+
+def test_explicit_real_optin_checks_token_account_then_posts_once(live_safety):
+    balance = page("CSPAQ12200", CSPAQ12200OutBlock1={"AcntNo": "12345678"})
+    client = FakeClient({"CSPAQ12200": [balance], "CSPAT00601": [page("CSPAT00601")]})
+    limiter = Mock(spec=RateLimiter)
+    broker = LS(
+        account="1234-5678",
+        client=client,
+        client_options={"token": "fixture-stored-token"},
+        allow_live_orders=True,
+        rate_limiter=limiter,
+        safety=live_safety,
+    )
+    assert broker.capabilities().supports_limit_order
+    order = broker.place_order(buy())
+    assert order.status == "accepted" and not order.virtual
+    assert [c[1]["tr_cd"] for c in client.calls] == ["CSPAQ12200", "CSPAT00601"]
+    assert client.calls[1][2]["CSPAT00601InBlock1"]["BnsTpCode"] == "2"
+    assert client.calls[1][2]["CSPAT00601InBlock1"]["MgntrnCode"] == "000"
+
+
+def test_real_token_account_mismatch_prevents_any_order_post(live_safety):
+    balance = page("CSPAQ12200", CSPAQ12200OutBlock1={"AcntNo": "87654321"})
+    client = FakeClient({"CSPAQ12200": [balance]})
+    broker = LS(
+        account="12345678",
+        client=client,
+        client_options={"token": "fixture-stored-token"},
+        allow_live_orders=True,
+        rate_limiter=Mock(spec=RateLimiter),
+        safety=live_safety,
+    )
+    with pytest.raises(ConfigurationError, match="bound"):
+        broker.place_order(buy())
+    assert [c[1]["tr_cd"] for c in client.calls] == ["CSPAQ12200"]
+
+
+@pytest.mark.parametrize("flag", [None, 1, "true"])
+def test_real_optin_is_exact_bool(flag):
+    with pytest.raises(ConfigurationError):
+        LS(account="12345678", client_options={"token": "fixture-stored-token"}, allow_live_orders=flag)
+
+
+def test_official_us_balance_success_code_is_tr_specific():
+    body = us_balance()
+    body["rsp_cd"] = "00001"
+    broker, client, _ = us_make({"COSOQ00201": [body]})
+    client.response_headers = {"tr_cont": "N"}
+    assert broker.get_balance().cash_available == Decimal("12.34")
+
+
+def test_official_us_ledger_success_code_is_tr_specific():
+    from datetime import date
+
+    broker, client, _ = us_make(
+        {"COSAQ00102": [{"rsp_cd": "00136", "COSAQ00102OutBlock3": []}]}, order_date=date(2026, 10, 2)
+    )
+    client.response_headers = {"tr_cont": "N"}
+    assert broker.list_orders() == []
+
+
+def test_official_cosat_blank_broker_type_is_not_invented():
+    broker, client, _ = us_make({"COSAT00301": [{"rsp_cd": "00000", "COSAT00301OutBlock2": {"OrdNo": 42}}]})
+    broker._place_order(buy(symbol="TSLA", market="US", venue="NASDAQ", price="100.25"))
+    assert client.calls[0][2]["COSAT00301InBlock1"]["BrkTpCode"] == ""
+
+@pytest.mark.parametrize("suspend,sellonly,expected", [("N", "0", False), ("Y", "0", True),
+    ("N", "1", True), ("N", "2", True), (None, "0", None), ("N", None, None)])
+def test_us_rules_read_native_eligibility_from_same_quote(suspend, sellonly, expected):
+    broker = LS.__new__(LS)
+    broker.market, broker.venue = "US", "NASDAQ"
+    broker._us_native_halts = {}
+    broker._call = lambda fn: fn()
+    calls = []
+    def response(*args, **kwargs):
+        calls.append(args)
+        if args[1] == "g3104":
+            return {"g3104OutBlock": {"symbol": "AAPL", "currency": "USD", "exchcd": "82",
+                "keysymbol": "82AAPL", "pcls": "99"}}
+        return {"g3101OutBlock": {"symbol": "AAPL", "currency": "USD", "exchcd": "82",
+            "price": "100", "suspend": suspend, "sellonly": sellonly}}
+    broker._response = response
+    # The adapter's published NASDAQ code remains the one contract source.
+    from pykbroker.brokers.ls import LS_US_VENUES
+    exchange = LS_US_VENUES["NASDAQ"]
+    def bound_response(*args, **kwargs):
+        row = response(*args, **kwargs)
+        row["g3101OutBlock" if args[1] == "g3101" else "g3104OutBlock"]["exchcd"] = exchange
+        return row
+    broker._response = bound_response
+    broker.get_quote("AAPL", market="US")
+    assert broker.get_rules("AAPL").halted is expected
+    assert [call[1] for call in calls] == ["g3101", "g3104"]

@@ -545,7 +545,10 @@ def test_stored_token_and_app_key_are_required(options):
 
 def test_limiter_covers_every_read_tr_within_the_documented_budget():
     read_trs = ("ka10001", "ka10004", "kt00001", "kt00018", "ka10075", "kt00007")
-    assert set(module.KIWOOM_TR_RATE_LIMITS) == {*read_trs, "kt10000", "kt10001", "kt10003"}
+    assert {*read_trs, "kt10000", "kt10001", "kt10003"} <= set(module.KIWOOM_TR_RATE_LIMITS)
+    us_reads = ("usa20100", "usa20101", "ust21050", "ust21070", "ust21110", "ust21150", "ust31490")
+    assert sum(module.KIWOOM_TR_RATE_LIMITS[tr] for tr in us_reads) <= 3
+    assert sum(module.KIWOOM_TR_RATE_LIMITS[tr] for tr in ("ust20000", "ust20001", "ust20003")) <= 3
     assert max(module.KIWOOM_TR_RATE_LIMITS.values()) <= 1  # mock: one call per TR per second
     # real: 5 read calls/s and 5 order calls/s, even if each is shared by the account
     assert sum(module.KIWOOM_TR_RATE_LIMITS[tr] for tr in read_trs) <= 5
@@ -588,8 +591,8 @@ def test_capabilities_admit_kr_limit_orders_and_single_cancel_only():
     assert not (caps.supports_market_order or caps.supports_nxt or caps.realtime_open_orders)
 
 
-def test_us_market_and_wrong_market_quote_are_refused():
-    with pytest.raises(NotSupportedError):
+def test_us_requires_a_venue_and_wrong_market_quote_is_refused():
+    with pytest.raises(ConfigurationError):
         make(market="US")
     with pytest.raises(NotSupportedError):
         make()[0].get_quote("AAPL", market="US")
@@ -602,8 +605,8 @@ def test_it_is_the_registered_broker():
 def test_the_legacy_slips_are_not_repeated():
     source = inspect.getsource(module)
     code = "\n".join(line.split("#")[0] for line in source.splitlines())
-    # cash is never prsm_dpst_aset_amt, no kt00010 call (its trde_tp is 1 sell / 2 buy), no US TR
-    assert 'row["prsm_dpst_aset_amt"]' not in code and "kt00010" not in source and "ust2" not in source
+    # cash is never prsm_dpst_aset_amt, no kt00010 call (its trde_tp is 1 sell / 2 buy)
+    assert 'row["prsm_dpst_aset_amt"]' not in code and "kt00010" not in source
 
 
 class _Response:
@@ -650,3 +653,73 @@ def test_an_http_error_status_is_a_transport_failure_not_a_parsed_body(monkeypat
     with pytest.raises(TransportError) as raised:
         broker.get_quote("005930")
     assert "fixture-token" not in str(raised.value)
+
+
+# Current public US REST schema, read 2026-10-04. All numbers are synthetic.
+def us_read(responses, **kwargs):
+    return make(responses, market="US", venue="NASDAQ", **kwargs)[0]
+
+
+def test_us_quote_maps_previous_close_without_inventing_source_time():
+    broker = us_read(
+        {
+            "usa20100": {
+                "return_code": 0, "cur_prc": "+201.4700", "base_close_pric": "200.0400",
+                "stk_cd": "NVDA", "stex_tp": "ND", "trd_susp_tp": "0",
+            },
+            "usa20101": {"return_code": 0, "fpr_buy_bid": "+201.4200", "fpr_sel_bid": "+201.5300"},
+        }
+    )
+    quote = broker.get_quote("NVDA", market="US")
+    assert (quote.market, quote.last, quote.bid, quote.ask, quote.prev_close) == (
+        "US",
+        Decimal("201.4700"),
+        Decimal("201.4200"),
+        Decimal("201.5300"),
+        Decimal("200.0400"),
+    )
+    assert quote.timestamp is None
+    assert broker.get_rules("NVDA").halted is False
+
+
+def test_us_capabilities_and_explicit_account_configuration():
+    broker = us_read({})
+    caps = broker.capabilities()
+    assert caps.markets == ("US",) and caps.requires_venue and caps.supports_single_order_cancel
+    assert caps.venues == ("NASDAQ", "NYSE", "AMEX")
+    assert not caps.supports_market_order
+    for mode in (None, "yes", 1):
+        with pytest.raises(ConfigurationError, match="explicit boolean"):
+            us_read({}, is_integrated=mode)
+
+
+def test_us_cash_is_native_deposit_capped_by_withdrawable_usd():
+    response = {
+        "return_code": 0,
+        "krw_entra": "999999999",
+        "result_list": [{"crnc_code": "USD", "fc_ord_alowa": "125.37", "fc_entra": "50", "fc_pymn_alowa": "40"}],
+    }
+    assert us_read({"ust21110": response}).available_cash() == Decimal("40")
+    for rows in ([], response["result_list"] * 2):
+        with pytest.raises(InvalidResponseError):
+            us_read({"ust21110": {**response, "result_list": rows}}).available_cash()
+
+
+@pytest.mark.parametrize("integrated,column,expected", [(False, "min_ord_alowq", 3), (True, "min_krw_ord_alowq", 7)])
+def test_us_orderable_quantity_uses_only_broker_no_debt_column(integrated, column, expected):
+    response = {
+        "return_code": 0,
+        "crnc_code": "USD",
+        "krw_ord_rqst_yn": "Y",
+        "min_ord_alowq": "3",
+        "min_krw_ord_alowq": "7",
+        "ord_alowq_50": "999999",
+    }
+    broker = us_read({"ust31490": response}, is_integrated=integrated)
+    assert broker.orderable_quantity("NVDA", Decimal("200.50")) == expected
+
+
+def test_integrated_quantity_requires_broker_confirmation_and_never_enrolls():
+    response = {"return_code": 0, "crnc_code": "USD", "krw_ord_rqst_yn": "N", "min_krw_ord_alowq": "999999"}
+    with pytest.raises(NotSupportedError, match="not enabled"):
+        us_read({"ust31490": response}, is_integrated=True).orderable_quantity("NVDA", Decimal("200"))

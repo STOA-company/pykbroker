@@ -4,7 +4,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from pykbroker.exceptions import NotSupportedError, SpecUnverifiedError
+from pykbroker.exceptions import ConfigurationError, NotSupportedError, SpecUnverifiedError
 from pykbroker.models import CancelRequest
 
 CASES = [
@@ -52,10 +52,23 @@ def test_flag_alone_cannot_submit(module_name, class_name, constant, monkeypatch
         client.base_url = module.LS_API_BASE_URL
     broker = getattr(module, class_name)(account="fixture", client=client, safety=live_safety)
     expected = SpecUnverifiedError if module_name == "ls" else Exception
-    message = "live writes are locked" if module_name == "ls" else "code"
+    message = "explicit real-account opt-in" if module_name == "ls" else "code"
     with pytest.raises(expected, match=message):
         broker.place_order(request_order)
     client.post.assert_not_called()
+    if module_name == "ls":
+        # Even an opted-in real instance must verify the token's account before an order POST.
+        client.post.return_value = {
+            "rsp_cd": "00000", "CSPAQ12200OutBlock1": {"AcntNo": "other-fixture-account"}
+        }
+        opted_in = module.LS(
+            account="fixture", client=client, safety=live_safety,
+            client_options={"token": "fixture-token"}, allow_live_orders=True, rate_limiter=Mock(),
+        )
+        with pytest.raises(ConfigurationError, match="bound to the requested account"):
+            opted_in.place_order(request_order)
+        client.post.assert_called_once()
+        assert client.post.call_args.kwargs["headers"]["tr_cd"] == "CSPAQ12200"
 
 
 @pytest.mark.parametrize("module_name,class_name,constant", CASES[:2])
@@ -94,3 +107,62 @@ def test_reviewed_fixture_codes_choose_exact_tr(
     else:
         assert kwargs["json"]["ord_qty"] == "1"
         assert kwargs["json"]["trde_tp"] == "fixture-limit"
+
+
+@pytest.mark.parametrize("operation", ["place_order", "cancel_order"])
+def test_kb_official_adapter_defaults_closed(operation, request_order, live_safety):
+    from pykbroker.brokers.kb import KB, KB_API_BASE_URL
+    client = Mock(base_url=KB_API_BASE_URL)
+    broker = KB(account="fixture", bound_account="fixture", app_key="fake-app", token="fake-token",
+                client=client, safety=live_safety)
+    request = request_order if operation == "place_order" else CancelRequest(
+        order_id="42", symbol="005930", quantity=1, client_key="kb-cancel")
+    with pytest.raises(SpecUnverifiedError, match="disabled"):
+        getattr(broker, operation)(request)
+    client.post.assert_not_called()
+
+
+def test_kb_uncertain_write_is_not_retried(request_order, live_safety):
+    from pykbroker.brokers.kb import KB, KB_API_BASE_URL
+    from pykbroker.exceptions import InvalidResponseError
+    client = Mock(base_url=KB_API_BASE_URL)
+    client.post.return_value = {"dataHeader": {"resultCode": "200", "processFlag": "B"}, "dataBody": {}}
+    broker = KB(account="fixture", bound_account="fixture", app_key="fake-app", token="fake-token",
+                client=client, safety=live_safety, writes_enabled=True)
+    with pytest.raises(InvalidResponseError):
+        broker.place_order(request_order)
+    assert client.post.call_count == 1
+    assert client.post.call_args.args == ("/api/v1/ssam1802",)
+
+
+
+def test_kb_us_cancel_refuses_partial_quantity_before_write(live_safety):
+    from pykbroker.brokers.kb import KB, KB_API_BASE_URL
+    from pykbroker.models import Order
+    client = Mock(base_url=KB_API_BASE_URL)
+    broker = KB(account="fixture", bound_account="fixture", app_key="fake-app", token="fake-token", market="US",
+                venue="NASDAQ", is_integrated=True, writes_enabled=True, client=client, safety=live_safety)
+    broker.list_orders = Mock(return_value=[Order(id="42", symbol="TSLA", market="US", price="10", remaining=2)])
+    request = CancelRequest(order_id="42", symbol="TSLA", market="US", venue="NASDAQ", quantity=1,
+                            client_key="kb-us-partial-cancel")
+    with pytest.raises(SpecUnverifiedError, match="full remainder"):
+        broker.cancel_order(request)
+    client.post.assert_not_called()
+
+
+def test_kb_us_exact_cancel_ack_remains_unknown(live_safety):
+    from pykbroker.brokers.kb import KB, KB_API_BASE_URL
+    from pykbroker.models import Order
+    client = Mock(base_url=KB_API_BASE_URL)
+    client.post.return_value = {"dataHeader": {"resultCode": "200", "processFlag": "A"},
+                              "dataBody": {"ordr_no": "43"}}
+    broker = KB(account="fixture", bound_account="fixture", app_key="fake-app", token="fake-token", market="US",
+                venue="NASDAQ", is_integrated=True, writes_enabled=True, client=client, safety=live_safety)
+    broker.list_orders = Mock(return_value=[Order(id="42", symbol="TSLA", market="US", price="10", remaining=2)])
+    request = CancelRequest(order_id="42", symbol="TSLA", market="US", venue="NASDAQ", quantity=2,
+                            client_key="kb-us-full-cancel")
+    answer = broker.cancel_order(request)
+    assert answer.id == "42" and answer.status == "unknown"
+    assert client.post.call_count == 1
+    assert client.post.call_args.kwargs["body"]["dataBody"] == {
+        "crct_cncl_clsf": "2", "is_cd": "TSLA", "orgn_ordr_no": "42", "frgn_ordr_prc_p4": "10"}

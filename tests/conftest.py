@@ -75,5 +75,6 @@ def dbfi(live_safety):
     client.sell.return_value = load_fixture("dbfi", "submit")
     client.cancel.return_value = load_fixture("dbfi", "cancel")
     client.get_stock_balance.return_value = load_fixture("dbfi", "balance")
+    client.get_able_order_quantity.return_value = {"rsp_cd": "00000", "Out": {"MgnRat100pctOrdAbleAmt": "200000"}}
     api.get_stock_domestic.return_value = load_fixture("dbfi", "positions")
     return DBFI(account="fixture-account", client=client, api=api, safety=live_safety), client, api

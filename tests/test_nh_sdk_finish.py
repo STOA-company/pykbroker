@@ -201,3 +201,13 @@ def test_factory_loads_nh_options_with_injected_http_client(monkeypatch):
     broker, calls, _ = make(factory=True, options=False)
     assert broker.get_quote("005930").last == 70000
     assert len(calls) == 1
+
+@pytest.mark.parametrize("previous,expected", [("190.25", Decimal("190.25")), (None, None), ("0", None)])
+def test_us_previous_close_uses_native_historical_price_without_last_fallback(previous, expected):
+    broker = NH.__new__(NH)
+    broker._auth_client = object()
+    broker._read = lambda *args, **kwargs: {"Output_0": {
+        "iem_cd": "AAPL", "trdprc": "200", "best_bid1": "199", "best_ask1": "201",
+        "hst_trdprc": previous, "base_prc": "999"}}
+    quote = broker._us_quote("AAPL")
+    assert quote.last == Decimal("200") and quote.prev_close == expected
