@@ -1,0 +1,331 @@
+{
+  "version": "20261007070834325",
+  "defaults": {
+    "method": "POST",
+    "fieldRequired": true
+  },
+  "path": "/stock/accno",
+  "commonHeaders": null,
+  "transaction": {
+    "code": "t0425",
+    "name": "주식체결/미체결",
+    "transactionPerSec": "2",
+    "request": {
+      "headers": [
+        {
+          "element": "content-type",
+          "name": "컨텐츠타입",
+          "type": "String",
+          "length": "100",
+          "description": "LS증권 제공 API를 호출하기 위한 Request Body 데이터 포맷으로 \"application/json; charset=utf-8 설정\""
+        },
+        {
+          "element": "authorization",
+          "name": "접근토큰",
+          "type": "String",
+          "length": "1000",
+          "description": "OAuth 토큰이 필요한 API 경우 발급한 Access Token을 설정하기 위한 Request Heaeder Parameter"
+        },
+        {
+          "element": "tr_cd",
+          "name": "거래 CD",
+          "type": "String",
+          "length": "10",
+          "description": "LS증권 거래코드"
+        },
+        {
+          "element": "tr_cont",
+          "name": "연속 거래 여부",
+          "type": "String",
+          "length": "1",
+          "description": "연속거래 여부\r\nY:연속○\r\nN:연속×"
+        },
+        {
+          "element": "tr_cont_key",
+          "name": "연속 거래 Key",
+          "type": "String",
+          "length": "18",
+          "description": "연속일 경우 그전에 내려온 연속키 값 올림"
+        },
+        {
+          "element": "mac_address",
+          "name": "MAC 주소",
+          "type": "String",
+          "length": "12",
+          "description": "법인인 경우 필수 세팅"
+        }
+      ],
+      "body": [
+        {
+          "element": "t0425InBlock",
+          "name": "t0425InBlock",
+          "type": "Object",
+          "fields": [
+            {
+              "element": "expcode",
+              "name": "종목번호",
+              "type": "String",
+              "length": "12"
+            },
+            {
+              "element": "chegb",
+              "name": "체결구분",
+              "type": "String",
+              "length": "1",
+              "description": "0;전체\r\n1:체결\r\n2:미체결"
+            },
+            {
+              "element": "medosu",
+              "name": "매매구분",
+              "type": "String",
+              "length": "1",
+              "description": "0:전체\r\n1:매도\r\n2:매수"
+            },
+            {
+              "element": "sortgb",
+              "name": "정렬순서",
+              "type": "String",
+              "length": "1",
+              "description": "1:주문번호 역순\r\n2:주문번호 순"
+            },
+            {
+              "element": "cts_ordno",
+              "name": "주문번호",
+              "type": "String",
+              "length": "10",
+              "description": "연속조회시 OutBlock의 동일필드 입력"
+            }
+          ]
+        }
+      ]
+    },
+    "response": {
+      "headers": [
+        {
+          "element": "content-type",
+          "name": "컨텐츠타입",
+          "type": "String",
+          "length": "100",
+          "description": "LS증권 제공 API를 호출하기 위한 Request Body 데이터 포맷으로 \"application/json; charset=utf-8 설정\""
+        },
+        {
+          "element": "tr_cd",
+          "name": "거래 CD",
+          "type": "String",
+          "length": "10",
+          "description": "LS증권 거래코드"
+        },
+        {
+          "element": "tr_cont",
+          "name": "연속 거래 여부",
+          "type": "String",
+          "length": "1",
+          "description": "연속거래 여부\r\nY:연속○\r\nN:연속×"
+        },
+        {
+          "element": "tr_cont_key",
+          "name": "연속 거래 Key",
+          "type": "String",
+          "length": "18",
+          "description": "연속일 경우 그전에 내려온 연속키 값 올림"
+        }
+      ],
+      "body": [
+        {
+          "element": "t0425OutBlock",
+          "name": "t0425OutBlock",
+          "type": "Object",
+          "fields": [
+            {
+              "element": "tqty",
+              "name": "총주문수량",
+              "type": "Number",
+              "length": "18"
+            },
+            {
+              "element": "tcheqty",
+              "name": "총체결수량",
+              "type": "Number",
+              "length": "18"
+            },
+            {
+              "element": "tordrem",
+              "name": "총미체결수량",
+              "type": "Number",
+              "length": "18"
+            },
+            {
+              "element": "cmss",
+              "name": "추정수수료",
+              "type": "Number",
+              "length": "18"
+            },
+            {
+              "element": "tamt",
+              "name": "총주문금액",
+              "type": "Number",
+              "length": "18"
+            },
+            {
+              "element": "tmdamt",
+              "name": "총매도체결금액",
+              "type": "Number",
+              "length": "18"
+            },
+            {
+              "element": "tmsamt",
+              "name": "총매수체결금액",
+              "type": "Number",
+              "length": "18"
+            },
+            {
+              "element": "tax",
+              "name": "추정제세금",
+              "type": "Number",
+              "length": "18"
+            },
+            {
+              "element": "cts_ordno",
+              "name": "주문번호",
+              "type": "String",
+              "length": "10"
+            }
+          ]
+        },
+        {
+          "element": "t0425OutBlock1",
+          "name": "t0425OutBlock1",
+          "type": "Object Array",
+          "fields": [
+            {
+              "element": "ordno",
+              "name": "주문번호",
+              "type": "Number",
+              "length": "10"
+            },
+            {
+              "element": "expcode",
+              "name": "종목번호",
+              "type": "String",
+              "length": "12"
+            },
+            {
+              "element": "medosu",
+              "name": "구분",
+              "type": "String",
+              "length": "10"
+            },
+            {
+              "element": "qty",
+              "name": "주문수량",
+              "type": "Number",
+              "length": "9"
+            },
+            {
+              "element": "price",
+              "name": "주문가격",
+              "type": "Number",
+              "length": "9"
+            },
+            {
+              "element": "cheqty",
+              "name": "체결수량",
+              "type": "Number",
+              "length": "9"
+            },
+            {
+              "element": "cheprice",
+              "name": "체결가격",
+              "type": "Number",
+              "length": "9"
+            },
+            {
+              "element": "ordrem",
+              "name": "미체결잔량",
+              "type": "Number",
+              "length": "9"
+            },
+            {
+              "element": "cfmqty",
+              "name": "확인수량",
+              "type": "Number",
+              "length": "9"
+            },
+            {
+              "element": "status",
+              "name": "상태",
+              "type": "String",
+              "length": "20"
+            },
+            {
+              "element": "orgordno",
+              "name": "원주문번호",
+              "type": "Number",
+              "length": "10"
+            },
+            {
+              "element": "ordgb",
+              "name": "유형",
+              "type": "String",
+              "length": "20"
+            },
+            {
+              "element": "ordtime",
+              "name": "주문시간",
+              "type": "String",
+              "length": "8"
+            },
+            {
+              "element": "ordermtd",
+              "name": "주문매체",
+              "type": "String",
+              "length": "10"
+            },
+            {
+              "element": "sysprocseq",
+              "name": "처리순번",
+              "type": "Number",
+              "length": "10"
+            },
+            {
+              "element": "hogagb",
+              "name": "호가유형",
+              "type": "String",
+              "length": "2"
+            },
+            {
+              "element": "price1",
+              "name": "현재가",
+              "type": "Number",
+              "length": "8"
+            },
+            {
+              "element": "orggb",
+              "name": "주문구분",
+              "type": "String",
+              "length": "2"
+            },
+            {
+              "element": "singb",
+              "name": "신용구분",
+              "type": "String",
+              "length": "2"
+            },
+            {
+              "element": "loandt",
+              "name": "대출일자",
+              "type": "String",
+              "length": "8"
+            },
+            {
+              "element": "exchname",
+              "name": "거래소명",
+              "type": "String",
+              "length": "3"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

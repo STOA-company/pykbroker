@@ -1,12 +1,12 @@
 """LS KR/US REST mappings with an injected boundary and default-closed writes.
 
-Field/path source: official TR guide version 20261002071141740 (2026-10-04).
+Field/path source: official TR guide version 20261007070834325 (2026-10-08).
 Official public live-client code establishes all-zero rsp_cd and per-TR US read
 successes; COSAT00301 detail supplies a blank BrkTpCode in its Python example.
 Persisted account tokens use the shared no-redirect transport/rate limiter.
 Real writes default OFF, require explicit opt-in, broker account identity read,
 and OrderSafety. Mock REST binding, unified margin enrollment, average fill
-price and continued US snapshots remain unverified; no token issuer is added.
+price and continued US balances remain unverified; no token issuer is added.
 """
 
 import json
@@ -29,9 +29,10 @@ from pykbroker.experimental._rest import RestBroker
 from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
 from pykbroker.safety.rate_limit import credential_rate_limiter
 
-# Field contracts: official public guide version 20261002071141740.
+# Field contracts: tests/fixtures/ls/official, guide version 20261007070834325.
 # https://openapi.ls-sec.co.kr/api/apis/public/tr-guides.json?download=true
 LS_READ_SUCCESS = {"COSAQ00102": {"00136"}, "COSOQ00201": {"00001"}}
+LS_MAX_PAGES = 20
 LS_RATES = {
     "t1102": 10,
     "CSPAQ12200": 1,
@@ -265,9 +266,17 @@ class LS(RestBroker):
             raise InvalidResponseError("Invalid LS price")
         return optional_price(value)
 
-    def _response(self, path, tr, body, *, write=False):
+    def _request(self, path, tr, body, *, tr_cont="N", tr_cont_key=""):
+        if self._client is None or self._limiter is None:
+            raise ConfigurationError("Supply a REST client and TR rate limiter")
+        self._limiter.wait(tr)
+        headers = {**self._headers, "content-type": "application/json", "tr_cd": tr,
+                   "tr_cont": tr_cont, "tr_cont_key": tr_cont_key}
+        return self._client.post(path, headers=headers, json=body)
+
+    def _response(self, path, tr, body, *, write=False, tr_cont="N", tr_cont_key=""):
         self._verify_mode(self._client)
-        result = self._request(path, tr, body)
+        result = self._request(path, tr, body, tr_cont=tr_cont, tr_cont_key=tr_cont_key)
         if not isinstance(result, dict):
             raise InvalidResponseError("Invalid LS response; reconcile writes before retrying")
         code = result.get("rsp_cd")
@@ -277,9 +286,13 @@ class LS(RestBroker):
         # Extra codes are documented in that client's TR_META for the two US reads.
         if not re.fullmatch("0+", code) and (write or code not in LS_READ_SUCCESS.get(tr, set())):
             if write:
-                # Error meanings are unverified: never release a write for retry.
+                # The TR guide has no order success-code table. Even OrdNo > 0
+                # cannot prove acceptance for an unknown code; retain the claim.
                 raise InvalidResponseError("Unverified LS write result; reconcile before retrying")
             raise BrokerRejectedError("LS rejected the read request")
+        if write:
+            block = result.get(tr + "OutBlock2")
+            self._order_id(block.get("OrdNo") if isinstance(block, dict) else None)
         return result
 
     @staticmethod
@@ -299,14 +312,47 @@ class LS(RestBroker):
             raise InvalidResponseError("Invalid LS rows")
         return rows
 
-    @staticmethod
-    def _complete_page(response, block, cursor):
-        # UNVERIFIED: continuation; never return a partial account snapshot.
-        meta = response[block]
-        if not isinstance(meta, dict) or cursor not in meta or not isinstance(meta[cursor], str):
-            raise InvalidResponseError("Missing LS continuation evidence")
-        if meta[cursor].strip():
-            raise SpecUnverifiedError("LS pagination has not been verified")
+    def _continuation(self):
+        headers = getattr(self._client, "response_headers", None)
+        if not isinstance(headers, Mapping):
+            raise InvalidResponseError("Missing LS continuation headers")
+        headers = {str(k).lower(): v for k, v in headers.items()}
+        flag, key = headers.get("tr_cont"), headers.get("tr_cont_key", "")
+        if flag not in ("N", "Y") or not isinstance(key, str):
+            raise InvalidResponseError("Invalid LS continuation headers")
+        if flag == "N" and key.strip() or flag == "Y" and not key.strip():
+            raise InvalidResponseError("Inconsistent LS continuation headers")
+        return flag, key
+
+    def _pages(self, path, tr, body, *, block=None, cursor=None):
+        """Official header continuation plus domestic CTS; never expose a truncated list."""
+        flag, key, seen = "N", "", set()
+        for _ in range(LS_MAX_PAGES):
+            response = self._response(path, tr, body, tr_cont=flag, tr_cont_key=key)
+            flag, key = self._continuation()
+            if cursor is not None:
+                meta = response.get(block)
+                value = meta.get(cursor) if isinstance(meta, dict) else None
+                if not isinstance(value, str):
+                    raise InvalidResponseError("Missing LS continuation cursor")
+                if (flag == "Y") != bool(value.strip()):
+                    raise InvalidResponseError("Inconsistent LS continuation cursor")
+            if flag == "Y":
+                if key in seen:
+                    raise InvalidResponseError("Repeated LS continuation key")
+                seen.add(key)
+            yield response
+            if flag == "N":
+                return
+            if cursor is not None:
+                inblock = tr + "InBlock"
+                body = {**body, inblock: {**body[inblock], cursor: value}}
+        raise InvalidResponseError("LS list exceeded the page limit; refusing a truncated result")
+
+    def _order_symbol(self, symbol):
+        # Both forms are official for real stock/ETF; mock requires A+code.
+        code = self._symbol(symbol, "KR")
+        return "A" + code if self._bound_virtual else code
 
     def get_quote(self, symbol: str, *, market: str | None = None) -> Quote:
         market = market or self.market
@@ -420,8 +466,6 @@ class LS(RestBroker):
         def read():
             body = {key: self._code(key) for key in ("prcgb", "chegb", "dangb", "charge")}
             body["cts_expcode"] = ""
-            response = self._response("/stock/accno", "t0424", {"t0424InBlock": body})
-            self._complete_page(response, "t0424OutBlock", "cts_expcode")
             return [
                 Position(
                     symbol=self._response_symbol(row["expcode"]),
@@ -432,6 +476,8 @@ class LS(RestBroker):
                     last=decimal(row["price"]),
                     market_value=decimal(row["appamt"]),
                 )
+                for response in self._pages("/stock/accno", "t0424", {"t0424InBlock": body},
+                                            block="t0424OutBlock", cursor="cts_expcode")
                 for row in self._rows(response, "t0424OutBlock1")
             ]
 
@@ -450,10 +496,11 @@ class LS(RestBroker):
                 "sortgb": self._code("sort_order"),
                 "cts_ordno": "",
             }
-            response = self._response("/stock/accno", "t0425", {"t0425InBlock": body})
-            self._complete_page(response, "t0425OutBlock", "cts_ordno")
             # Validate before filtering: a broken page is never partial success.
-            orders = [self._order(row) for row in self._rows(response, "t0425OutBlock1")]
+            orders = [self._order(row)
+                      for response in self._pages("/stock/accno", "t0425", {"t0425InBlock": body},
+                                                  block="t0425OutBlock", cursor="cts_ordno")
+                      for row in self._rows(response, "t0425OutBlock1")]
             return [order for order in orders if code is None or order.symbol == code]
 
         return self._call(read)
@@ -496,7 +543,7 @@ class LS(RestBroker):
         if self.market == "US":
             return self._us_write(request)
         body = {
-            "IsuNo": self._symbol(request.symbol, "KR"),
+            "IsuNo": self._order_symbol(request.symbol),
             "OrdQty": request.quantity,
             "OrdPrc": int(request.price or 0),
             "BnsTpCode": self._code(request.side),
@@ -523,7 +570,7 @@ class LS(RestBroker):
             return self._us_write(request)
         body = {
             "OrgOrdNo": request.order_id if self._bound_virtual else int(request.order_id),
-            "IsuNo": self._symbol(request.symbol, "KR"),
+            "IsuNo": self._order_symbol(request.symbol),
             "OrdQty": request.quantity,
         }
         response = self._response("/stock/order", "CSPAT00801", {"CSPAT00801InBlock1": body}, write=True)
@@ -576,7 +623,7 @@ class LS(RestBroker):
         if self._order_date is None:
             raise ConfigurationError("LS US order listing requires an explicit broker order_date")
         symbol = self._us_symbol(symbol) if symbol is not None else ""
-        response = self._response(
+        pages = self._pages(
             "/overseas-stock/accno",
             "COSAQ00102",
             {
@@ -596,9 +643,9 @@ class LS(RestBroker):
                 },
             },
         )
-        self._us_complete()
         result = []
-        for row in self._us_rows(response, "COSAQ00102OutBlock3"):
+        rows = [row for response in pages for row in self._us_rows(response, "COSAQ00102OutBlock3")]
+        for row in rows:
             code = self._us_symbol(row["ShtnIsuNo"])
             if row["CrcyCode"] != "USD" or row["OrdMktCode"] != LS_US_VENUES[self.venue]:
                 raise InvalidResponseError("LS US order identity/currency does not match")

@@ -1,0 +1,87 @@
+{
+  "input": {
+    "dataBody": {
+      "excg_mktpr_ccd": ""
+    },
+    "dataHeader": {
+      "ipAddr": "",
+      "macAddr": ""
+    }
+  },
+  "output": {
+    "dataHeader": {
+      "resultCode": "200",
+      "resultMessage": "성공",
+      "processFlag": "A",
+      "processMessage": "",
+      "processCode": "0011",
+      "processTime": "20260622162350500"
+    },
+    "dataBody": {
+      "fncng_amt_sum": "000000000000000000",
+      "fncng_amt": "000000000000000000",
+      "etc_lndng_amt": "000000000000000000",
+      "mrtg_shrtg_amt": "000000000000000000",
+      "dy_tfnd": "000000000001000000",
+      "cma_pldg_est_amt": "000000000000000",
+      "grid_cnt1": "0001",
+      "nxt2_dy_tfnd": "000000000000639950",
+      "gnl_ln_amt": "000000000000000000",
+      "val_amt_sum": "000000000000426500",
+      "brwg_mrtg_csh_est_amt": "000000000000000000",
+      "val_pl_sum": "000000000000066450",
+      "tl_data_cnt": "0001",
+      "val_yld": "000000000018.45",
+      "fcrncy_tfnd_krw_exch_amt": "000000000000.00",
+      "o_lngth": "01015",
+      "scrts_nt_val_amt": "000000000000426500",
+      "o_clsf": "SC",
+      "Record1": [
+        {
+          "fncng_amt": "000000000000000000",
+          "is_nm": "삼성전자",
+          "addt_amt": "000000000000000000",
+          "byng_amt": "000000000000360050",
+          "ordr_psbl_q_p6": "000000000.000000",
+          "clsf": "현금",
+          "val_yld": "000000018.45",
+          "is_dtl_typ_cd": "11",
+          "fee_r_p9": "00.000150000",
+          "byng_avr_prc": "0000000360050.00",
+          "ec_q_p6": "000000000.000000",
+          "nstmt_b_q_p6": "000000000.000000",
+          "nstmt_s_q_p6": "000000000.000000",
+          "now_prc": "0000000426500.00",
+          "val_amt": "000000000000426500",
+          "is_cd": "A005930",
+          "nstmt_s_q": "000000000000000",
+          "fnl_ccls_excg_cd": "KRX",
+          "crncy_cd": "   ",
+          "dl_tx_r_p4": "0000.0005",
+          "nxtd_lstng_ccd": "1",
+          "ffs_tx_r_p4": "0000.0015",
+          "nstmt_b_q": "000000000000001",
+          "hld_q_p6": "00000000.000000",
+          "ordr_psbl_q": "000000000000001",
+          "hld_q": "000000000000000",
+          "ec_q": "000000000000001",
+          "val_pl": "000000000000066450"
+        }
+      ],
+      "nxt2_dy_o_amt_psbl_amt": "000000000000639950",
+      "itst_npymt_amt": "000000000000000000",
+      "val_yld_sum": "000000000018.45",
+      "elw_excs_mgn": "000000000000000000",
+      "byng_amt_sum": "000000000000360050",
+      "mrtg_rt": "0000000000",
+      "ndy_o_amt_psbl_amt": "000000000001000000",
+      "nt_byng_amt": "000000000000360050",
+      "nrfnd_fncng_amt": "000000000000000000",
+      "o_msg": "정상적으로 조회되었습니다.",
+      "brwg_nd_mrtg_amt": "000000000000000000",
+      "nt_asts_val_amt": "000000000001066450",
+      "ndy_tfnd": "000000000001000000",
+      "val_pl": "000000000000066450"
+    }
+  }
+}
