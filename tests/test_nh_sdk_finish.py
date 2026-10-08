@@ -6,7 +6,7 @@ from decimal import Decimal
 
 import pytest
 
-from pykbroker.brokers.nh import NH, NH_API_BASE_URL, NH_MOCK_BASE_URL
+from pykbroker.brokers.nh import NH, NH_API_BASE_URL, NH_MOCK_BASE_URL, NH_N2_API_BASE_URL, NH_N2_MOCK_BASE_URL
 from pykbroker.exceptions import ConfigurationError, InvalidResponseError, SafetyError, TransportError
 from pykbroker.factory import create_broker
 from pykbroker.models import CancelRequest, OrderRequest
@@ -80,12 +80,16 @@ def test_mock_binding_requires_type_03_before_client_creation(options):
 
 
 @pytest.mark.parametrize("virtual", [False, True])
-def test_all_paths_keep_order_host_and_auth_host_separate(virtual, live_safety):
+@pytest.mark.parametrize("brand", ["nhplug", "n2plug"])
+def test_all_paths_keep_order_host_and_auth_host_separate(virtual, brand, live_safety):
     broker, calls, hosts = make(
         virtual=virtual,
         safety=live_safety,
         allow_live_orders=True,
-        options={"app_key": "fixture-key", "app_secret": "fixture-secret", "acct_type": "03" if virtual else "01"},
+        options={
+            "app_key": "fixture-key", "app_secret": "fixture-secret",
+            "acct_type": "03" if virtual else "01", "brand": brand,
+        },
     )
     assert calls == []
     assert broker.verify_account() == ("03" if virtual else "01")
@@ -93,12 +97,15 @@ def test_all_paths_keep_order_host_and_auth_host_separate(virtual, live_safety):
     for side in ("buy", "sell"):
         broker.place_order(OrderRequest(symbol="005930", side=side, quantity=1, price=70000, client_key=side))
     broker.cancel_order(CancelRequest(order_id="mkt:123", symbol="005930", quantity=1, client_key="cancel"))
-    order_host = NH_MOCK_BASE_URL if virtual else NH_API_BASE_URL
-    assert hosts == [order_host, NH_API_BASE_URL]
+    auth_host = NH_API_BASE_URL if brand == "nhplug" else NH_N2_API_BASE_URL
+    mock_host = NH_MOCK_BASE_URL if brand == "nhplug" else NH_N2_MOCK_BASE_URL
+    order_host = mock_host if virtual else auth_host
+    assert hosts == [order_host, auth_host]
+    assert broker.virtual is virtual
     assert [(host, path) for host, path, _, _ in calls] == [
-        (NH_API_BASE_URL, "/oauth2/token"),
-        (NH_API_BASE_URL, "/n2/acctinfo"),
-        (NH_API_BASE_URL, QUOTE),
+        (auth_host, "/oauth2/token"),
+        (auth_host, "/n2/acctinfo"),
+        (auth_host, QUOTE),
         (order_host, "/krstock/order/v1/cashBuy"),
         (order_host, "/krstock/order/v1/cashSell"),
         (order_host, "/krstock/order/v1/cancel"),
