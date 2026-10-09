@@ -5,7 +5,7 @@ import re
 import threading
 from collections.abc import Callable, Mapping
 from datetime import date, datetime
-from decimal import Decimal
+from decimal import ROUND_FLOOR, Decimal
 from importlib import import_module
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -397,6 +397,20 @@ class Toss(BaseBroker):
 
         return self._call(read)
 
+    def _holding_shares(self, quantity: Any, sellable: Any) -> tuple[int, int, Decimal | None]:
+        """Whole shares for the order path, plus the exact US holding when it has a fraction.
+
+        Toss US holds fractional shares (amount buys) and sells a fraction only by a market order;
+        a limit order sells whole shares. One fractional row used to fail the whole position read.
+        KR stays strict: a fractional KR quantity is still an invalid response."""
+        if self.market != "US":
+            return whole(quantity), whole(sellable), None
+        held, free = decimal(quantity), decimal(sellable)
+        if free > held:
+            raise InvalidResponseError("Sellable quantity exceeds the holding")
+        shares = int(held.to_integral_value(rounding=ROUND_FLOOR))
+        return shares, int(free.to_integral_value(rounding=ROUND_FLOOR)), (held if held != shares else None)
+
     def get_positions(self) -> list[Position]:
         def read():
             result = []
@@ -404,16 +418,19 @@ class Toss(BaseBroker):
                 if row["marketCountry"] != self.market:
                     continue
                 sellable = self._run("get_sellable_quantity", row["symbol"])
+                quantity, sellable_quantity, exact = self._holding_shares(
+                    row["quantity"], sellable["sellableQuantity"])
                 result.append(
                     Position(
                         symbol=row["symbol"],
                         name=row["name"],
                         market=self.market,
-                        quantity=whole(row["quantity"]),
-                        sellable=whole(sellable["sellableQuantity"]),
+                        quantity=quantity,
+                        sellable=sellable_quantity,
                         average_price=decimal(row["averagePurchasePrice"]),
                         last=decimal(row["lastPrice"]),
                         market_value=decimal(row["marketValue"]["amount"]),
+                        quantity_exact=exact,
                     )
                 )
             return result
