@@ -478,12 +478,10 @@ class Toss(BaseBroker):
 
     @staticmethod
     def _fractional_row(row) -> bool:
-        # 값이 깨졌으면(숫자 아님·음수) decimal() 이 그대로 오류를 낸다 — 소수일 때만 true.
-        for value in (row["quantity"], row["execution"]["filledQuantity"]):
-            number = decimal(value)
-            if number != number.to_integral_value():
-                return True
-        return False
+        # 두 값을 모두 검증한 뒤에 소수 여부를 판정한다 - 수량이 소수여도 체결 수량이
+        # 깨졌으면(숫자 아님·음수·NaN) decimal() 이 InvalidResponseError 를 낸다.
+        numbers = [decimal(value) for value in (row["quantity"], row["execution"]["filledQuantity"])]
+        return any(number != number.to_integral_value() for number in numbers)
 
     def _place_order(self, request: OrderRequest) -> Order:
         # US 파일럿은 지정가만(D11: 매수·매도). 시장가·종가는 계속 거부하고,

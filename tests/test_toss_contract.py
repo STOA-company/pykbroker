@@ -195,6 +195,20 @@ def test_toss_garbage_quantity_row_still_fails_closed(live_safety):
         broker.list_orders("005930")
 
 
+@pytest.mark.parametrize("filled", ["abc", "-1", "NaN"])
+def test_toss_fractional_row_with_broken_filled_quantity_fails_closed(live_safety, filled):
+    broken = {**_FOREIGN_FRACTIONAL, "execution": {"filledQuantity": filled}}
+    broker = _broker(live_safety, [broken, _OURS])
+    with broker:
+        with pytest.raises(InvalidResponseError):
+            broker.status(broker_order("ours-1"))
+        with pytest.raises(InvalidResponseError):
+            broker.list_orders("005930")
+        with pytest.raises(InvalidResponseError):
+            broker.cancel_order(CancelRequest(order_id="ours-1", symbol="005930", quantity=2, client_key="c"))
+        assert broker._sdk.calls == []
+
+
 def broker_order(order_id):
     from pykbroker import Order
 
