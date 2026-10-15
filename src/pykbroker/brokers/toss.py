@@ -5,7 +5,7 @@ import re
 import threading
 from collections.abc import Callable, Mapping
 from datetime import date, datetime
-from decimal import Decimal
+from decimal import ROUND_FLOOR, Decimal
 from importlib import import_module
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -404,13 +404,27 @@ class Toss(BaseBroker):
                 if row["marketCountry"] != self.market:
                     continue
                 sellable = self._run("get_sellable_quantity", row["symbol"])
+                # 토스 미국 소수점 주식(예: "0.3"): 정확한 수량은 *_exact 에 두고 quantity/sellable 은
+                # 내림한 정수 주식으로 보고한다(벤더는 소수 매도를 MARKET 만 받고, 정수 주문 경로는 잔량을 팔지 않는다).
+                # 국내(KR)는 스펙상 정수라 소수 수량은 계속 오류로 둔다(스펙 위반 응답을 숨기지 않음).
+                if self.market == "US":
+                    exact_qty = decimal(row["quantity"])
+                    exact_sellable = decimal(sellable["sellableQuantity"])
+                    whole_qty = int(exact_qty.to_integral_value(rounding=ROUND_FLOOR))
+                    whole_sellable = int(exact_sellable.to_integral_value(rounding=ROUND_FLOOR))
+                else:
+                    exact_qty = exact_sellable = None
+                    whole_qty = whole(row["quantity"])
+                    whole_sellable = whole(sellable["sellableQuantity"])
                 result.append(
                     Position(
                         symbol=row["symbol"],
                         name=row["name"],
                         market=self.market,
-                        quantity=whole(row["quantity"]),
-                        sellable=whole(sellable["sellableQuantity"]),
+                        quantity=whole_qty,
+                        sellable=whole_sellable,
+                        quantity_exact=exact_qty,
+                        sellable_exact=exact_sellable,
                         average_price=decimal(row["averagePurchasePrice"]),
                         last=decimal(row["lastPrice"]),
                         market_value=decimal(row["marketValue"]["amount"]),
