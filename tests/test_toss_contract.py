@@ -135,3 +135,67 @@ def test_toss_kr_limit_sell_translation_unchanged(live_safety):
         "005930", "SELL", "LIMIT", "DAY", "70000"
     )
     broker.close()
+
+
+def _mixed_sdk(rows):
+    class MixedSDK(LoopSDK):
+        async def list_open_orders(self, symbol=None):
+            return {"orders": rows}
+
+    return MixedSDK
+
+
+_OURS = {
+    "orderId": "ours-1",
+    "symbol": "005930",
+    "quantity": "3",
+    "execution": {"filledQuantity": "1"},
+    "status": "PARTIALLY_FILLED",
+}
+_FOREIGN_FRACTIONAL = {
+    "orderId": "app-9",
+    "symbol": "005930",
+    "quantity": "0.5",
+    "execution": {"filledQuantity": "0"},
+    "status": "OPEN",
+}
+
+
+def _broker(live_safety, rows):
+    return Toss(account="fixture", account_seq=1, sdk_factory=_mixed_sdk(rows), safety=live_safety,
+                sdk_dry_run=False)
+
+
+def test_toss_foreign_fractional_order_skipped_ours_readable_and_cancellable(live_safety, caplog):
+    broker = _broker(live_safety, [_FOREIGN_FRACTIONAL, _OURS])
+    with broker:
+        assert [o.id for o in broker.list_orders("005930")] == ["ours-1"]
+        found = broker.status(broker_order("ours-1"))
+        assert (found.quantity, found.filled) == (3, 1)
+        done = broker.cancel_order(CancelRequest(order_id="ours-1", symbol="005930", quantity=2, client_key="c"))
+        assert done.status == "accepted"
+        assert broker._sdk.calls == ["ours-1"]
+    assert "0.5" not in caplog.text and "app-9" not in caplog.text
+
+
+def test_toss_our_own_order_fractional_is_still_an_error(live_safety):
+    ours_fractional = {**_OURS, "quantity": "2.5"}
+    broker = _broker(live_safety, [_FOREIGN_FRACTIONAL, ours_fractional])
+    with broker:
+        with pytest.raises(InvalidResponseError):
+            broker.status(broker_order("ours-1"))
+        with pytest.raises(InvalidResponseError):
+            broker.cancel_order(CancelRequest(order_id="ours-1", symbol="005930", quantity=2, client_key="c"))
+        assert broker._sdk.calls == []
+
+
+def test_toss_garbage_quantity_row_still_fails_closed(live_safety):
+    broker = _broker(live_safety, [{**_FOREIGN_FRACTIONAL, "quantity": "abc"}, _OURS])
+    with broker, pytest.raises(InvalidResponseError):
+        broker.list_orders("005930")
+
+
+def broker_order(order_id):
+    from pykbroker import Order
+
+    return Order(id=order_id, symbol="005930", market="KR")
