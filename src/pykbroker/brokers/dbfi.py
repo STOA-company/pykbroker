@@ -6,7 +6,7 @@ from decimal import Decimal
 from importlib import import_module
 from typing import Any
 
-from pykbroker.exceptions import ConfigurationError, InvalidResponseError, MissingDependencyError, NotSupportedError
+from pykbroker.exceptions import ConfigurationError, FractionalNotSupportedError, InvalidResponseError, MissingDependencyError, NotSupportedError
 from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
 from pykbroker.rules.kr import equity_rules
 from pykbroker.safety.gate import OrderSafety
@@ -275,6 +275,9 @@ class DBFI(BaseBroker):
         return self._call(read)
 
     def _place_order(self, request: OrderRequest) -> Order:
+        if request.fractional:
+            # pydbsec buy()/sell() take quantity: int (no fractional order field). Refuse; never int().
+            raise FractionalNotSupportedError("DBFI orders are whole shares")
         client, _ = self._connect()
         symbol = self._symbol(request.symbol, request.market)
         submit = client.buy if request.side == "buy" else client.sell
