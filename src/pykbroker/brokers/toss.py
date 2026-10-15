@@ -1,6 +1,7 @@
 """Toss asynchronous client, owned by one persistent loop per adapter."""
 
 import asyncio
+import logging
 import re
 import threading
 from collections.abc import Callable, Mapping
@@ -27,6 +28,8 @@ from pykbroker.safety.idempotency import order_key
 from pykbroker.safety.rate_limit import RateLimiter, credential_rate_limiter
 
 from ._common import BaseBroker, decimal, optional_price, whole
+
+_LOG = logging.getLogger(__name__)
 
 # SDK 호출 이름 → TOKEN_BUCKETS 그룹. 값은 toss_call_rates() 가 SDK 에서 읽는다.
 _METHOD_GROUPS = {
@@ -421,6 +424,20 @@ class Toss(BaseBroker):
         return self._call(read)
 
     def list_orders(self, symbol: str | None = None) -> list[Order]:
+        return self._list_orders(symbol)
+
+    def status(self, order: Order) -> Order:
+        # 찾는 주문 행만 엄격히 읽는다(소수면 오류). 남의 소수 행은 건너뛴다.
+        for candidate in self._list_orders(order.symbol, strict_id=order.id):
+            if candidate.id == order.id:
+                return candidate
+        return order.model_copy(update={"status": "unknown"})
+
+    def _list_orders(self, symbol: str | None = None, strict_id: str | None = None) -> list[Order]:
+        # 주문 행(Order)에는 clientOrderId 가 없어 행으로 «우리 주문»을 가를 수 없다. 큐는 정수
+        # 수량만 내므로(_place_order: str(int)) 소수 수량 행은 고객이 토스 앱에서 직접 낸 주문이다.
+        # 찾는 주문 id(strict_id)의 행만 엄격히(소수면 InvalidResponseError) 읽고, 그 밖의 소수 행은
+        # 건너뛰며 경고만 남긴다(값은 안 찍는다).
         if symbol is not None:
             symbol = self._symbol(symbol, self.market)
 
@@ -438,20 +455,33 @@ class Toss(BaseBroker):
                 "CANCELLED": "cancelled",
                 "REJECTED": "rejected",
             }
-            return [
-                Order(
-                    id=row["orderId"],
-                    symbol=row["symbol"],
-                    market=self.market,
-                    quantity=whole(row["quantity"]),
-                    filled=whole(row["execution"]["filledQuantity"]),
-                    status=states.get(row["status"], "unknown"),
+            orders = []
+            for row in response["orders"]:
+                if symbol is not None and row["symbol"] != symbol:
+                    continue
+                if str(row["orderId"]) != str(strict_id) and self._fractional_row(row):
+                    _LOG.warning("Toss list_orders skipped a fractional-quantity order not owned by this system")
+                    continue
+                orders.append(
+                    Order(
+                        id=row["orderId"],
+                        symbol=row["symbol"],
+                        market=self.market,
+                        quantity=whole(row["quantity"]),
+                        filled=whole(row["execution"]["filledQuantity"]),
+                        status=states.get(row["status"], "unknown"),
+                    )
                 )
-                for row in response["orders"]
-                if symbol is None or row["symbol"] == symbol
-            ]
+            return orders
 
         return self._call(read)
+
+    @staticmethod
+    def _fractional_row(row) -> bool:
+        # 두 값을 모두 검증한 뒤에 소수 여부를 판정한다 - 수량이 소수여도 체결 수량이
+        # 깨졌으면(숫자 아님·음수·NaN) decimal() 이 InvalidResponseError 를 낸다.
+        numbers = [decimal(value) for value in (row["quantity"], row["execution"]["filledQuantity"])]
+        return any(number != number.to_integral_value() for number in numbers)
 
     def _place_order(self, request: OrderRequest) -> Order:
         # US 파일럿은 지정가만(D11: 매수·매도). 시장가·종가는 계속 거부하고,
@@ -504,7 +534,7 @@ class Toss(BaseBroker):
         if self._options["dry_run"]:
             raise DryRunError("dry_run: Toss live cancellation is disabled")
         # Vendor endpoint cancels all remaining quantity of one order.
-        orders = self.list_orders(request.symbol)
+        orders = self._list_orders(request.symbol, strict_id=request.order_id)
         matching = [order for order in orders if order.id == request.order_id]
         if len(matching) != 1 or matching[0].quantity is None or matching[0].filled is None:
             raise InvalidResponseError("Cannot establish the requested Toss order's remaining quantity")
