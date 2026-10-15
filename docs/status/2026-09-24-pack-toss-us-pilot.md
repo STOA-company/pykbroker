@@ -42,3 +42,15 @@
 - Regression: `tests/test_toss_us_lock.py`, `tests/test_toss_v1217.py`.
 - Reversal check: remove the constructor opt-in; US construction relocks.
 - Release is outside this PR: trader and platform gates must also pass.
+
+## Fractional positions — 2026-10-15, PR #36 (supersedes #34)
+
+- US `get_positions()` reads fractional holdings and sellable quantities as `Decimal`.
+- `quantity` and `sellable` remain integers rounded down; the exact values are in
+  `quantity_exact` and `sellable_exact`, including whole-share US values.
+- KR remains strict: a fractional holding or sellable quantity raises `InvalidResponseError`.
+- KR exact fields remain `None`; other brokers retain their optional-field defaults.
+- Sellable above the exact holding is invalid even when both values round down to the same integer.
+- Contract tests: `tests/test_toss_contract.py`; injected SDK only, with network blocked.
+- This SDK change alone does not establish recovery of the customer balance path.
+- No trader pin, fastapi deployment, real order, or merge is included in this repair.
