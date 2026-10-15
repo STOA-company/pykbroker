@@ -14,6 +14,10 @@ class Capabilities(Model):
     realtime_open_orders: bool = False
     # US venues have no market order on either broker; the executor reads this and goes limit.
     supports_limit_order: bool = True
+    # Fractional shares (Toss US only): amount-based MARKET BUY / decimal-quantity MARKET SELL.
+    # Both default to False so every other broker refuses a fractional request before any HTTP.
+    supports_amount_market_buy: bool = False
+    supports_fractional_market_sell: bool = False
     # True when an order cannot be routed without naming one of `venues`.
     requires_venue: bool = False
     venues: tuple[str, ...] = ()

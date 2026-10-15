@@ -1,6 +1,7 @@
 """Toss asynchronous client, owned by one persistent loop per adapter."""
 
 import asyncio
+import os
 import re
 import threading
 from collections.abc import Callable, Mapping
@@ -14,6 +15,8 @@ from pykbroker.exceptions import (
     BrokerRejectedError,
     ConfigurationError,
     DryRunError,
+    FractionalDisabledError,
+    FractionalOutsideSessionError,
     InvalidResponseError,
     MissingDependencyError,
     NotSupportedError,
@@ -53,6 +56,7 @@ _FALLBACK_TPS = {
     "MARKET_INFO": 3.0,
 }
 _KST = ZoneInfo("Asia/Seoul")
+_ET = ZoneInfo("America/New_York")
 
 
 def toss_call_rates() -> dict[str, float]:
@@ -70,6 +74,39 @@ def _order_info_peak_tps() -> float:
     except ImportError:
         return 3.0
     return float(limit.peak_tps if limit.peak_tps is not None else limit.tps)
+
+
+FRACTIONAL_MARKET_ALLOWED_ENV = "FRACTIONAL_MARKET_ALLOWED"
+_OFF_VALUES = frozenset({"0", "false", "off", "no"})
+
+
+def fractional_market_allowed(env: Mapping[str, str] | None = None) -> bool:
+    """D205 (2026-10-16): Toss US fractional (amount MARKET buy / decimal MARKET sell) is ON by default.
+
+    The same flag name is read by the platform and the trader. Only an explicit "0"/"false"/"off"/"no"
+    switches it off; an unset or unparsable value keeps the default ON. Whole-share orders never look here.
+    """
+    raw = (os.environ if env is None else env).get(FRACTIONAL_MARKET_ALLOWED_ENV)
+    if raw is None:
+        return True
+    return str(raw).strip().lower() not in _OFF_VALUES
+
+
+def in_fractional_session(now: datetime) -> bool:
+    """Toss OpenAPI 1.2.24: amount / fractional-quantity orders are accepted from the US regular
+    session open until one hour before its close (ET 09:30-15:00, weekdays). The vendor answers
+    422 `amount-order-outside-regular-hours` / `fractional-quantity-outside-regular-hours` outside
+    it; this check refuses before the HTTP so a closed window never spends a token or an
+    idempotency key. Exchange holidays are not modelled here (the vendor still refuses them).
+    """
+    if now.tzinfo is None:
+        raise ConfigurationError("Session clock must include a timezone")
+    local = now.astimezone(_ET)
+    if local.weekday() >= 5:
+        return False
+    start = local.replace(hour=9, minute=30, second=0, microsecond=0)
+    end = local.replace(hour=15, minute=0, second=0, microsecond=0)
+    return start <= local < end
 
 
 def _in_order_info_peak(now: datetime) -> bool:
@@ -179,7 +216,9 @@ class _TossBridge:
             return {"submitted": False, "status": "DRY_RUN"}
         kwargs["side"] = self._models.OrderSide(kwargs["side"])
         kwargs["order_type"] = self._models.OrderType(kwargs["order_type"])
-        kwargs["time_in_force"] = self._models.TimeInForce(kwargs["time_in_force"])
+        # Amount-based (orderAmount) orders carry no timeInForce (spec oneOf); the SDK refuses one.
+        if kwargs.get("time_in_force") is not None:
+            kwargs["time_in_force"] = self._models.TimeInForce(kwargs["time_in_force"])
         order = self._models.OrderCreateRequest(**kwargs)
         self._guard.check_create(order, account=self._context)
         try:
@@ -230,6 +269,7 @@ class Toss(BaseBroker):
         halt_provider: Callable[[str], bool] | None = None,
         token_store: Any | None = None,
         rate_limiter: RateLimiter | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         # Toss has no separate mock-trading domain, so `virtual=True` is refused upstream.
         super().__init__(account=account, safety=safety, market=market, virtual=virtual, halt_provider=halt_provider)
@@ -243,6 +283,7 @@ class Toss(BaseBroker):
         if type(account_seq) is not int or account_seq <= 0:
             raise ConfigurationError("Supply the vendor accountSeq as a positive integer")
         self._factory = sdk_factory or _TossBridge
+        self._clock = clock or (lambda: datetime.now(_KST))
         self._options = dict(
             account_seq=account_seq,
             credentials_options=dict(credentials_options or {}),
@@ -296,6 +337,11 @@ class Toss(BaseBroker):
             return Capabilities(
                 supports_spot=True,
                 supports_limit_order=True,
+                # Toss OpenAPI 1.2.24: US fractional shares — `orderAmount` MARKET BUY and
+                # decimal `quantity` MARKET SELL (<=6 dp), regular session only. Whole-share
+                # MARKET stays closed (supports_market_order=False, D11 limit-only pilot).
+                supports_amount_market_buy=True,
+                supports_fractional_market_sell=True,
                 supports_single_order_cancel=True,
                 supports_order_history=True,
                 realtime_open_orders=True,
@@ -456,7 +502,16 @@ class Toss(BaseBroker):
     def _place_order(self, request: OrderRequest) -> Order:
         # US 파일럿은 지정가만(D11: 매수·매도). 시장가·종가는 계속 거부하고,
         # 매도 가격 판정(현재가 밴드)은 trader 게이트가 한다.
-        if self.market == "US" and request.order_type != "limit":
+        if request.fractional:
+            # 소수점(금액 매수·소수 수량 매도)은 토스 미국 정규장 창에서만 — HTTP 전에 거부.
+            # 모델 검증이 US·MARKET·BUY(amount)/SELL(decimal) 을 이미 강제한다.
+            if self.market != "US":
+                raise NotSupportedError("Toss fractional orders are US only")
+            if not fractional_market_allowed():
+                raise FractionalDisabledError()
+            if not in_fractional_session(self._clock()):
+                raise FractionalOutsideSessionError()
+        elif self.market == "US" and request.order_type != "limit":
             raise NotSupportedError("Toss US pilot accepts LIMIT orders only")
         # 종가(CLS) 주문은 벤더 해외 세션 전용이고, 그 해외 경로는 B′2-2 로 잠겨 있다.
         if request.order_type == "close":
@@ -470,31 +525,48 @@ class Toss(BaseBroker):
             broker="toss",
             symbol=symbol,
             side=request.side,
-            quantity=request.quantity,
+            # Amount buys hash the USD amount in the quantity slot (quantity is None); client_key keeps
+            # the key unique per intent, and order_type/price distinguish it from a share order.
+            quantity=request.quantity if request.quantity is not None else request.amount,
             cycle=request.client_key,
             price=request.price,
             order_type=request.order_type,
         )
+        if request.amount is not None:
+            # OrderCreateAmountBased: orderAmount (USD string), no quantity/price/timeInForce.
+            submission = dict(order_amount=format(request.amount, "f"), quantity=None,
+                              price=None, time_in_force=None)
+        else:
+            submission = dict(
+                # Decimal quantities are sent verbatim (<=6 dp, validated); never int().
+                quantity=format(request.quantity, "f") if isinstance(request.quantity, Decimal)
+                else str(request.quantity),
+                price=format(request.price, "f") if request.price is not None else None,
+                time_in_force="CLS" if request.order_type == "close" else "DAY",
+            )
         response = self._run(
             "submit_order",
             symbol=symbol,
             side=request.side.upper(),
             order_type="MARKET" if request.order_type == "market" else "LIMIT",
-            quantity=str(request.quantity),
-            price=format(request.price, "f") if request.price is not None else None,
-            time_in_force="CLS" if request.order_type == "close" else "DAY",
             client_order_id=client_id,
+            **submission,
         )
         if response.get("submitted") is not True:
             raise BrokerRejectedError("Toss SDK did not confirm submission")
         if not response.get("order_id"):
             raise InvalidResponseError("Toss response lacks an order identifier")
+        exact = request.quantity if isinstance(request.quantity, Decimal) else None
         return Order(
             id=response["order_id"],
             symbol=symbol,
             side=request.side,
             order_type=request.order_type,
-            quantity=request.quantity,
+            # Fractional sells: whole-share floor here, exact Decimal in quantity_exact;
+            # amount buys: quantity unknown until fills, the USD amount in `amount`.
+            quantity=(int(exact) if exact is not None else request.quantity),
+            quantity_exact=exact,
+            amount=request.amount,
             price=request.price,
             status="accepted",
             market=request.market,

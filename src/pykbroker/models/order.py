@@ -1,8 +1,9 @@
+from decimal import Decimal
 from typing import Literal, Self
 
 from pydantic import Field, model_validator
 
-from ._base import Model, Money, PositiveMoney, PositiveQuantity, Quantity
+from ._base import FractionalQuantity, Model, Money, PositiveMoney, PositiveQuantity, Quantity
 
 Side = Literal["buy", "sell"]
 OrderType = Literal["limit", "market", "close"]
@@ -12,12 +13,43 @@ OrderStatus = Literal["accepted", "open", "partial", "filled", "cancelled", "rej
 class OrderRequest(Model):
     symbol: str = Field(min_length=1)
     side: Side
-    quantity: PositiveQuantity
+    # Whole shares everywhere; a fractional Decimal only for Toss US MARKET SELL.
+    # Exactly one of `quantity` / `amount` is set (Toss OpenAPI 1.2.24 oneOf).
+    quantity: PositiveQuantity | FractionalQuantity | None = None
+    # Amount-based buy (Toss US `orderAmount`): USD, at most 2 decimal places, MARKET BUY only.
+    amount: PositiveMoney | None = None
     order_type: OrderType = "limit"
     price: PositiveMoney | None = None
     market: Literal["KR", "US"] = "KR"
     venue: str | None = None
     client_key: str = Field(min_length=1, max_length=128, pattern=r"\S", repr=False)
+
+    @property
+    def fractional(self) -> bool:
+        """True when this request needs a fractional-share path (amount buy or decimal sell)."""
+        return self.amount is not None or (
+            isinstance(self.quantity, Decimal) and self.quantity != self.quantity.to_integral_value()
+        )
+
+    @model_validator(mode="after")
+    def valid_quantity_or_amount(self) -> Self:
+        if (self.quantity is None) == (self.amount is None):
+            raise ValueError("Exactly one of quantity or amount is required")
+        if self.amount is not None:
+            if self.order_type != "market" or self.side != "buy" or self.market != "US":
+                raise ValueError("An amount-based order is a US MARKET BUY only")
+            if self.amount != self.amount.quantize(Decimal("0.01")):
+                raise ValueError("An amount-based order carries at most 2 decimal places (USD)")
+        if isinstance(self.quantity, Decimal):
+            if self.quantity == self.quantity.to_integral_value():
+                # A whole Decimal is a whole-share order; keep the integer contract for adapters.
+                object.__setattr__(self, "quantity", int(self.quantity))
+            else:
+                if self.order_type != "market" or self.side != "sell" or self.market != "US":
+                    raise ValueError("A fractional quantity is a US MARKET SELL only")
+                if self.quantity != self.quantity.quantize(Decimal("0.000001")):
+                    raise ValueError("A fractional quantity carries at most 6 decimal places")
+        return self
 
     @model_validator(mode="after")
     def valid_price(self) -> Self:
@@ -36,6 +68,10 @@ class Order(Model):
     side: Side | None = None
     order_type: OrderType | None = None
     quantity: Quantity | None = None
+    # Fractional submissions: `quantity` is the whole-share floor (0 for 0.5) and the exact
+    # Decimal lives here; an amount-based buy records the submitted USD amount in `amount`.
+    quantity_exact: Money | None = None
+    amount: Money | None = None
     price: Money | None = None
     # Broker-reported average execution price; never the submitted limit price.
     # None when execution pricing has not been supplied by the broker.

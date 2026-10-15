@@ -21,6 +21,36 @@ class SpecUnverifiedError(NotSupportedError):
     """A specification lock prevents this operation."""
 
 
+class FractionalNotSupportedError(NotSupportedError):
+    """Fractional shares (amount buy / decimal sell) are not an API feature of this broker/market.
+
+    Raised before any HTTP. Never resolved by rounding or truncating the quantity.
+    """
+
+    code = "FRACTIONAL_NOT_SUPPORTED"
+
+    def __init__(self, detail: str = "") -> None:
+        super().__init__("Fractional orders are not supported here" + (f": {detail}" if detail else ""))
+
+
+class FractionalDisabledError(NotSupportedError):
+    """FRACTIONAL_MARKET_ALLOWED is switched off: fractional/amount orders are refused before HTTP."""
+
+    code = "FRACTIONAL_DISABLED"
+
+    def __init__(self) -> None:
+        super().__init__("소수점 주문은 아직 켜지지 않았어요")
+
+
+class FractionalOutsideSessionError(NotSupportedError):
+    """Toss accepts fractional/amount orders only in the US regular session (ET 09:30-15:00)."""
+
+    code = "FRACTIONAL_OUTSIDE_SESSION"
+
+    def __init__(self) -> None:
+        super().__init__("Fractional orders are accepted only during the US regular session window")
+
+
 class InvalidResponseError(BrokerError):
     """A vendor response cannot be interpreted safely.
 
