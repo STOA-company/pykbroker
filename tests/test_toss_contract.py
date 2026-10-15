@@ -156,7 +156,7 @@ class FractionalSDK(LoopSDK):
 
 
 def test_toss_us_fractional_holding_is_read_not_500(live_safety):
-    # ?? US ?? ?? 500 ??(whole() ? ?? ??? ??). ?? ??? ???? ???? ??.
+    # 미국 소수점 보유 한 줄이 잔고 조회 전체를 500 으로 만들던 버그. 소수는 읽고 정수 칸은 내림한다.
     broker = Toss(account="fixture", account_seq=1, sdk_factory=FractionalSDK, safety=live_safety,
                   market="US", allow_us_pilot=True, sdk_dry_run=False)
     by = {p.symbol: p for p in broker.get_positions()}
@@ -165,4 +165,34 @@ def test_toss_us_fractional_holding_is_read_not_500(live_safety):
     assert by["AAPL"].quantity == 2 and by["AAPL"].sellable == 2
     assert by["AAPL"].quantity_exact == Decimal("2.5")
     assert by["MSFT"].quantity == 3 and by["MSFT"].quantity_exact == Decimal("3")
+    broker.close()
+
+
+class FractionalKRSDK(FractionalSDK):
+    async def get_positions(self):
+        return {
+            "marketValue": {"amount": {"krw": "1", "usd": "0"}},
+            "items": [
+                {"symbol": "005930", "name": "Fixture", "marketCountry": "KR", "quantity": "0.5",
+                 "averagePurchasePrice": "100", "lastPrice": "100", "marketValue": {"amount": "50"}},
+            ],
+        }
+
+    async def get_sellable_quantity(self, symbol):
+        return {"sellableQuantity": "0"}
+
+
+def test_toss_kr_fractional_quantity_stays_invalid_response(live_safety):
+    # 국내(KR)는 스펙상 정수다. 소수 수량은 스펙 위반 응답이므로 숨기지 않고 계속 오류로 낸다.
+    broker = Toss(account="fixture", account_seq=1, sdk_factory=FractionalKRSDK, safety=live_safety,
+                  market="KR", sdk_dry_run=False)
+    with pytest.raises(InvalidResponseError):
+        broker.get_positions()
+    broker.close()
+
+
+def test_toss_kr_whole_quantity_has_no_exact(live_safety):
+    broker = Toss(account="fixture", account_seq=1, sdk_factory=LoopSDK, safety=live_safety, sdk_dry_run=False)
+    pos = broker.get_positions()[0]
+    assert pos.quantity == 2 and pos.quantity_exact is None
     broker.close()
