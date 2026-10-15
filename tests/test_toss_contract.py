@@ -135,3 +135,34 @@ def test_toss_kr_limit_sell_translation_unchanged(live_safety):
         "005930", "SELL", "LIMIT", "DAY", "70000"
     )
     broker.close()
+
+
+class FractionalSDK(LoopSDK):
+    async def get_positions(self):
+        return {
+            "marketValue": {"amount": {"krw": "0", "usd": "30"}},
+            "items": [
+                {"symbol": "NKE", "name": "Fixture", "marketCountry": "US", "quantity": "0.3",
+                 "averagePurchasePrice": "100", "lastPrice": "100", "marketValue": {"amount": "30"}},
+                {"symbol": "AAPL", "name": "Fixture", "marketCountry": "US", "quantity": "2.5",
+                 "averagePurchasePrice": "100", "lastPrice": "100", "marketValue": {"amount": "250"}},
+                {"symbol": "MSFT", "name": "Fixture", "marketCountry": "US", "quantity": "3",
+                 "averagePurchasePrice": "100", "lastPrice": "100", "marketValue": {"amount": "300"}},
+            ],
+        }
+
+    async def get_sellable_quantity(self, symbol):
+        return {"sellableQuantity": {"NKE": "0.3", "AAPL": "2.5", "MSFT": "3"}[symbol]}
+
+
+def test_toss_us_fractional_holding_is_read_not_500(live_safety):
+    # ?? US ?? ?? 500 ??(whole() ? ?? ??? ??). ?? ??? ???? ???? ??.
+    broker = Toss(account="fixture", account_seq=1, sdk_factory=FractionalSDK, safety=live_safety,
+                  market="US", allow_us_pilot=True, sdk_dry_run=False)
+    by = {p.symbol: p for p in broker.get_positions()}
+    assert by["NKE"].quantity == 0 and by["NKE"].sellable == 0
+    assert by["NKE"].quantity_exact == Decimal("0.3") and by["NKE"].sellable_exact == Decimal("0.3")
+    assert by["AAPL"].quantity == 2 and by["AAPL"].sellable == 2
+    assert by["AAPL"].quantity_exact == Decimal("2.5")
+    assert by["MSFT"].quantity == 3 and by["MSFT"].quantity_exact == Decimal("3")
+    broker.close()

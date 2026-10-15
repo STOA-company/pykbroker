@@ -5,7 +5,7 @@ import re
 import threading
 from collections.abc import Callable, Mapping
 from datetime import date, datetime
-from decimal import Decimal
+from decimal import ROUND_FLOOR, Decimal
 from importlib import import_module
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -404,13 +404,21 @@ class Toss(BaseBroker):
                 if row["marketCountry"] != self.market:
                     continue
                 sellable = self._run("get_sellable_quantity", row["symbol"])
+                # Toss US fractional shares (e.g. "0.3"): keep the exact amount, report whole shares
+                # (floored) in quantity/sellable. Vendor only takes fractional SELL as MARKET, US,
+                # regular hours (toss-openapi models/order.py), so the integer order path never
+                # sells the remainder.
+                exact_qty = decimal(row["quantity"])
+                exact_sellable = decimal(sellable["sellableQuantity"])
                 result.append(
                     Position(
                         symbol=row["symbol"],
                         name=row["name"],
                         market=self.market,
-                        quantity=whole(row["quantity"]),
-                        sellable=whole(sellable["sellableQuantity"]),
+                        quantity=int(exact_qty.to_integral_value(rounding=ROUND_FLOOR)),
+                        sellable=int(exact_sellable.to_integral_value(rounding=ROUND_FLOOR)),
+                        quantity_exact=exact_qty,
+                        sellable_exact=exact_sellable,
                         average_price=decimal(row["averagePurchasePrice"]),
                         last=decimal(row["lastPrice"]),
                         market_value=decimal(row["marketValue"]["amount"]),
