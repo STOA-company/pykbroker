@@ -17,6 +17,7 @@ from pykbroker.exceptions import (
     SpecUnverifiedError,
     TransportError,
 )
+from pykbroker.reject_codes import definitive_rejection
 from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
 from pykbroker.rules.kr import LOT, equity_rules, normalize_symbol
 from pykbroker.safety.gate import OrderSafety
@@ -112,9 +113,16 @@ class BaseBroker:
             return function()
         except BrokerError:
             raise
-        except (KeyError, TypeError, ValueError, AttributeError, ValidationError):
+        except (KeyError, TypeError, ValueError, AttributeError, ValidationError) as exc:
+            # A vendor answer listed in reject_codes proves «not accepted»; anything else stays unknown.
+            definite = definitive_rejection(self.broker_code, exc)
+            if definite is not None:
+                raise definite from None
             raise InvalidResponseError("Vendor response or client contract is invalid") from None
-        except Exception:
+        except Exception as exc:
+            definite = definitive_rejection(self.broker_code, exc)
+            if definite is not None:
+                raise definite from None
             raise TransportError("Vendor call failed; reconcile uncertain orders before retrying") from None
 
     def _symbol(self, symbol: str, market: str) -> str:

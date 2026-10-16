@@ -60,15 +60,27 @@ class InvalidResponseError(BrokerError):
 
 
 class BrokerRejectedError(BrokerError):
-    """The vendor explicitly rejected the request."""
+    """The vendor explicitly rejected the request (it was not accepted).
+
+    code is a sanitized vendor code; kind is one of pykbroker.reject_codes
+    (rejected / token_expired / rate_limited); reason is a stable customer category.
+    """
+
+    def __init__(self, message: str = "Broker rejected the request", *, code: str | None = None,
+                 kind: str = "rejected", reason: str | None = None) -> None:
+        self.code = code
+        self.kind = kind
+        self.reason = reason
+        super().__init__(message)
 
 
 class TossRejectedError(BrokerRejectedError):
     """Toss 4xx rejection with a sanitized vendor code only."""
 
     def __init__(self, code: str | None = None) -> None:
-        self.code = code
-        super().__init__("Toss rejected the request")
+        kind = "token_expired" if code in ("expired-token", "token-revoked") else "rejected"
+        super().__init__("Toss rejected the request", code=code, kind=kind,
+                         reason="token_expired" if kind == "token_expired" else None)
 
 
 class TransportError(BrokerError):
