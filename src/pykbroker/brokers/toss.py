@@ -132,6 +132,7 @@ class _TossBridge:
         dry_run: bool = True,
         live_trading_enabled: bool = False,
         token_store: Any | None = None,
+        base_url: str | None = None,
     ) -> None:
         try:
             context_type = import_module("toss_openapi.broker.account_context").AccountContext
@@ -148,7 +149,14 @@ class _TossBridge:
                 "Supply toss_openapi source and pykbroker[toss], or inject sdk_factory"
             ) from None
         self._dry_run = dry_run
-        settings = settings_type(dry_run=dry_run, live_trading_enabled=live_trading_enabled)
+        # base_url None = SDK default (operations, unchanged call). The caller owns
+        # any override policy; the SDK derives the token URL from this base.
+        if base_url is None:
+            settings = settings_type(dry_run=dry_run, live_trading_enabled=live_trading_enabled)
+        else:
+            settings = settings_type(
+                base_url=base_url, dry_run=dry_run, live_trading_enabled=live_trading_enabled
+            )
         credentials = credentials_type(**credentials_options)
         self._transport = transport_type(settings)
         # store 가 None 이면 SDK 기본 메모리(TokenCache).
