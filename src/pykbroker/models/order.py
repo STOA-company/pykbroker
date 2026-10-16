@@ -68,8 +68,8 @@ class Order(Model):
     side: Side | None = None
     order_type: OrderType | None = None
     quantity: Quantity | None = None
-    # Fractional submissions: `quantity` is the whole-share floor (0 for 0.5) and the exact
-    # Decimal lives here; an amount-based buy records the submitted USD amount in `amount`.
+    # Fractional submissions leave `quantity` None (never floored) and carry the exact
+    # Decimal here; an amount-based buy records the submitted USD amount in `amount`.
     quantity_exact: Money | None = None
     amount: Money | None = None
     price: Money | None = None

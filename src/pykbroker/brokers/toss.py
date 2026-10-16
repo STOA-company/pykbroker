@@ -576,9 +576,9 @@ class Toss(BaseBroker):
             symbol=symbol,
             side=request.side,
             order_type=request.order_type,
-            # Fractional sells: whole-share floor here, exact Decimal in quantity_exact;
-            # amount buys: quantity unknown until fills, the USD amount in `amount`.
-            quantity=(int(exact) if exact is not None else request.quantity),
+            # Fractional sells: no whole-share count (never floored or rounded) — the exact Decimal
+            # is quantity_exact; amount buys: quantity unknown until fills, the USD amount in `amount`.
+            quantity=(None if exact is not None else request.quantity),
             quantity_exact=exact,
             amount=request.amount,
             price=request.price,

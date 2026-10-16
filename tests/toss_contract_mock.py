@@ -43,6 +43,14 @@ def _scale(text: str) -> int:
     return -Decimal(text).normalize().as_tuple().exponent if "." in text else 0
 
 
+class ContractRejection(TossRejectedError):
+    """A documented vendor 4xx; keeps the HTTP status so a transport double can replay it."""
+
+    def __init__(self, status: int, code: str) -> None:
+        super().__init__(code)
+        self.status = status
+
+
 class ContractMockTossSdk:
     """Fake SDK bridge whose ``submit_order`` enforces the vendor contract."""
 
@@ -82,11 +90,14 @@ class ContractMockTossSdk:
         assert not unknown, f"SDK bridge received unknown fields: {sorted(unknown)}"
         return {mapping[k]: v for k, v in kwargs.items() if v is not None}
 
-    def _reject(self, status: int, code: str, example: str) -> None:
+    def _documented(self, status: int, code: str, example: str) -> None:
         documented = self.contract["responses"][str(status)]["examples"]
         assert example in documented, (status, example)
         assert documented[example]["value"]["error"]["code"] == code
-        raise TossRejectedError(code)
+
+    def _reject(self, status: int, code: str, example: str) -> None:
+        self._documented(status, code, example)
+        raise ContractRejection(status, code)
 
     def _in_regular_window(self) -> bool:
         now = self._clock().astimezone(_ET)
@@ -146,3 +157,32 @@ class ContractMockTossSdk:
         order_id = f"contract-order-{self._seq}"
         self.accepted.append({**payload, "orderId": order_id})
         return {"submitted": True, "order_id": order_id}
+
+
+class ContractTransport:
+    """Stands in for ``toss_openapi.transport.http.HttpTransport`` under the REAL ``_TossBridge`` and SDK models.
+
+    The JSON body the vendor SDK builds (``OrderCreateRequest.to_payload``) is validated against the vendor
+    schema; documented 4xx answers come back as ``toss_openapi.errors.TossApiError`` exactly as the HTTP
+    transport raises them. ``expired_tokens`` makes the server answer ``401 expired-token``. No network.
+    """
+
+    def __init__(self, *, clock=None, expired_tokens=()):
+        self.server = ContractMockTossSdk(clock=clock)
+        self.calls: list = []
+        self.expired_tokens = set(expired_tokens)
+
+    async def request(self, method, path, *, json_body=None, token=None, account_seq=None, retryable=True, **_):
+        from toss_openapi.errors import TossApiError
+
+        self.calls.append((method, path, dict(json_body or {}), retryable, account_seq))
+        if token in self.expired_tokens:
+            self.server._documented(401, "expired-token", "expiredToken")
+            raise TossApiError("vendor detail", status_code=401, code="expired-token")
+        assert (method, path) == ("POST", "/api/v1/orders"), (method, path)
+        try:
+            self.server.validate(dict(json_body or {}))
+        except ContractRejection as exc:
+            raise TossApiError("vendor detail", status_code=exc.status, code=exc.code) from None
+        self.server._seq += 1
+        return {"orderId": f"contract-order-{self.server._seq}"}

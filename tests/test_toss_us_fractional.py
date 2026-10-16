@@ -1,10 +1,12 @@
-﻿"""Toss US fractional shares (OpenAPI 1.2.24): amount MARKET buy / decimal MARKET sell.
+"""Toss US fractional shares (OpenAPI 1.2.24): amount MARKET buy / decimal MARKET sell.
 
 The SDK bridge is the contract mock (``toss_contract_mock``) built from the vendor schema; no network,
 no live order. Whole-share behaviour (US LIMIT only, KR integers) stays byte-for-byte as before.
 """
 
 from __future__ import annotations
+
+import asyncio
 
 from datetime import datetime
 from decimal import Decimal
@@ -13,7 +15,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from pydantic import ValidationError
-from toss_contract_mock import ContractMockTossSdk
+from tests.toss_contract_mock import ContractMockTossSdk, ContractTransport
 
 from pykbroker import DBFI, KIS, Toss
 from pykbroker.brokers import toss as toss_module
@@ -132,7 +134,7 @@ def test_fractional_market_sell_sends_decimal_quantity_verbatim(live_safety):
     [payload] = _submits(made)
     assert payload["quantity"] == "0.300001" and payload["orderType"] == "MARKET" and payload["side"] == "SELL"
     assert "price" not in payload and payload["timeInForce"] == "DAY" and "orderAmount" not in payload
-    assert order.quantity_exact == Decimal("0.300001") and order.quantity == 0  # floor, never rounded up
+    assert order.quantity_exact == Decimal("0.300001") and order.quantity is None  # never floored
 
 
 def test_whole_share_us_market_stays_limit_only_and_unchanged(live_safety):
@@ -267,3 +269,116 @@ def test_toss_module_still_uses_str_for_whole_quantities():
     src = inspect.getsource(toss_module)
     assert "format(request.quantity, \"f\") if isinstance(request.quantity, Decimal)" in src
     assert "int(request.quantity)" not in src
+
+
+# --- the REAL SDK bridge + vendor models against the contract transport (no network) ----------- #
+
+def _real_bridge(transport, token="fixture-token", clock=lambda: IN_SESSION):
+    pytest.importorskip("toss_openapi")
+    from toss_openapi.broker.account_context import AccountContext
+    from toss_openapi.broker.order_guard import OrderGuard
+    from toss_openapi.config import TossSettings
+    from toss_openapi.errors import TossApiError
+    from toss_openapi.models import order as order_models
+
+    from pykbroker.brokers.toss import _TossBridge
+
+    class Manager:
+        calls = 0
+
+        async def get_access_token(self):
+            Manager.calls += 1
+            return token
+
+    class Bridge(_TossBridge):
+        def __init__(self, **_options):  # the SDK client is replaced by the contract transport
+            self._dry_run = False
+            self._models = order_models
+            self._api_error_type = TossApiError
+            self._guard = OrderGuard(TossSettings(dry_run=False, live_trading_enabled=True))
+            self._context = AccountContext(account_seq=7, dry_run=False)
+            self._manager = Manager()
+            self._transport = transport
+            self._account_seq = 7
+            self._reads = ContractMockTossSdk(clock=clock)
+
+        async def get_prices(self, symbols):
+            return await self._reads.get_prices(symbols)
+
+        async def get_orderbook(self, symbol):
+            return await self._reads.get_orderbook(symbol)
+
+        async def get_positions(self):
+            return await self._reads.get_positions()
+
+        async def list_open_orders(self, symbol=None):
+            return await self._reads.list_open_orders(symbol)
+
+        async def aclose(self):
+            return None
+
+    return Bridge, Manager
+
+
+@pytest.fixture
+def live_sdk_env(monkeypatch):
+    monkeypatch.setenv("TOSS_LIVE_TRADING_ENABLED", "true")
+
+
+def test_real_sdk_amount_buy_and_decimal_sell_bodies_match_the_vendor_schema(live_safety, live_sdk_env):
+    transport = ContractTransport(clock=lambda: IN_SESSION)
+    bridge_type, _ = _real_bridge(transport)
+    broker = Toss(account="fixture", account_seq=7, market="US", allow_us_pilot=True, sdk_factory=bridge_type,
+                  sdk_dry_run=False, sdk_live_trading_enabled=True, clock=lambda: IN_SESSION, safety=live_safety)
+    buy = broker.place(OrderRequest(symbol="AAPL", side="buy", amount="57.12", market="US", order_type="market",
+                                    client_key="real-amt-1"))
+    sell = broker.place(OrderRequest(symbol="AAPL", side="sell", quantity=Decimal("0.300001"), market="US",
+                                     order_type="market", client_key="real-frac-1"))
+    assert [c[:2] for c in transport.calls] == [("POST", "/api/v1/orders")] * 2
+    assert all(c[3] is False and c[4] == 7 for c in transport.calls)  # one-shot writes, account header
+    amount_body, sell_body = transport.calls[0][2], transport.calls[1][2]
+    assert amount_body["orderAmount"] == "57.12" and amount_body["orderType"] == "MARKET"
+    assert amount_body["side"] == "BUY" and not {"quantity", "price", "timeInForce"} & set(amount_body)
+    assert sell_body["quantity"] == "0.300001" and sell_body["side"] == "SELL" and "orderAmount" not in sell_body
+    assert buy.amount == Decimal("57.12") and buy.quantity is None
+    assert sell.quantity_exact == Decimal("0.300001") and sell.quantity is None
+
+
+def test_real_sdk_refuses_a_decimal_quantity_buy_before_http_and_the_server_answers_400(live_sdk_env):
+    from toss_openapi.errors import TossApiError, TossValidationError
+
+    transport = ContractTransport(clock=lambda: IN_SESSION)
+    bridge_type, _ = _real_bridge(transport)
+    bridge = bridge_type()
+    with pytest.raises(TossValidationError):
+        asyncio.run(bridge.submit_order(symbol="AAPL", side="BUY", order_type="MARKET", quantity="0.5",
+                                        price=None, time_in_force="DAY", client_order_id="frac-buy-1"))
+    assert transport.calls == []
+    # The same body sent raw reaches the documented vendor answer: 400 invalid-request.
+    with pytest.raises(TossApiError) as info:
+        asyncio.run(transport.request("POST", "/api/v1/orders", json_body={
+            "symbol": "AAPL", "side": "BUY", "orderType": "MARKET", "quantity": "0.5", "timeInForce": "DAY",
+            "clientOrderId": "raw-1"}, token="fixture-token", account_seq=7, retryable=False))
+    assert (info.value.status_code, info.value.code) == (400, "invalid-request")
+
+
+def test_real_sdk_closed_session_answer_is_a_definite_rejection_with_one_post(live_sdk_env):
+    transport = ContractTransport(clock=lambda: AFTER_CUTOFF)
+    bridge_type, _ = _real_bridge(transport, clock=lambda: AFTER_CUTOFF)
+    with pytest.raises(TossRejectedError) as info:
+        asyncio.run(bridge_type().submit_order(symbol="AAPL", side="BUY", order_type="MARKET", order_amount="10.00",
+                                               quantity=None, price=None, time_in_force=None,
+                                               client_order_id="late-real-1"))
+    assert info.value.code == "amount-order-outside-regular-hours"
+    assert len(transport.calls) == 1
+
+
+def test_real_sdk_expired_token_is_one_post_and_never_replayed(live_sdk_env):
+    transport = ContractTransport(clock=lambda: IN_SESSION, expired_tokens={"stale-token"})
+    bridge_type, manager = _real_bridge(transport, token="stale-token")
+    with pytest.raises(TossRejectedError) as info:
+        asyncio.run(bridge_type().submit_order(symbol="AAPL", side="SELL", order_type="MARKET", quantity="0.3",
+                                               price=None, time_in_force="DAY", client_order_id="exp-1"))
+    assert info.value.code == "expired-token"
+    assert len(transport.calls) == 1 and manager.calls == 1
+    assert "vendor detail" not in str(info.value)
