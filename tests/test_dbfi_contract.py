@@ -166,3 +166,79 @@ def test_dbfi_integrated_flag_cannot_be_inferred(flag):
     from pykbroker.exceptions import ConfigurationError
     with pytest.raises(ConfigurationError, match="explicit boolean"):
         DBFI(account="fixture", is_integrated=flag)
+
+
+# CSPAQ04800 cancel evidence — field names and OrdTrxPtnCode values from DB증권's own spec
+# (DBsecurities/dbsec-open-api examples/kr_stock_order/kr_stock_inquire_executions.py):
+# OrgOrdNo 원주문번호 · MrcQty 정정취소수량 · OrdTrxPtnCode 0 정상 6 정정확인 8 취소확인 7 정정중 9 취소중.
+def _kr_original(**extra):
+    row = {"OrdNo": 42, "OrgOrdNo": 0, "IsuNo": "A005930", "OrdQty": 3, "AllExecQty": 1,
+           "MrcAbleQty": 0, "AvrExecPrc": "70000", "OrdPrc": "70000", "OrdTrxPtnCode": 0}
+    row.update(extra)
+    return row
+
+
+def _kr_cancel_row(code, qty=2):
+    return {"OrdNo": 43, "OrgOrdNo": 42, "IsuNo": "A005930", "OrdQty": qty, "AllExecQty": 0,
+            "MrcAbleQty": 0, "AvrExecPrc": "0", "OrdPrc": "0", "OrdTrxPtnCode": code}
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        [_kr_original(MrcQty=2), _kr_cancel_row(8)],
+        [_kr_original(MrcQty=2), _kr_cancel_row("8")],
+        [_kr_original(), _kr_cancel_row(8)],
+        [_kr_original(MrcQty=2, OrdTrxPtnCode=8)],
+        [_kr_cancel_row(8), _kr_original(MrcQty="2")],
+    ],
+)
+def test_dbfi_kr_partial_fill_then_confirmed_cancel_is_terminal(dbfi, rows):
+    broker, client, _ = dbfi
+    client.get_transaction_history.return_value = {"rsp_cd": "00000", "Out1": rows}
+    orders = broker.list_orders()
+    assert [o.id for o in orders] == ["42"]  # the cancel order row is folded into its original
+    order = orders[0]
+    assert order.status == "cancelled" and order.filled == 1 and order.remaining == 0 and order.quantity == 3
+
+
+def test_dbfi_kr_unfilled_order_confirmed_cancel_is_cancelled(dbfi):
+    broker, client, _ = dbfi
+    rows = [_kr_original(AllExecQty=0, MrcQty=3), _kr_cancel_row(8, qty=3)]
+    client.get_transaction_history.return_value = {"rsp_cd": "00000", "Out1": rows}
+    order = broker.list_orders()[0]
+    assert order.status == "cancelled" and order.filled == 0
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        [_kr_original(MrcQty=2), _kr_cancel_row(9)],                       # 취소중
+        [_kr_original(MrcQty=2, OrdTrxPtnCode=9)],                         # 취소중 on the order
+        [_kr_original(MrcQty=2, OrdTrxPtnCode=7)],                         # 정정중
+        [_kr_original(MrcQty=2), _kr_cancel_row(8), _kr_cancel_row(9)],    # a second cancel still in flight
+        [_kr_original(MrcQty=2), _kr_cancel_row(None)],                     # unclassified linked row
+        [_kr_original(MrcQty=2)],                                           # no confirmation anywhere
+        [_kr_original()],                                                   # quantities alone
+        [_kr_original(MrcQty=1), _kr_cancel_row(8)],                        # reported cancel ≠ rest
+        [_kr_original(), _kr_cancel_row(8, qty=1)],                         # cancel row ≠ rest
+        [_kr_original(OrdTrxPtnCode=8)],                                    # confirmed but no quantity
+        [_kr_original(MrcAbleQty=1, MrcQty=1), _kr_cancel_row(8, qty=1)],  # rest still cancellable
+        [{k: v for k, v in _kr_original(MrcQty=2).items() if k != "OrdQty"}, _kr_cancel_row(8)],
+    ],
+)
+def test_dbfi_kr_ambiguous_cancel_never_terminal(dbfi, rows):
+    broker, client, _ = dbfi
+    client.get_transaction_history.return_value = {"rsp_cd": "00000", "Out1": rows}
+    order = next(o for o in broker.list_orders() if o.id == "42")
+    assert order.status != "cancelled" and order.status != "filled"
+    assert order.filled == 1
+
+
+def test_dbfi_kr_cancel_row_is_found_on_another_page(dbfi):
+    broker, client, _ = dbfi
+    client.get_transaction_history.return_value = [
+        {"rsp_cd": "00000", "Out1": [_kr_original(MrcQty=2)]},
+        {"rsp_cd": "00000", "Out1": [_kr_cancel_row(8)]},
+    ]
+    assert broker.list_orders()[0].status == "cancelled"
