@@ -238,10 +238,11 @@ class DBFI(BaseBroker):
                 for row in check_response(page, "dbfi")["Out1" if self.market == "KR" else "Out"]
             ]
             kr = self.market == "KR"
-            children = _kr_children(rows) if kr else {}
+            # Both TRs (KR CSPAQ04800 Out1, US CAZCQ00100 Out) link a cancel order to its original by OrgOrdNo.
+            children = _children(rows)
             result = []
             for row in rows:
-                if kr and _is_kr_cancel_row(row):
+                if _is_kr_cancel_row(row) if kr else _is_us_cancel_row(row):
                     # A cancel order is evidence about its original order (OrgOrdNo), not an order of
                     # its own: it is folded into the original row below and never listed by itself.
                     continue
@@ -257,10 +258,12 @@ class DBFI(BaseBroker):
                 # Zero cancellable quantity alone never proves completion.
                 status = "filled" if filled and quantity == filled and remaining == 0 else (
                     "partial" if filled and remaining else "open" if remaining else "unknown")
-                if kr and _kr_rest_cancelled(row, children.get(_kr_code(row["OrdNo"]), []),
-                                             filled, remaining, quantity):
+                kids = children.get(_order_no(row["OrdNo"]), [])
+                if kr and _kr_rest_cancelled(row, kids, filled, remaining, quantity):
                     # Filled N (possibly 0) and the venue confirmed the cancel of the rest.
                     status = "cancelled"
+                if not kr:
+                    status = _us_status(row, kids, children, status, filled, remaining, quantity)
                 fill_price = None
                 if filled:
                     if self.market == "KR":
@@ -368,7 +371,7 @@ _KR_CANCEL_ROW_CODES = frozenset({"8", "9"})
 _KR_IN_FLIGHT = frozenset({"6", "7", "9"})
 
 
-def _kr_code(value: Any) -> str | None:
+def _order_no(value: Any) -> str | None:
     if value is None:
         return None
     text = str(value).strip()
@@ -377,21 +380,22 @@ def _kr_code(value: Any) -> str | None:
     return str(int(text)) if text.isdecimal() else text
 
 
-def _kr_parent(row: dict) -> str | None:
-    parent = _kr_code(row.get("OrgOrdNo"))
-    if parent in (None, "0") or parent == _kr_code(row.get("OrdNo")):
+def _parent(row: dict) -> str | None:
+    """OrgOrdNo 원주문번호 when it names another order; 0, blank or the row's own OrdNo is no link."""
+    parent = _order_no(row.get("OrgOrdNo"))
+    if parent in (None, "0") or parent == _order_no(row.get("OrdNo")):
         return None
     return parent
 
 
 def _is_kr_cancel_row(row: dict) -> bool:
-    return _kr_parent(row) is not None and _kr_code(row.get("OrdTrxPtnCode")) in _KR_CANCEL_ROW_CODES
+    return _parent(row) is not None and _order_no(row.get("OrdTrxPtnCode")) in _KR_CANCEL_ROW_CODES
 
 
-def _kr_children(rows: list) -> dict[str, list]:
+def _children(rows: list) -> dict[str, list]:
     out: dict[str, list] = {}
     for row in rows:
-        parent = _kr_parent(row)
+        parent = _parent(row)
         if parent is not None:
             out.setdefault(parent, []).append(row)
     return out
@@ -406,8 +410,8 @@ def _kr_rest_cancelled(row: dict, children: list, filled: int, remaining: int, q
     """
     if quantity is None or remaining != 0 or filled >= quantity:
         return False
-    own = _kr_code(row.get("OrdTrxPtnCode"))
-    kid_codes = [_kr_code(kid.get("OrdTrxPtnCode")) for kid in children]
+    own = _order_no(row.get("OrdTrxPtnCode"))
+    kid_codes = [_order_no(kid.get("OrdTrxPtnCode")) for kid in children]
     if own in _KR_IN_FLIGHT or any(c != _KR_CANCEL_CONFIRMED for c in kid_codes):
         return False
     if own != _KR_CANCEL_CONFIRMED and not children:
@@ -421,3 +425,83 @@ def _kr_rest_cancelled(row: dict, children: list, filled: int, remaining: int, q
             return False
         reported.append(sum(whole(kid["OrdQty"]) for kid in children))
     return bool(reported) and all(q == rest for q in reported)
+
+
+# DB증권 OpenAPI 해외주식 체결내역조회 CAZCQ00100 (POST /api/v1/trading/overseas-stock/inquiry/transaction-history),
+# Out fields per the vendor's own spec (DBsecurities/dbsec-open-api
+# examples/ov_stock_order/ov_stock_inquire_executions.py; guide api_id=6aca1814-eea1-4e5c-94da-828143c343f2):
+#   OrdNo 주문번호 · OrgOrdNo 원주문번호 · AstkOrdQty 해외주식주문수량 · AstkExecQty 해외주식체결수량 ·
+#   AstkOrdRmqty 해외주식주문잔량 · OrdTrdTpCode 주문거래구분코드 · AstkRjtCode 해외주식거부코드 ·
+#   AstkRjtRsnCnts 해외주식거부사유내용.
+# OrdTrdTpCode values 0 주문(원주문) · 1 정정주문 · 2 취소주문: the order TR CAZCT00100 In
+# (examples/ov_stock_order/ov_stock_order.py) and the IS2 real-time feed Sordtrdtpcode
+# (examples/ov_stock_realtime/ov_stock_realtime_order_execution.py). A US cancel is CAZCT00100 with
+# OrdTrdTpCode 2 and OrgOrdNo = the original, numbered as its own order (Out.OrdNo).
+# AstkOrdStatCode 주문상태코드 and AstkBnsMdfyCode 매매정정코드 have no published value table, so they are never
+# read: the decision rests on quantities ("numbers win"), and without that proof the row stays non-terminal.
+_US_CANCEL = "2"
+_US_LINKED_CODES = frozenset({"1", "2"})
+
+
+def _is_us_cancel_row(row: dict) -> bool:
+    return _parent(row) is not None and _order_no(row.get("OrdTrdTpCode")) == _US_CANCEL
+
+
+def _us_qty(row: dict, key: str) -> int | None:
+    value = row.get(key)
+    return None if value in (None, "") else whole(value)
+
+
+def _us_no_code(value: Any) -> bool:
+    text = "" if value is None else str(value).strip()
+    return not text or set(text) <= {"0"}
+
+
+def _us_status(row: dict, kids: list, by_parent: dict, status: str, filled: int, remaining: int,
+               quantity: int | None) -> str:
+    """Terminal US outcomes proven by CAZCQ00100 numbers; anything unproven keeps the non-terminal reading.
+
+    * filled == AstkOrdQty and AstkOrdRmqty 0 → "filled" (already decided by the caller; numbers win).
+    * rest cancelled → "cancelled" with filled = N (0 for a plain or TTL cancel) — see ``_us_rest_cancelled``.
+    * rejected → "rejected" only for 0 filled, 0 remaining, no linked order, and both a non-zero AstkRjtCode
+      and an AstkRjtRsnCnts reason.
+    A 정정/취소 row that links to no other order (OrgOrdNo 0, blank or its own OrdNo) is never terminal.
+    """
+    if _order_no(row.get("OrdTrdTpCode")) in _US_LINKED_CODES and _parent(row) is None:
+        return "unknown"
+    if status == "filled":
+        return status
+    if _us_rest_cancelled(row, kids, by_parent, filled, remaining, quantity):
+        return "cancelled"
+    if (quantity is not None and filled == 0 and remaining == 0 and not kids
+            and not _us_no_code(row.get("AstkRjtCode")) and str(row.get("AstkRjtRsnCnts") or "").strip()):
+        return "rejected"
+    return status
+
+
+def _us_rest_cancelled(row: dict, kids: list, by_parent: dict, filled: int, remaining: int,
+                       quantity: int | None) -> bool:
+    """True only when the numbers prove the unfilled rest was cancelled: filled + cancelled == ordered, cancelled > 0.
+
+    Needs: AstkOrdRmqty 0 on the original, no reject code on it, and at least one linked row, every one of
+    which is a 취소주문 (OrdTrdTpCode 2) with a positive AstkOrdQty, AstkOrdRmqty 0 (nothing of the cancel still
+    pending), no reject code, no AstkExecQty that disagrees with its AstkOrdQty, and no order linked to it in
+    turn (a cancel of a cancel). The cancelled quantity is the sum of those AstkOrdQty and must equal
+    AstkOrdQty - AstkExecQty of the original. A late fill after the cancel raises AstkExecQty, the sum no longer
+    matches, and the order is no longer proven cancelled (the fill count is always the venue's own total).
+    """
+    if quantity is None or remaining != 0 or filled >= quantity or not kids:
+        return False
+    if not _us_no_code(row.get("AstkRjtCode")):
+        return False
+    cancelled = 0
+    for kid in kids:
+        if _order_no(kid.get("OrdTrdTpCode")) != _US_CANCEL or not _us_no_code(kid.get("AstkRjtCode")):
+            return False
+        if by_parent.get(_order_no(kid.get("OrdNo"))):
+            return False
+        qty, rest, done = (_us_qty(kid, key) for key in ("AstkOrdQty", "AstkOrdRmqty", "AstkExecQty"))
+        if qty is None or qty <= 0 or rest != 0 or (done not in (None, 0) and done != qty):
+            return False
+        cancelled += qty
+    return cancelled == quantity - filled
