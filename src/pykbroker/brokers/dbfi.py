@@ -232,44 +232,58 @@ class DBFI(BaseBroker):
                 kwargs.update(stock_code=symbol or "", query_type="0", won_fcurr_type="2")
             response = client.get_transaction_history(**kwargs)
             pages = response if isinstance(response, list) else [response]
+            rows = [
+                row
+                for page in pages
+                for row in check_response(page, "dbfi")["Out1" if self.market == "KR" else "Out"]
+            ]
+            kr = self.market == "KR"
+            children = _kr_children(rows) if kr else {}
             result = []
-            for page in pages:
-                for row in check_response(page, "dbfi")["Out1" if self.market == "KR" else "Out"]:
-                    code = self._symbol(row["IsuNo"] if self.market == "KR" else row["SymCode"], self.market)
-                    if symbol is not None and code != symbol:
-                        continue
-                    filled = whole(row["AllExecQty"] if self.market == "KR" else row["AstkExecQty"])
-                    remaining = whole(row["MrcAbleQty"] if self.market == "KR" else row["AstkOrdRmqty"])
-                    quantity_key = "OrdQty" if self.market == "KR" else "AstkOrdQty"
-                    quantity = whole(row[quantity_key]) if quantity_key in row else None
-                    if quantity is not None and (filled > quantity or remaining > quantity - filled):
-                        raise InvalidResponseError("DBFI execution quantities exceed the order")
-                    # Zero cancellable quantity alone never proves completion.
-                    status = "filled" if filled and quantity == filled and remaining == 0 else (
-                        "partial" if filled and remaining else "open" if remaining else "unknown")
-                    fill_price = None
-                    if filled:
-                        if self.market == "KR":
-                            fill_price = optional_price(row.get("AvrExecPrc"))
-                        elif row.get("AstkExecAmt") not in (None, ""):
-                            if row.get("CrcyCode") != "USD":
-                                raise InvalidResponseError("DBFI US execution currency is not USD")
-                            # CAZCQ00100 aggregate mode: native execution amount / executed shares.
-                            fill_price = decimal(row["AstkExecAmt"]) / filled
-                        if fill_price is not None and fill_price <= 0:
-                            fill_price = None
-                    result.append(
-                        Order(
-                            id=str(row["OrdNo"]),
-                            symbol=code,
-                            quantity=quantity,
-                            fill_price=fill_price,
-                            filled=filled,
-                            remaining=remaining,
-                            status=status,
-                            market=self.market,
-                        )
+            for row in rows:
+                if kr and _is_kr_cancel_row(row):
+                    # A cancel order is evidence about its original order (OrgOrdNo), not an order of
+                    # its own: it is folded into the original row below and never listed by itself.
+                    continue
+                code = self._symbol(row["IsuNo"] if self.market == "KR" else row["SymCode"], self.market)
+                if symbol is not None and code != symbol:
+                    continue
+                filled = whole(row["AllExecQty"] if self.market == "KR" else row["AstkExecQty"])
+                remaining = whole(row["MrcAbleQty"] if self.market == "KR" else row["AstkOrdRmqty"])
+                quantity_key = "OrdQty" if self.market == "KR" else "AstkOrdQty"
+                quantity = whole(row[quantity_key]) if quantity_key in row else None
+                if quantity is not None and (filled > quantity or remaining > quantity - filled):
+                    raise InvalidResponseError("DBFI execution quantities exceed the order")
+                # Zero cancellable quantity alone never proves completion.
+                status = "filled" if filled and quantity == filled and remaining == 0 else (
+                    "partial" if filled and remaining else "open" if remaining else "unknown")
+                if kr and _kr_rest_cancelled(row, children.get(_kr_code(row["OrdNo"]), []),
+                                             filled, remaining, quantity):
+                    # Filled N (possibly 0) and the venue confirmed the cancel of the rest.
+                    status = "cancelled"
+                fill_price = None
+                if filled:
+                    if self.market == "KR":
+                        fill_price = optional_price(row.get("AvrExecPrc"))
+                    elif row.get("AstkExecAmt") not in (None, ""):
+                        if row.get("CrcyCode") != "USD":
+                            raise InvalidResponseError("DBFI US execution currency is not USD")
+                        # CAZCQ00100 aggregate mode: native execution amount / executed shares.
+                        fill_price = decimal(row["AstkExecAmt"]) / filled
+                    if fill_price is not None and fill_price <= 0:
+                        fill_price = None
+                result.append(
+                    Order(
+                        id=str(row["OrdNo"]),
+                        symbol=code,
+                        quantity=quantity,
+                        fill_price=fill_price,
+                        filled=filled,
+                        remaining=remaining,
+                        status=status,
+                        market=self.market,
                     )
+                )
             return result
 
         return self._call(read)
@@ -341,3 +355,69 @@ class DBFI(BaseBroker):
         if self._owns_client:
             self._client = None
         super().close()
+
+
+# DB증권 OpenAPI 체결/미체결조회 CSPAQ04800 (POST /api/v1/trading/kr-stock/inquiry/transaction-history),
+# Out1 fields per the vendor's own spec (DBsecurities/dbsec-open-api
+# examples/kr_stock_order/kr_stock_inquire_executions.py; guide openapi.dbsec.co.kr api_id=815bbd65-...):
+#   OrgOrdNo 원주문번호 · OrdQty 주문수량 · AllExecQty 전체체결수량 · MrcAbleQty 정정취소가능수량 ·
+#   MrcQty 정정취소수량 · OrdTrxPtnCode 주문처리유형코드 0:정상 6:정정확인 8:취소확인 7:정정중 9:취소중.
+# The cancel TR CSPAT00800 numbers the cancel as its own order (Out.OrdNo) with PrntOrdNo = the original.
+_KR_CANCEL_CONFIRMED = "8"
+_KR_CANCEL_ROW_CODES = frozenset({"8", "9"})
+_KR_IN_FLIGHT = frozenset({"6", "7", "9"})
+
+
+def _kr_code(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return str(int(text)) if text.isdecimal() else text
+
+
+def _kr_parent(row: dict) -> str | None:
+    parent = _kr_code(row.get("OrgOrdNo"))
+    if parent in (None, "0") or parent == _kr_code(row.get("OrdNo")):
+        return None
+    return parent
+
+
+def _is_kr_cancel_row(row: dict) -> bool:
+    return _kr_parent(row) is not None and _kr_code(row.get("OrdTrxPtnCode")) in _KR_CANCEL_ROW_CODES
+
+
+def _kr_children(rows: list) -> dict[str, list]:
+    out: dict[str, list] = {}
+    for row in rows:
+        parent = _kr_parent(row)
+        if parent is not None:
+            out.setdefault(parent, []).append(row)
+    return out
+
+
+def _kr_rest_cancelled(row: dict, children: list, filled: int, remaining: int, quantity: int | None) -> bool:
+    """True only when CSPAQ04800 itself proves the unfilled rest was cancelled; anything else is not proof.
+
+    Needs: nothing left to cancel (MrcAbleQty 0), a 취소확인 (code 8) on the order or on a cancel row linked by
+    OrgOrdNo, no 정정·취소 still in flight (6/7/9) or unclassified linked row, and the cancelled quantity the venue
+    reports (MrcQty on the order and/or the confirmed cancel rows' OrdQty) equal to OrdQty - AllExecQty.
+    """
+    if quantity is None or remaining != 0 or filled >= quantity:
+        return False
+    own = _kr_code(row.get("OrdTrxPtnCode"))
+    kid_codes = [_kr_code(kid.get("OrdTrxPtnCode")) for kid in children]
+    if own in _KR_IN_FLIGHT or any(c != _KR_CANCEL_CONFIRMED for c in kid_codes):
+        return False
+    if own != _KR_CANCEL_CONFIRMED and not children:
+        return False
+    rest = quantity - filled
+    reported = []
+    if row.get("MrcQty") not in (None, "") and whole(row["MrcQty"]) > 0:
+        reported.append(whole(row["MrcQty"]))
+    if children:
+        if any(kid.get("OrdQty") in (None, "") for kid in children):
+            return False
+        reported.append(sum(whole(kid["OrdQty"]) for kid in children))
+    return bool(reported) and all(q == rest for q in reported)
