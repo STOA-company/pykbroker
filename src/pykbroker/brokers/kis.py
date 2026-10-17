@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from pykbroker.exceptions import ConfigurationError, InvalidResponseError, MissingDependencyError, NotSupportedError
+from pykbroker.exceptions import ConfigurationError, FractionalNotSupportedError, InvalidResponseError, MissingDependencyError, NotSupportedError
 from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
 from pykbroker.rules.kr import equity_rules
 from pykbroker.safety.gate import OrderSafety
@@ -570,6 +570,9 @@ class KIS(BaseBroker):
             _SINGLE_ATTEMPT.active = previous
 
     def _place_order(self, request: OrderRequest) -> Order:
+        if request.fractional:
+            # KIS has no fractional-share order TR (overseas_stock order(): ORD_QTY whole). Refuse; never int().
+            raise FractionalNotSupportedError("KIS orders are whole shares")
         scope, api = self._connect()
         symbol = self._symbol(request.symbol, request.market)
         if self.market == "KR":
