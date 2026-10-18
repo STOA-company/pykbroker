@@ -48,6 +48,52 @@ def whole(value: Any) -> int:
     return int(number)
 
 
+def _same_row(left: Any, right: Any) -> bool:
+    if isinstance(left, Mapping) and isinstance(right, Mapping):
+        return dict(left) == dict(right)
+    return left == right
+
+
+class PageRows:
+    """One holdings list read across vendor pages, each vendor row counted once.
+
+    ``key`` names the fields that identify one position row in that vendor's documented response
+    (symbol plus the balance-type / venue / loan fields it carries). A row on a later page whose key
+    was already listed on an earlier page is either the identical row again (overlapping or repeated
+    page: skipped, so 2 held never reads as 4) or a different row for the same position (the pages
+    disagree: refused, so the caller reads «holdings unknown» and sends nothing). Rows within one
+    page are kept exactly as the vendor sent them. A duplicate is only ever the identical vendor
+    row, never a guess from equal quantities.
+    """
+
+    def __init__(self, key: tuple[str, ...], vendor: str) -> None:
+        self._key = tuple(key)
+        self._vendor = vendor
+        self._earlier: dict[tuple[Any, ...], list[Any]] = {}
+        self.rows: list[Any] = []
+
+    def add(self, page: Any) -> list[Any]:
+        """Rows of this page not already listed on an earlier page (also kept in ``rows``)."""
+        fresh: list[Any] = []
+        current: dict[tuple[Any, ...], list[Any]] = {}
+        for row in page:
+            identity = tuple(field(row, name) for name in self._key)
+            earlier = self._earlier.get(identity)
+            if earlier is not None:
+                if any(_same_row(row, seen) for seen in earlier):
+                    continue
+                raise InvalidResponseError(
+                    f"{self._vendor} holdings pages list one position twice with different values; "
+                    "refusing an unverifiable total"
+                )
+            current.setdefault(identity, []).append(row)
+            fresh.append(row)
+        for identity, rows in current.items():
+            self._earlier.setdefault(identity, []).extend(rows)
+        self.rows.extend(fresh)
+        return fresh
+
+
 def optional_price(value: Any) -> Decimal | None:
     if value in (None, "", "0", 0):
         return None

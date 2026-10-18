@@ -16,7 +16,7 @@ from collections.abc import Mapping
 from datetime import date
 
 from pykbroker._http import urlopen
-from pykbroker.brokers._common import BaseBroker, decimal, optional_price, whole
+from pykbroker.brokers._common import BaseBroker, PageRows, decimal, optional_price, whole
 from pykbroker.exceptions import (
     BrokerRejectedError,
     ConfigurationError,
@@ -69,6 +69,11 @@ LS_US_VENUES = {"NYSE": "81", "NASDAQ": "82"}
 # Holdings continuation (tr_cont/tr_cont_key headers, t0424 cts_expcode): a list that does not
 # end within this many pages is refused, never cut short.
 LS_MAX_PAGES = 20
+# Official row identity: t0424OutBlock1 symbol + 잔고구분 + 대출일자 + 만기일자;
+# COSOQ00201OutBlock4 symbol + currency + 잔고구분 + market + loan fields.
+LS_KR_ROW_KEY = ("expcode", "jangb", "loandt", "lastdt")
+LS_US_ROW_KEY = ("ShtnIsuNo", "IsuNo", "CrcyCode", "AstkBalTpCode", "FcurrMktCode", "LoanDt",
+                 "LoanDtlClssCode", "DueDt")
 LS_SPEC_VERIFIED = False  # Global veto only; True never enables live orders.
 # Official REST address; mock/real account binding is still unverified.
 LS_API_BASE_URL = "https://openapi.ls-sec.co.kr:8080"
@@ -455,14 +460,14 @@ class LS(RestBroker):
 
         def read():
             base = {key: self._code(key) for key in ("prcgb", "chegb", "dangb", "charge")}
-            rows, cursor, seen = [], "", set()
+            pages, cursor, seen = PageRows(LS_KR_ROW_KEY, "LS KR"), "", set()
             for index in range(LS_MAX_PAGES):
                 request = {"t0424InBlock": {**base, "cts_expcode": cursor}}
                 if index == 0:
                     response = self._response("/stock/accno", "t0424", request)
                 else:
                     response = self._response("/stock/accno", "t0424", request, cont_key=self._kr_cont_key())
-                rows.extend(self._rows(response, "t0424OutBlock1"))
+                pages.add(self._rows(response, "t0424OutBlock1"))
                 cursor = self._page_cursor(response, "t0424OutBlock", "cts_expcode")
                 if not cursor:
                     break
@@ -481,7 +486,7 @@ class LS(RestBroker):
                     last=decimal(row["price"]),
                     market_value=decimal(row["appamt"]),
                 )
-                for row in rows
+                for row in pages.rows
             ]
 
         return self._call(read)
@@ -633,17 +638,17 @@ class LS(RestBroker):
         raise InvalidResponseError("LS US continuation headers do not show where the list ends")
 
     def _us_holdings(self):
-        rows, seen, key = [], set(), None
+        pages, seen, key = PageRows(LS_US_ROW_KEY, "LS US"), set(), None
         for index in range(LS_MAX_PAGES):
             request = dict(self._US_BALANCE_REQUEST)
             if index == 0:
                 response = self._response("/overseas-stock/accno", "COSOQ00201", request)
             else:
                 response = self._response("/overseas-stock/accno", "COSOQ00201", request, cont_key=key)
-            rows.extend(self._us_rows(response, "COSOQ00201OutBlock4"))
+            pages.add(self._us_rows(response, "COSOQ00201OutBlock4"))
             key = self._us_next_key(seen)
             if key is None:
-                return rows
+                return pages.rows
         raise InvalidResponseError("LS US holdings exceeded the page limit; refusing a truncated result")
 
     def _us_orders(self, symbol):
