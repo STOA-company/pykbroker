@@ -451,39 +451,98 @@ class Toss(BaseBroker):
 
         return self._call(read)
 
+    def _holding_groups(self, items: list[Mapping[str, Any]]) -> dict[str, list[Mapping[str, Any]]]:
+        """This market's holdings rows by symbol — a row repeated verbatim counts once.
+
+        Toss documents holdings as one entry per held symbol (Asset «종목별 보유 수량», HoldingsItem has no
+        account/lot/type field) and the sellable quantity per symbol only (/api/v1/sellable-quantity). The
+        documented identity of a row is (symbol, marketCountry, currency). Review 527c P2-T / 535 P1:
+        - a row repeated verbatim (every field equal) is one holding listed twice → kept once;
+        - rows of one identity that differ in any field (quantity, price, average cost, ...) are kept as
+          separate rows like another currency: the symbol's one vendor sellable answer is what the sell
+          check uses, the rows only bound it (`_sellable_rows`: answer above the rows' sum → InvalidResponseError);
+        - the same symbol in both markets cannot be split, because the sellable read takes the symbol
+          only → InvalidResponseError (trader: holdings_unknown, D814);
+        - distinct identities of one symbol (another currency) are kept as separate rows and share the
+          symbol's one sellable answer (`_sellable_rows`), never one full answer per row.
+        Never de-duplicated or merged on quantity.
+        """
+        groups: dict[str, list[Mapping[str, Any]]] = {}
+        seen: dict[tuple[Any, ...], list[Mapping[str, Any]]] = {}
+        other_market: set[str] = set()
+        for row in items:
+            if row["marketCountry"] != self.market:
+                other_market.add(row["symbol"])
+                continue
+            key = (row["symbol"], row["marketCountry"], row.get("currency"))
+            if any(dict(prev) == dict(row) for prev in seen.get(key, ())):
+                continue
+            seen.setdefault(key, []).append(row)
+            groups.setdefault(row["symbol"], []).append(row)
+        if other_market & groups.keys():
+            raise InvalidResponseError("Toss holdings list one symbol in two markets")
+        return groups
+
+    def _sellable_rows(self, symbol: str, rows: list[Mapping[str, Any]]) -> list[tuple[Mapping[str, Any], Decimal, Decimal]]:
+        """[(row, exact quantity, exact sellable)] — the symbol's sellable answer is read once and spread over
+        its distinct rows in order (each row at most its own quantity), so the rows sum to the vendor answer."""
+        answer = self._run("get_sellable_quantity", symbol)["sellableQuantity"]
+        if self.market == "US":
+            remaining = decimal(answer)
+            quantities = [decimal(row["quantity"]) for row in rows]
+        else:
+            # 국내(KR)는 스펙상 정수라 소수 수량은 계속 오류로 둔다(스펙 위반 응답을 숨기지 않음).
+            remaining = Decimal(whole(answer))
+            quantities = [Decimal(whole(row["quantity"])) for row in rows]
+        if remaining < 0 or remaining > sum(quantities, Decimal(0)):
+            raise InvalidResponseError("Toss sellable quantity exceeds the holding")
+        result = []
+        for row, quantity in zip(rows, quantities):
+            part = min(quantity, remaining)
+            remaining -= part
+            result.append((row, quantity, part))
+        return result
+
+    def sellable_quantity(self, symbol: str) -> Decimal:
+        """Vendor sellable quantity of one holding (0 when not held), for pre-trade sell checks.
+
+        Exact (US fractional, e.g. 2.57). Read from the per-symbol sellable answer once — never summed
+        per holdings row. A self-contradicting holdings answer raises (see `_holding_groups`).
+        """
+        code = self._symbol(symbol, self.market)
+
+        def read():
+            rows = self._holding_groups(self._run("get_positions")["items"]).get(code)
+            if not rows:
+                return Decimal(0)
+            return sum((part for _, _, part in self._sellable_rows(code, rows)), Decimal(0))
+
+        return self._call(read)
+
     def get_positions(self) -> list[Position]:
         def read():
             result = []
-            for row in self._run("get_positions")["items"]:
-                if row["marketCountry"] != self.market:
-                    continue
-                sellable = self._run("get_sellable_quantity", row["symbol"])
-                # 토스 미국 소수점 주식(예: "0.3"): 정확한 수량은 *_exact 에 두고 quantity/sellable 은
-                # 내림한 정수 주식으로 보고한다(벤더는 소수 매도를 MARKET 만 받고, 정수 주문 경로는 잔량을 팔지 않는다).
-                # 국내(KR)는 스펙상 정수라 소수 수량은 계속 오류로 둔다(스펙 위반 응답을 숨기지 않음).
-                if self.market == "US":
-                    exact_qty = decimal(row["quantity"])
-                    exact_sellable = decimal(sellable["sellableQuantity"])
+            for symbol, rows in self._holding_groups(self._run("get_positions")["items"]).items():
+                for row, exact_qty, exact_sellable in self._sellable_rows(symbol, rows):
+                    # 토스 미국 소수점 주식(예: "0.3"): 정확한 수량은 *_exact 에 두고 quantity/sellable 은
+                    # 내림한 정수 주식으로 보고한다(벤더는 소수 매도를 MARKET 만 받고, 정수 주문 경로는 잔량을 팔지 않는다).
                     whole_qty = int(exact_qty.to_integral_value(rounding=ROUND_FLOOR))
                     whole_sellable = int(exact_sellable.to_integral_value(rounding=ROUND_FLOOR))
-                else:
-                    exact_qty = exact_sellable = None
-                    whole_qty = whole(row["quantity"])
-                    whole_sellable = whole(sellable["sellableQuantity"])
-                result.append(
-                    Position(
-                        symbol=row["symbol"],
-                        name=row["name"],
-                        market=self.market,
-                        quantity=whole_qty,
-                        sellable=whole_sellable,
-                        quantity_exact=exact_qty,
-                        sellable_exact=exact_sellable,
-                        average_price=decimal(row["averagePurchasePrice"]),
-                        last=decimal(row["lastPrice"]),
-                        market_value=decimal(row["marketValue"]["amount"]),
+                    us = self.market == "US"
+                    result.append(
+                        Position(
+                            symbol=row["symbol"],
+                            name=row["name"],
+                            market=self.market,
+                            quantity=whole_qty,
+                            sellable=whole_sellable,
+                            quantity_exact=exact_qty if us else None,
+                            sellable_exact=exact_sellable if us else None,
+                            average_price=decimal(row["averagePurchasePrice"]),
+                            last=decimal(row["lastPrice"]),
+                            market_value=decimal(row["marketValue"]["amount"]),
+                        )
                     )
-                )
             return result
 
         return self._call(read)

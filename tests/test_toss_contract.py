@@ -146,6 +146,118 @@ def test_toss_us_sellable_above_exact_holding_stays_invalid_response(live_safety
         broker.get_positions()
 
 
+def _row(symbol, quantity, country="US", **over):
+    row = {"symbol": symbol, "name": "Fixture", "marketCountry": country,
+           "currency": "USD" if country == "US" else "KRW", "quantity": quantity,
+           "averagePurchasePrice": "100", "lastPrice": "100", "marketValue": {"amount": "0"}}
+    row.update(over)
+    return row
+
+
+def _rows_sdk(rows, sellable):
+    class SDK(LoopSDK):
+        sellable_calls = []
+
+        async def get_positions(self):
+            return {"marketValue": {"amount": {"krw": "0", "usd": "0"}}, "items": [dict(r) for r in rows]}
+
+        async def get_sellable_quantity(self, symbol):
+            SDK.sellable_calls.append(symbol)
+            return {"sellableQuantity": sellable[symbol]}
+
+    return SDK
+
+
+def _toss(SDK, live_safety, market="US"):
+    kwargs = dict(allow_us_pilot=True) if market == "US" else {}
+    return Toss(account="fixture", account_seq=1, sdk_factory=SDK, safety=live_safety, market=market,
+                sdk_dry_run=False, **kwargs)
+
+
+# 10-18 검수 527c P2-T: 한 응답에 같은 토스 종목이 두 줄이면 줄마다 종목 전체의 매도 가능 수량이 붙어 2주가 4주로 읽혔다.
+# 토스 문서상 행 식별은 (symbol, marketCountry, currency)이고 매도 가능 수량은 심볼 하나로 읽는다(벤더 답이 기준).
+@pytest.mark.parametrize("market,rows,answer,symbol,expected", [
+    ("US", [_row("AAPL", "2"), _row("AAPL", "2")], "2", "AAPL", Decimal("2")),             # 같은 줄 반복 → 한 번
+    ("US", [_row("AAPL", "2.57"), _row("AAPL", "2.57")], "2.57", "AAPL", Decimal("2.57")),  # 소수 반복
+    ("KR", [_row("005930", "2", country="KR"), _row("005930", "2", country="KR")], "2", "005930", Decimal("2")),
+    ("US", [_row("AAPL", "2"), _row("AAPL", "2", currency="KRW")], "2", "AAPL", Decimal("2")),  # 다른 통화 줄: 벤더 답 한 번
+    ("US", [_row("AAPL", "2"), _row("MSFT", "4"), _row("005930", "7", country="KR")], "2", "AAPL", Decimal("2")),
+    ("US", [_row("MSFT", "4")], "0", "AAPL", Decimal("0")),                                 # 미보유 → 0
+])
+def test_toss_sellable_quantity_reads_the_vendor_answer_once(live_safety, market, rows, answer, symbol, expected):
+    SDK = _rows_sdk(rows, {symbol: answer})
+    with _toss(SDK, live_safety, market) as broker:
+        held = broker.sellable_quantity(symbol)
+    assert held == expected and isinstance(held, Decimal)
+    assert SDK.sellable_calls == ([symbol] if expected else [])
+
+
+def test_toss_repeated_row_is_one_position_with_the_vendor_sellable(live_safety):
+    SDK = _rows_sdk([_row("AAPL", "2"), _row("AAPL", "2"), _row("MSFT", "2.57")], {"AAPL": "2", "MSFT": "2.57"})
+    with _toss(SDK, live_safety) as broker:
+        positions = broker.get_positions()
+    assert [(p.symbol, p.sellable_exact) for p in positions] == [("AAPL", Decimal("2")), ("MSFT", Decimal("2.57"))]
+    assert sorted(SDK.sellable_calls) == ["AAPL", "MSFT"]
+
+
+def test_toss_distinct_currency_rows_share_one_sellable_answer(live_safety):
+    # 같은 종목·다른 통화(식별이 다른 두 줄)는 따로 두되, 매도 가능 수량은 벤더 답 하나를 나눠 갖는다(합 = 답).
+    SDK = _rows_sdk([_row("AAPL", "2"), _row("AAPL", "2", currency="KRW")], {"AAPL": "3"})
+    with _toss(SDK, live_safety) as broker:
+        positions = broker.get_positions()
+    assert [p.sellable_exact for p in positions] == [Decimal("2"), Decimal("1")]
+    assert sum(p.sellable_exact for p in positions) == Decimal("3")
+    assert SDK.sellable_calls == ["AAPL"]
+
+
+@pytest.mark.parametrize("market,rows,answer,expected", [
+    # 같은 식별·값만 다른 줄(수량·시세·평단): 줄을 어떻게 읽어도 벤더 답 한 번으로 판정한다(검수 535 P1).
+    ("US", [_row("AAPL", "2"), _row("AAPL", "5")], "2", Decimal("2")),
+    ("US", [_row("AAPL", "2"), _row("AAPL", "2", lastPrice="101")], "2", Decimal("2")),
+    ("US", [_row("AAPL", "2"), _row("AAPL", "2", averagePurchasePrice="150.00")], "4", Decimal("4")),
+    ("US", [_row("AAPL", "2.57"), _row("AAPL", "2.5")], "2.57", Decimal("2.57")),
+    ("KR", [_row("005930", "2", country="KR"), _row("005930", "3", country="KR")], "2", Decimal("2")),
+])
+def test_toss_rows_differing_only_in_values_use_the_vendor_answer(live_safety, market, rows, answer, expected):
+    symbol = rows[-1]["symbol"]
+    SDK = _rows_sdk(rows, {symbol: answer})
+    with _toss(SDK, live_safety, market) as broker:
+        assert broker.sellable_quantity(symbol) == expected
+        positions = broker.get_positions()
+    assert sum(p.sellable_exact if p.sellable_exact is not None else Decimal(p.sellable) for p in positions) == expected
+    assert SDK.sellable_calls == [symbol, symbol]  # 각 호출이 벤더 답을 한 번씩만
+
+
+@pytest.mark.parametrize("market,rows", [
+    ("US", [_row("AAPL", "2", country="KR"), _row("AAPL", "2")]),      # 두 시장의 같은 심볼(답을 나눌 수 없음)
+])
+def test_toss_contradicting_rows_are_unknown(live_safety, market, rows):
+    symbol = rows[-1]["symbol"]
+    SDK = _rows_sdk(rows, {symbol: "2"})
+    with _toss(SDK, live_safety, market) as broker:
+        with pytest.raises(InvalidResponseError):
+            broker.sellable_quantity(symbol)
+        with pytest.raises(InvalidResponseError):
+            broker.get_positions()
+    assert SDK.sellable_calls == []  # 모순 응답에서는 매도 가능 수량을 읽기 전에 멈춘다
+
+
+@pytest.mark.parametrize("rows,answer", [
+    ([_row("AAPL", "2"), _row("AAPL", "2")], "4"),                       # 같은 줄 2+2 에 벤더 답 4: 한 보유를 넘음
+    ([_row("AAPL", "2"), _row("AAPL", "5")], "7.5"),                     # 값이 달라도 답이 줄 합을 넘으면 모름
+])
+def test_toss_vendor_answer_above_the_rows_is_unknown(live_safety, rows, answer):
+    SDK = _rows_sdk(rows, {"AAPL": answer})
+    with _toss(SDK, live_safety) as broker, pytest.raises(InvalidResponseError):
+        broker.sellable_quantity("AAPL")
+
+
+def test_toss_sellable_answer_above_the_holding_is_unknown(live_safety):
+    SDK = _rows_sdk([_row("AAPL", "2"), _row("AAPL", "2")], {"AAPL": "2.1"})
+    with _toss(SDK, live_safety) as broker, pytest.raises(InvalidResponseError):
+        broker.sellable_quantity("AAPL")
+
+
 def test_toss_kr_whole_quantity_has_no_exact(live_safety):
     broker = Toss(account="fixture", account_seq=1, sdk_factory=LoopSDK, safety=live_safety, sdk_dry_run=False)
     pos = broker.get_positions()[0]
