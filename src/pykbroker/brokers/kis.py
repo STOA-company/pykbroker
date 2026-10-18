@@ -16,7 +16,7 @@ from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderR
 from pykbroker.rules.kr import equity_rules
 from pykbroker.safety.gate import OrderSafety
 
-from ._common import BaseBroker, check_response, decimal, field, optional_price, whole
+from ._common import BaseBroker, PageRows, check_response, decimal, field, optional_price, whole
 
 # KIS 국내주식 현재가 시세 output — two independent halt signals, both on the price row
 # (_pykis/scope/stock/api/response/price.py:4 iscd_stat_cls_code, :16 temp_stop_yn).
@@ -121,6 +121,8 @@ def _ledger_status(cancelled: Any, filled: int, remaining: int) -> str:
 
 # Official continuation: page count is unstated, so a list that does not end within this many pages is refused.
 KIS_MAX_PAGES = 20
+# CTRP6504R output1 row identity: product, exchange, product type, currency, loan date.
+KIS_US_ROW_KEY = ("pdno", "ovrs_excg_cd", "prdt_type_cd", "buy_crcy_cd", "loan_dt")
 
 
 def _kis_more(flag: Any) -> bool:
@@ -398,16 +400,17 @@ class KIS(BaseBroker):
         Response header tr_cont F/M means more rows follow: the same request is repeated with the
         request header tr_cont=N. D/E (or no flag) ends the list. A list that does not end within
         KIS_MAX_PAGES is refused, never cut short: a missing later page would read a held symbol as 0.
+        A row repeated on a later page counts once; a conflicting repeat is refused (PageRows).
         """
         raw = api.get_balances(kis_account=scope, NATN_CD="840", TR_MKET_CD="00")
-        rows: list[Any] = []
+        rows = PageRows(KIS_US_ROW_KEY, "KIS US")
         for page in range(1, KIS_MAX_PAGES + 1):
             block = check_response(raw, "kis")["output1"]
             if not isinstance(block, list):
                 raise InvalidResponseError("KIS US holdings block missing")
-            rows.extend(block)
+            rows.add(block)
             if not _kis_more(field(raw, "tr_cont")):
-                return rows
+                return rows.rows
             if page < KIS_MAX_PAGES:
                 raw = self._us_present_balance_next(scope)
         raise InvalidResponseError("KIS US holdings exceeded the page limit; refusing a truncated result")
