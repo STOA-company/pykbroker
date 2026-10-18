@@ -168,38 +168,70 @@ def _rows_sdk(rows, sellable):
     return SDK
 
 
-# 10-18 검수 527c P2-T: 한 응답에 같은 토스 종목이 두 줄이면 줄마다 종목 전체의 매도 가능 수량이 붙어 2주가 4주로 읽혔다.
-# 토스 문서상 행을 가르는 칸은 symbol·marketCountry·currency 뿐이고 매도 가능 수량은 심볼로만 읽으므로, 같은 심볼이
-# 두 번 오면 같든 다르든 «모름»(InvalidResponseError) — 합산·수량 기준 중복 제거 없음.
-@pytest.mark.parametrize("market,rows,sellable", [
-    ("US", [_row("AAPL", "2"), _row("AAPL", "2")], {"AAPL": "2"}),                     # 완전히 같은 두 줄
-    ("US", [_row("AAPL", "2"), _row("AAPL", "5")], {"AAPL": "2"}),                     # 수량이 다른 두 줄(충돌)
-    ("US", [_row("AAPL", "2"), _row("AAPL", "2", lastPrice="101")], {"AAPL": "2"}),    # 시세만 다른 두 줄
-    ("US", [_row("AAPL", "2.57"), _row("AAPL", "2.57")], {"AAPL": "2.57"}),            # 소수 2.57 반복
-    ("US", [_row("AAPL", "2", currency="KRW"), _row("AAPL", "2")], {"AAPL": "2"}),     # 통화만 다른 두 줄
-    ("US", [_row("AAPL", "2", country="KR"), _row("AAPL", "2")], {"AAPL": "2"}),       # 다른 시장 같은 심볼
-    ("KR", [_row("005930", "2", country="KR"), _row("005930", "2", country="KR")], {"005930": "2"}),
-])
-def test_toss_same_symbol_on_two_rows_is_unknown_not_summed(live_safety, market, rows, sellable):
-    SDK = _rows_sdk(rows, sellable)
+def _toss(SDK, live_safety, market="US"):
     kwargs = dict(allow_us_pilot=True) if market == "US" else {}
-    with Toss(account="fixture", account_seq=1, sdk_factory=SDK, safety=live_safety, market=market,
-              sdk_dry_run=False, **kwargs) as broker, pytest.raises(InvalidResponseError):
-        broker.get_positions()
+    return Toss(account="fixture", account_seq=1, sdk_factory=SDK, safety=live_safety, market=market,
+                sdk_dry_run=False, **kwargs)
+
+
+# 10-18 검수 527c P2-T: 한 응답에 같은 토스 종목이 두 줄이면 줄마다 종목 전체의 매도 가능 수량이 붙어 2주가 4주로 읽혔다.
+# 토스 문서상 행 식별은 (symbol, marketCountry, currency)이고 매도 가능 수량은 심볼 하나로 읽는다(벤더 답이 기준).
+@pytest.mark.parametrize("market,rows,answer,symbol,expected", [
+    ("US", [_row("AAPL", "2"), _row("AAPL", "2")], "2", "AAPL", Decimal("2")),             # 같은 줄 반복 → 한 번
+    ("US", [_row("AAPL", "2.57"), _row("AAPL", "2.57")], "2.57", "AAPL", Decimal("2.57")),  # 소수 반복
+    ("KR", [_row("005930", "2", country="KR"), _row("005930", "2", country="KR")], "2", "005930", Decimal("2")),
+    ("US", [_row("AAPL", "2"), _row("AAPL", "2", currency="KRW")], "2", "AAPL", Decimal("2")),  # 다른 통화 줄: 벤더 답 한 번
+    ("US", [_row("AAPL", "2"), _row("MSFT", "4"), _row("005930", "7", country="KR")], "2", "AAPL", Decimal("2")),
+    ("US", [_row("MSFT", "4")], "0", "AAPL", Decimal("0")),                                 # 미보유 → 0
+])
+def test_toss_sellable_quantity_reads_the_vendor_answer_once(live_safety, market, rows, answer, symbol, expected):
+    SDK = _rows_sdk(rows, {symbol: answer})
+    with _toss(SDK, live_safety, market) as broker:
+        held = broker.sellable_quantity(symbol)
+    assert held == expected and isinstance(held, Decimal)
+    assert SDK.sellable_calls == ([symbol] if expected else [])
+
+
+def test_toss_repeated_row_is_one_position_with_the_vendor_sellable(live_safety):
+    SDK = _rows_sdk([_row("AAPL", "2"), _row("AAPL", "2"), _row("MSFT", "2.57")], {"AAPL": "2", "MSFT": "2.57"})
+    with _toss(SDK, live_safety) as broker:
+        positions = broker.get_positions()
+    assert [(p.symbol, p.sellable_exact) for p in positions] == [("AAPL", Decimal("2")), ("MSFT", Decimal("2.57"))]
+    assert sorted(SDK.sellable_calls) == ["AAPL", "MSFT"]
+
+
+def test_toss_distinct_currency_rows_share_one_sellable_answer(live_safety):
+    # 같은 종목·다른 통화(식별이 다른 두 줄)는 따로 두되, 매도 가능 수량은 벤더 답 하나를 나눠 갖는다(합 = 답).
+    SDK = _rows_sdk([_row("AAPL", "2"), _row("AAPL", "2", currency="KRW")], {"AAPL": "3"})
+    with _toss(SDK, live_safety) as broker:
+        positions = broker.get_positions()
+    assert [p.sellable_exact for p in positions] == [Decimal("2"), Decimal("1")]
+    assert sum(p.sellable_exact for p in positions) == Decimal("3")
+    assert SDK.sellable_calls == ["AAPL"]
+
+
+@pytest.mark.parametrize("market,rows", [
+    ("US", [_row("AAPL", "2"), _row("AAPL", "5")]),                    # 같은 식별·수량이 다름
+    ("US", [_row("AAPL", "2"), _row("AAPL", "2", lastPrice="101")]),   # 같은 식별·시세가 다름
+    ("US", [_row("AAPL", "2.57"), _row("AAPL", "2.5")]),               # 소수 충돌
+    ("US", [_row("AAPL", "2", country="KR"), _row("AAPL", "2")]),      # 두 시장의 같은 심볼(답을 나눌 수 없음)
+    ("KR", [_row("005930", "2", country="KR"), _row("005930", "3", country="KR")]),
+])
+def test_toss_contradicting_rows_are_unknown(live_safety, market, rows):
+    symbol = rows[-1]["symbol"]
+    SDK = _rows_sdk(rows, {symbol: "2"})
+    with _toss(SDK, live_safety, market) as broker:
+        with pytest.raises(InvalidResponseError):
+            broker.sellable_quantity(symbol)
+        with pytest.raises(InvalidResponseError):
+            broker.get_positions()
     assert SDK.sellable_calls == []  # 모순 응답에서는 매도 가능 수량을 읽기 전에 멈춘다
 
 
-def test_toss_distinct_symbols_and_other_market_rows_are_read_each_once(live_safety):
-    # 서로 다른 종목은 각자 한 번씩 읽는다. 다른 시장(KR)의 줄은 US 어댑터가 건너뛴다 — 그 시장 안에서 중복이어도.
-    rows = [_row("AAPL", "2"), _row("MSFT", "2.57"), _row("005930", "3", country="KR"),
-            _row("005930", "3", country="KR")]
-    SDK = _rows_sdk(rows, {"AAPL": "2", "MSFT": "2.57"})
-    with Toss(account="fixture", account_seq=1, sdk_factory=SDK, safety=live_safety, market="US",
-              allow_us_pilot=True, sdk_dry_run=False) as broker:
-        by = {p.symbol: p for p in broker.get_positions()}
-    assert sorted(by) == ["AAPL", "MSFT"]
-    assert by["AAPL"].sellable_exact == Decimal("2") and by["MSFT"].sellable_exact == Decimal("2.57")
-    assert sorted(SDK.sellable_calls) == ["AAPL", "MSFT"]
+def test_toss_sellable_answer_above_the_holding_is_unknown(live_safety):
+    SDK = _rows_sdk([_row("AAPL", "2"), _row("AAPL", "2")], {"AAPL": "2.1"})
+    with _toss(SDK, live_safety) as broker, pytest.raises(InvalidResponseError):
+        broker.sellable_quantity("AAPL")
 
 
 def test_toss_kr_whole_quantity_has_no_exact(live_safety):
