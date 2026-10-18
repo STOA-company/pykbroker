@@ -453,8 +453,19 @@ class Toss(BaseBroker):
 
     def get_positions(self) -> list[Position]:
         def read():
+            items = self._run("get_positions")["items"]
+            # 토스 보유 목록은 «보유 종목 목록»(HoldingsItem: symbol·marketCountry·currency 말고 행을 가르는 칸이
+            # 없음)이고, 매도 가능 수량(/api/v1/sellable-quantity)은 종목 심볼 하나로만 읽는다. 그래서 한 응답에
+            # 같은 심볼이 두 줄이면 — 줄이 완전히 같든(중복) 칸이 다르든(충돌), 다른 시장 줄이든 — 줄마다 종목 전체의
+            # 매도 가능 수량을 다시 붙여 2주가 4주로 읽힌다(검수 527c P2-T). 어느 줄이 맞는지 모르므로 합치거나
+            # 지우지 않고(수량으로 같다고 보지 않음) «모름»으로 낸다 → trader 매도 게이트 holdings_unknown(D814).
+            counts: dict[str, int] = {}
+            for row in items:
+                counts[row["symbol"]] = counts.get(row["symbol"], 0) + 1
+            if any(counts[row["symbol"]] > 1 for row in items if row["marketCountry"] == self.market):
+                raise InvalidResponseError("Toss holdings list one symbol on more than one row")
             result = []
-            for row in self._run("get_positions")["items"]:
+            for row in items:
                 if row["marketCountry"] != self.market:
                     continue
                 sellable = self._run("get_sellable_quantity", row["symbol"])
