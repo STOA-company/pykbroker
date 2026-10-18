@@ -252,24 +252,10 @@ class KB(BaseBroker):
     def get_positions(self) -> list[Position]:
         def read():
             if self.market == "KR":
-                data = self._response("ssqm2952", {"excg_mktpr_ccd": "K"})
-                rows = self._rows(data, "Record1", "grid_cnt1")
-                if whole(data["tl_data_cnt"]) != len(rows):
+                rows, complete = self._kr_snapshot()
+                if not complete:
                     raise SpecUnverifiedError("KB KR holdings are truncated; no continuation input is documented")
-                result = []
-                for row in rows:
-                    if row.get("crncy_cd", "").strip() != "KRW":
-                        continue
-                    quantity = whole(row["hld_q"])
-                    if not quantity:
-                        continue
-                    result.append(Position(
-                        symbol=self._response_symbol(row["is_cd"], "KR"), name=row["is_nm"], market="KR",
-                        quantity=quantity, sellable=whole(row["ordr_psbl_q"]),
-                        average_price=decimal(row["byng_avr_prc"]), last=decimal(row["now_prc"]),
-                        market_value=decimal(row["val_amt"]),
-                    ))
-                return result
+                return self._kr_positions(rows)
             result = []
             for page in self._pages("spqm2226", {"std_crncy_f": "1"}, "Record2", "grid_cnt2"):
                 for row in page:
@@ -288,6 +274,53 @@ class KB(BaseBroker):
                     ))
             return result
         return self._call(read)
+
+    def _kr_snapshot(self):
+        # SSQM2952 잔고현황 조회(체결기준): the official input has no nxt_key; complete when tl_data_cnt == rows.
+        data = self._response("ssqm2952", {"excg_mktpr_ccd": "K"})
+        rows = self._rows(data, "Record1", "grid_cnt1")
+        return rows, whole(data["tl_data_cnt"]) == len(rows)
+
+    def sellable_quantity(self, symbol: str) -> Decimal:
+        """Broker sellable quantity of one holding (0 when not held), for pre-trade sell checks.
+
+        KR: when SSQM2952 is complete its ordr_psbl_q is used (same rows as get_positions). When it is
+        truncated, the official SSQM1801 보유주식조회 (inq_clsf 0 현금주식매도, mkt_tm_ccd 1 정규시장)
+        is read through its documented nxt_key continuation (bounded `_pages`), never guessed.
+        US: the paged SPQM2226 holdings.
+        """
+        code = self._symbol(symbol, self.market)
+        if self.market != "KR":
+            return Decimal(sum(p.sellable for p in self.get_positions() if p.symbol == code))
+
+        def read():
+            rows, complete = self._kr_snapshot()
+            if complete:
+                return Decimal(sum(p.sellable for p in self._kr_positions(rows) if p.symbol == code))
+            total = 0
+            for page in self._pages("ssqm1801", {"mkt_tm_ccd": "1", "inq_clsf": "0", "is_no": ""},
+                                    "Record1", "grid_cnt1"):
+                for row in page:
+                    if self._response_symbol(row["is_no"], "KR") == code:
+                        total += whole(row["ordr_psbl_q"])
+            return Decimal(total)
+        return self._call(read)
+
+    def _kr_positions(self, rows):
+        result = []
+        for row in rows:
+            if row.get("crncy_cd", "").strip() != "KRW":
+                continue
+            quantity = whole(row["hld_q"])
+            if not quantity:
+                continue
+            result.append(Position(
+                symbol=self._response_symbol(row["is_cd"], "KR"), name=row["is_nm"], market="KR",
+                quantity=quantity, sellable=whole(row["ordr_psbl_q"]),
+                average_price=decimal(row["byng_avr_prc"]), last=decimal(row["now_prc"]),
+                market_value=decimal(row["val_amt"]),
+            ))
+        return result
 
     def get_balance(self) -> Balance:
         def read():
