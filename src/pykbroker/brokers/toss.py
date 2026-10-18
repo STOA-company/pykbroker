@@ -456,29 +456,28 @@ class Toss(BaseBroker):
 
         Toss documents holdings as one entry per held symbol (Asset «종목별 보유 수량», HoldingsItem has no
         account/lot/type field) and the sellable quantity per symbol only (/api/v1/sellable-quantity). The
-        documented identity of a row is (symbol, marketCountry, currency). Review 527c P2-T:
-        - the same identity repeated with identical values is one holding listed twice → kept once;
-        - the same identity with different values (quantity, price, ...) contradicts itself → the vendor
-          answer cannot be judged → InvalidResponseError (trader: holdings_unknown, D814);
+        documented identity of a row is (symbol, marketCountry, currency). Review 527c P2-T / 535 P1:
+        - a row repeated verbatim (every field equal) is one holding listed twice → kept once;
+        - rows of one identity that differ in any field (quantity, price, average cost, ...) are kept as
+          separate rows like another currency: the symbol's one vendor sellable answer is what the sell
+          check uses, the rows only bound it (`_sellable_rows`: answer above the rows' sum → InvalidResponseError);
         - the same symbol in both markets cannot be split, because the sellable read takes the symbol
-          only → InvalidResponseError;
+          only → InvalidResponseError (trader: holdings_unknown, D814);
         - distinct identities of one symbol (another currency) are kept as separate rows and share the
           symbol's one sellable answer (`_sellable_rows`), never one full answer per row.
         Never de-duplicated or merged on quantity.
         """
         groups: dict[str, list[Mapping[str, Any]]] = {}
-        seen: dict[tuple[Any, ...], Mapping[str, Any]] = {}
+        seen: dict[tuple[Any, ...], list[Mapping[str, Any]]] = {}
         other_market: set[str] = set()
         for row in items:
             if row["marketCountry"] != self.market:
                 other_market.add(row["symbol"])
                 continue
             key = (row["symbol"], row["marketCountry"], row.get("currency"))
-            if key in seen:
-                if dict(seen[key]) != dict(row):
-                    raise InvalidResponseError("Toss holdings list one holding twice with different values")
+            if any(dict(prev) == dict(row) for prev in seen.get(key, ())):
                 continue
-            seen[key] = row
+            seen.setdefault(key, []).append(row)
             groups.setdefault(row["symbol"], []).append(row)
         if other_market & groups.keys():
             raise InvalidResponseError("Toss holdings list one symbol in two markets")
