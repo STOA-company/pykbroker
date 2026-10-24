@@ -1,0 +1,51 @@
+{
+  "input": {
+    "dataBody": {
+      "ordr_uprc": "370000",
+      "crct_clsf": "2",
+      "is_cd": "005930",
+      "orgn_ordr_no": "9000000001",
+      "sor_ordr_ccd": "N",
+      "ordr_ccd": "00",
+      "mkt_tm_clsf": "1",
+      "ordr_q": "5"
+    },
+    "dataHeader": {
+      "ipAddr": "127.0.0.1",
+      "macAddr": "00-00-00-00-00-00"
+    }
+  },
+  "output": {
+    "dataHeader": {
+      "resultCode": "200",
+      "resultMessage": "성공",
+      "processFlag": "B",
+      "processMessage": "fixture process message",
+      "processCode": "2329",
+      "processTime": "20260623102057253"
+    },
+    "dataBody": {
+      "ordr_uprc": "000370000",
+      "ordr_jb_clsf": "3",
+      "ordr_mng_no": "900000000002",
+      "ln_dt": "        ",
+      "acct_cd": "   ",
+      "crct_clsf": "2",
+      "o_lngth": "00302",
+      "ordr_no": "9000000002",
+      "o_clsf": "SC",
+      "gtc_ccd": " ",
+      "spclz_ordr_ccd": "  ",
+      "is_cd": "005930",
+      "s_clsf": " ",
+      "orgn_ordr_no": "9000000001",
+      "sor_ordr_ccd": "N",
+      "stpd_prc": "000000000",
+      "ordr_ccd": "00",
+      "o_msg": "fixture broker message",
+      "mkt_tm_clsf": "1",
+      "ordr_q": "0000000002",
+      "crdt_typ_cd": "00"
+    }
+  }
+}

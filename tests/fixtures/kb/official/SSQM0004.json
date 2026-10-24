@@ -1,0 +1,38 @@
+{
+  "input": {
+    "dataBody": {
+      "is_no": ""
+    },
+    "dataHeader": {
+      "ipAddr": "127.0.0.1",
+      "macAddr": "00-00-00-00-00-00"
+    }
+  },
+  "output": {
+    "dataHeader": {
+      "resultCode": "200",
+      "resultMessage": "성공",
+      "processFlag": "A",
+      "processMessage": "fixture process message",
+      "processCode": "0011",
+      "processTime": "20260622161632601"
+    },
+    "dataBody": {
+      "ordr_psbl_amt": "000000000339901",
+      "do_psbl_tl_amt": "000000000000339901",
+      "ordr_psbl_sbt": "000000000000000",
+      "do_psbl_csh": "000000000000339901",
+      "nxt2_dy_tfnd": "000000000639950",
+      "ordr_psbl_csh": "000000000339901",
+      "tdy_tfnd_amt": "000000001000000",
+      "ordr_std_dpstn_sbt": "000000000000000000",
+      "ordr_std_dpstn_tl_amt": "000000000001000000",
+      "o_msg": "fixture broker message",
+      "do_psbl_sbt": "000000000000000000",
+      "o_lngth": "00280",
+      "ordr_std_dpstn_csh": "000000000001000000",
+      "o_clsf": "SC",
+      "ndy_tfnd": "000000001000000"
+    }
+  }
+}
