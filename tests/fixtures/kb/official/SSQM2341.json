@@ -1,0 +1,41 @@
+{
+  "input": {
+    "dataBody": {
+      "ccls_clsf": "0",
+      "nxt_key": "",
+      "ordr_dt": "20260623"
+    },
+    "dataHeader": {
+      "ipAddr": "127.0.0.1",
+      "macAddr": "00-00-00-00-00-00"
+    }
+  },
+  "output": {
+    "dataHeader": {
+      "resultCode": "200",
+      "resultMessage": "성공",
+      "processFlag": "B",
+      "processMessage": "fixture process message",
+      "processCode": "2564",
+      "processTime": "20260623135822090"
+    },
+    "dataBody": {
+      "b_ccls_amt": "000000000000000000",
+      "stnd_is_cd": "            ",
+      "nxt_key": "                                        ",
+      "s_ccls_q": "000000000000000000",
+      "inq_clsf": " ",
+      "grid_cnt1": "0000",
+      "ordr_dt": "        ",
+      "b_ccls_q": "000000000000000000",
+      "s_ccls_amt": "000000000000000000",
+      "cn_clsf": " ",
+      "o_msg": "fixture broker message",
+      "ac_nm": "fixture-account",
+      "o_lngth": "00269",
+      "ordr_no": "9000000002",
+      "o_clsf": "SC",
+      "Record1": []
+    }
+  }
+}

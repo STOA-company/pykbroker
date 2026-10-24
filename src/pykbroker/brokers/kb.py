@@ -35,6 +35,7 @@ _KR_ORDER_LENGTHS = {"mkt_tm_clsf": 1, "is_cd": 12, "ordr_q": 10,
                      "ordr_uprc": 9, "ordr_ccd": 2, "sor_ordr_ccd": 1}
 _ORDER_LENGTHS = {
     "ssam1801": _KR_ORDER_LENGTHS, "ssam1802": _KR_ORDER_LENGTHS,
+    "ssam1805": {**_KR_ORDER_LENGTHS, "crct_clsf": 1, "orgn_ordr_no": 10},
     "ssam1806": {"is_cd": 12, "ordr_q": 10, "crct_clsf": 1, "orgn_ordr_no": 10},
     "skam2101": {"trd_dl_ccd": 2, "is_cd": 12, "frgn_ordr_typ_cd": 1,
                  "frgn_ordr_q": 18, "frgn_ordr_prc_p4": 15},
@@ -301,6 +302,39 @@ class KB(BaseBroker):
         return Order(id=self._order_number(row), symbol=request.symbol, market=request.market,
                      side=request.side, order_type=request.order_type, quantity=request.quantity,
                      price=request.price, status="accepted", virtual=False)
+
+    def amend_order(self, request: OrderRequest, *, order_id: str) -> Order:
+        """Amend a named KR remainder with SSAM1805's quantity-specific contract.
+
+        ``quantity`` is the quantity being amended, not an inferred remainder.
+        SSAM1805 cannot change a side; ``request.side`` is not transmitted and
+        the acknowledgement does not establish the original order's side.
+        Like place/cancel, this never retries or treats acknowledgement as a fill.
+        The existing place idempotency namespace is shared deliberately: reusing
+        an intent key for a new submission or an amendment cannot write twice.
+        """
+        if self.market != "KR":
+            raise NotSupportedError("KB amendment is domestic only")
+        request = OrderRequest.model_validate(request.model_dump())
+        self._validate_order(request)
+        if (not isinstance(order_id, str) or not order_id.isascii() or not order_id.isdecimal()
+                or len(order_id) > 10 or not order_id.strip("0")):
+            raise ConfigurationError("KB original order number must be a nonzero decimal string of at most ten digits")
+        _, body = self._order_body(request)
+        body.update(crct_clsf="1", orgn_ordr_no=order_id)
+        _check_lengths(body, _ORDER_LENGTHS["ssam1805"])
+
+        def submit():
+            row = self._response("ssam1805", body)
+            if (row.get("orgn_ordr_no") != order_id or row.get("is_cd") != body["is_cd"]
+                    or decimal(row["ordr_q"]) != request.quantity
+                    or decimal(row["ordr_uprc"]) != request.price):
+                raise InvalidResponseError("KB amendment identity is inconsistent; reconcile before retrying")
+            return Order(id=self._order_number(row), symbol=request.symbol, market=request.market,
+                         order_type=request.order_type, quantity=request.quantity,
+                         price=request.price, status="accepted", virtual=False)
+
+        return self.safety.execute(self.broker_code, self._account, request, lambda: self._call(submit))
 
     @staticmethod
     def _rows(row, block, count):

@@ -14,7 +14,9 @@ from pykbroker.brokers import kb as module
 from pykbroker.brokers.kb import KB, KB_API_BASE_URL
 from pykbroker.exceptions import (
     ConfigurationError,
+    DuplicateOrderError,
     InvalidResponseError,
+    NotSupportedError,
     SafetyError,
     SpecUnverifiedError,
     TransportError,
@@ -334,7 +336,7 @@ def test_us_ledger_date_preserves_new_york_until_timezone_is_documented(monkeypa
     assert broker(client, "US", order_date=date(2026, 6, 23))._ledger_date() == "20260623"
 
 
-@pytest.mark.parametrize("tr", ["ssam1801", "ssam1802", "ssam1806", "skam2101", "skam2102"])
+@pytest.mark.parametrize("tr", ["ssam1801", "ssam1802", "ssam1805", "ssam1806", "skam2101", "skam2102"])
 def test_every_official_order_field_limit_is_checked_at_final_transport_boundary(tr):
     official = sample(tr.upper())
     for name, maximum in module._ORDER_LENGTHS[tr].items():
@@ -471,3 +473,252 @@ def test_official_fixtures_match_recorded_sanitized_hashes():
     source = (FIXTURES / "SOURCE.md").read_text()
     for file in FIXTURES.glob("*.json"):
         assert hashlib.sha256(file.read_bytes()).hexdigest() in source
+
+
+class ContractServer(FakeClient):
+    """In-process server double; documented fields, synthetic state/error envelopes.
+
+    Error-code placement, acceptance, ledger rows and elapsed clock are test data,
+    not claims that KB emitted these responses. No socket/server is required by
+    the repository's existing injected transport pattern.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.now, self.expiry, self.token_count = 0, 0, 0
+        self.token = None
+        self.orders = {}
+        self.error_code = None
+
+    def fill(self, number, quantity):
+        row = self.orders[number]
+        assert 0 < quantity <= int(row['nccls_q'])
+        row['tl_ccls_q'] = str(int(row['tl_ccls_q']) + quantity)
+        row['nccls_q'] = str(int(row['nccls_q']) - quantity)
+
+    def post(self, path, *, headers, body):
+        self.calls.append((path, copy.deepcopy(headers), copy.deepcopy(body)))
+        assert body['dataHeader'] == {'ipAddr': '', 'macAddr': ''}
+        data = body['dataBody']
+        if path == '/oauth2/token':
+            assert headers == {'Content-Type': 'application/json'}
+            assert data == {'grantType': 'client_credentials', 'appKey': 'k' * 36, 'appSecret': 's' * 32}
+            result = sample('token')['output']
+            self.token_count += 1
+            self.token = f'fixture-issued-{self.token_count}'
+            self.expiry = self.now + result['dataBody']['expires_in']
+            result['dataBody']['access_token'] = self.token
+            return result
+        assert headers == {'Content-Type': 'application/json', 'appKey': 'k' * 36,
+                           'Authorization': 'bearer ' + self.token}
+        if self.error_code or self.now >= self.expiry:
+            # Public code list gives descriptions, not a response schema.
+            # This deliberately synthetic failed envelope must fail safely.
+            return {'dataHeader': {'resultCode': self.error_code or 'T043', 'processFlag': 'B'}, 'dataBody': {}}
+        if path == '/api/v1/ssqm2341':
+            assert data == {'ccls_clsf': '0', 'ordr_dt': '20261024', 'nxt_key': ''}
+            result = sample('SSQM2341')['output']
+            result['dataBody'].update(Record1=list(copy.deepcopy(self.orders).values()),
+                                      grid_cnt1=str(len(self.orders)), nxt_key='')
+        elif path in ('/api/v1/ssam1801', '/api/v1/ssam1802', '/api/v1/ssam1805'):
+            tr = path.rsplit('/', 1)[1]
+            assert data.keys() == module._ORDER_LENGTHS[tr].keys()
+            assert data['ordr_ccd'] == '00' and data['sor_ordr_ccd'] == 'K' and data['mkt_tm_clsf'] == '1'
+            if tr == 'ssam1805':
+                assert data['crct_clsf'] == '1'
+                old = self.orders[data['orgn_ordr_no']]
+                assert 0 < int(data['ordr_q']) <= int(old['nccls_q'])
+                old['nccls_q'] = str(int(old['nccls_q']) - int(data['ordr_q']))
+            result = sample(tr.upper())['output']
+            number = str(9000000001 + len(self.orders))
+            result['dataBody'].update(data, ordr_no=number)
+            self.orders[number] = {'ordr_no': number, 'stnd_is_no': data['is_cd'],
+                                   'ordr_q': data['ordr_q'], 'tl_ccls_q': '0', 'nccls_q': data['ordr_q'],
+                                   'ordr_uprc': data['ordr_uprc'], 'ccls_uprc': data['ordr_uprc']}
+        elif path == '/api/v1/ssam1806':
+            assert data.keys() == module._ORDER_LENGTHS['ssam1806'].keys()
+            assert data['crct_clsf'] == '1'
+            old = self.orders[data['orgn_ordr_no']]
+            assert 0 < int(data['ordr_q']) <= int(old['nccls_q'])
+            old['nccls_q'] = str(int(old['nccls_q']) - int(data['ordr_q']))
+            result = sample('SSAM1806')['output']
+            result['dataBody'].update(data, ordr_no='9000000099')
+        elif path == '/api/v1/ssqm0004':
+            assert data == {'is_no': ''}
+            result = sample('SSQM0004')['output']
+        elif path == '/api/v1/ssqm2952':
+            assert data == {'excg_mktpr_ccd': 'K'}
+            result = sample('SSQM2952')['output']
+            if not any(int(row['tl_ccls_q']) for row in self.orders.values()):
+                result['dataBody'].update(Record1=[], grid_cnt1='0', tl_data_cnt='0')
+            # Nonempty quantities retain the official unresolved sample rather
+            # than manufacturing a settlement formula from the fake ledger.
+        else:
+            raise AssertionError(f'Unexpected contract path {path}')
+        result['dataHeader'].update(resultCode='200', processFlag='A')
+        return result
+
+
+def contract_broker(server, live_safety):
+    issued = KB.issue_token(app_key='k' * 36, secret_key='s' * 32, client_factory=lambda: server)
+    return KB(account='fixture-account', bound_account='fixture-account', app_key='k' * 36,
+              token=issued['access_token'], client=server, writes_enabled=True,
+              safety=live_safety, order_date=date(2026, 10, 24))
+
+
+@pytest.mark.parametrize('side', ['buy', 'sell'])
+def test_contract_limit_partial_amend_cancel_and_ledger(side, live_safety):
+    server = ContractServer()
+    b = contract_broker(server, live_safety)
+    assert b.get_positions() == []
+    assert b.get_balance().currency == 'KRW'
+    placed = b.place_order(order(side=side, quantity=2, price=Decimal('1000')))
+    server.fill(placed.id, 1)
+    partial = b.list_orders()[0]
+    assert (partial.id, partial.filled, partial.remaining, partial.status) == (placed.id, 1, 1, 'partial')
+    assert partial.fill_price == Decimal('1000')
+    amended = b.amend_order(order(side=side, price=Decimal('1100'), client_key='amend'), order_id=placed.id)
+    assert amended.id != placed.id and amended.status == 'accepted' and amended.filled is None
+    assert amended.side is None  # SSAM1805 has no side field; never echo an unverified direction.
+    assert b.cancel_order(cancel(order_id=amended.id)).status == 'unknown'
+    rows = {row.id: row for row in b.list_orders()}
+    assert rows[amended.id].remaining == 0 and rows[amended.id].status == 'unknown'
+    assert rows[placed.id].filled == 1 and rows[placed.id].status == 'unknown'
+    with pytest.raises(SpecUnverifiedError, match='quantity semantics'):
+        b.get_positions()
+    assert not hasattr(server, 'socket')
+
+
+def test_contract_expiry_explicit_reissue_and_same_read(live_safety):
+    server = ContractServer()
+    b = contract_broker(server, live_safety)
+    assert b.list_orders() == []
+    server.now = server.expiry
+    with pytest.raises(InvalidResponseError):
+        b.list_orders()
+    assert server.token_count == 1  # No implicit token issuance or read retry.
+    b = contract_broker(server, live_safety)
+    assert b.list_orders() == [] and server.token_count == 2
+    assert [c[0] for c in server.calls] == ['/oauth2/token', '/api/v1/ssqm2341',
+                                             '/api/v1/ssqm2341', '/oauth2/token', '/api/v1/ssqm2341']
+
+
+@pytest.mark.parametrize('code', ['E041', 'I435', 'T043', 'T022', 'E002', 'I446'])
+def test_contract_public_error_codes_fail_without_retry_or_write_replay(code, live_safety):
+    assert code in {item['key'] for item in sample('public-errors')['codes']}
+    server = ContractServer()
+    b = contract_broker(server, live_safety)
+    server.error_code = code
+    request = order(price=Decimal('1000'))
+    with pytest.raises(InvalidResponseError):
+        b.place_order(request)
+    with pytest.raises(DuplicateOrderError):
+        b.place_order(request)
+    assert [c[0] for c in server.calls] == ['/oauth2/token', '/api/v1/ssam1802']
+    assert server.orders == {}
+
+
+def test_contract_duplicate_place_amend_cancel_only_reach_server_once(live_safety):
+    server = ContractServer()
+    b = contract_broker(server, live_safety)
+    request = order(price=Decimal('1000'))
+    placed = b.place_order(request)
+    with pytest.raises(DuplicateOrderError):
+        b.place_order(request)
+    # The same intent key cannot turn a placement into a second amendment.
+    with pytest.raises(DuplicateOrderError):
+        b.amend_order(request, order_id=placed.id)
+    amendment = order(price=Decimal('1100'), client_key='new-amend')
+    amended = b.amend_order(amendment, order_id=placed.id)
+    with pytest.raises(DuplicateOrderError):
+        b.amend_order(amendment, order_id=placed.id)
+    request_cancel = cancel(order_id=amended.id)
+    b.cancel_order(request_cancel)
+    with pytest.raises(DuplicateOrderError):
+        b.cancel_order(request_cancel)
+    assert [c[0] for c in server.calls] == ['/oauth2/token', '/api/v1/ssam1802',
+                                             '/api/v1/ssam1805', '/api/v1/ssam1806']
+
+
+@pytest.mark.parametrize('order_id', ['', '0', '1' * 11, 'not-number', '\n1', None])
+def test_amend_invalid_original_id_never_reaches_transport(order_id, live_safety):
+    client = FakeClient()
+    with pytest.raises(ConfigurationError):
+        broker(client, writes_enabled=True, safety=live_safety).amend_order(order(), order_id=order_id)
+    assert client.calls == []
+
+
+@pytest.mark.parametrize('field,value', [('orgn_ordr_no', '9000000099'), ('is_cd', '000660'),
+                                        ('ordr_q', '2'), ('ordr_uprc', '999')])
+def test_amend_bad_ack_keeps_intent_claim_and_unknown_outcome(field, value, live_safety):
+    result = sample('SSAM1805')['output']
+    result['dataHeader'].update(processFlag='A')
+    result['dataBody'].update(is_cd='005930', orgn_ordr_no='9000000001', ordr_q='1', ordr_uprc='70000')
+    result['dataBody'][field] = value
+    client = FakeClient({'/api/v1/ssam1805': result})
+    b = broker(client, writes_enabled=True, safety=live_safety)
+    with pytest.raises(InvalidResponseError):
+        b.amend_order(order(), order_id='9000000001')
+    with pytest.raises(DuplicateOrderError):
+        b.amend_order(order(), order_id='9000000001')
+    assert len(client.calls) == 1
+
+
+def test_amend_default_gate_dry_run_and_us_scope():
+    client = FakeClient()
+    with pytest.raises(SpecUnverifiedError):
+        broker(client).amend_order(order(), order_id='9000000001')
+    with pytest.raises(SafetyError):
+        broker(client, writes_enabled=True).amend_order(order(), order_id='9000000001')
+    with pytest.raises(NotSupportedError):
+        broker(client, 'US').amend_order(order('US'), order_id='9000000001')
+    assert client.calls == []
+
+
+@pytest.mark.parametrize('side', ['buy', 'sell'])
+def test_market_sentinel_is_unverified_and_experimental_lock_stays_off(side, live_safety):
+    from pykbroker.experimental.kb import KB_SPEC_VERIFIED
+
+    client = FakeClient()
+    assert KB_SPEC_VERIFIED is False
+    with pytest.raises(NotSupportedError):
+        broker(client, writes_enabled=True, safety=live_safety).place_order(
+            order(side=side, order_type='market', price=None))
+    assert client.calls == []
+
+
+def test_contract_real_rest_serialization_roundtrip_without_sockets(monkeypatch, live_safety):
+    from io import BytesIO
+
+    server = ContractServer()
+    transport_calls = []
+
+    def local_urlopen(request, *, timeout):
+        assert request.get_method() == 'POST' and timeout == 10.0
+        assert request.full_url.startswith(KB_API_BASE_URL + '/')
+        assert isinstance(request.data, bytes)
+        path = request.full_url.removeprefix(KB_API_BASE_URL)
+        headers = {name.lower(): value for name, value in request.header_items()}
+        assert set(headers) == ({'content-type'} if path == '/oauth2/token' else
+                                {'content-type', 'appkey', 'authorization'})
+        mapped_headers = {'Content-Type': headers['content-type']}
+        if path != '/oauth2/token':
+            mapped_headers.update(appKey=headers['appkey'], Authorization=headers['authorization'])
+        body = json.loads(request.data.decode('utf-8'))
+        result = server.post(path, headers=mapped_headers, body=body)
+        transport_calls.append(path)
+        return BytesIO(json.dumps(result).encode('utf-8'))
+
+    monkeypatch.setattr(module, 'urlopen', local_urlopen)
+    # Both issuance and broker calls use the unmodified real REST client.
+    issued = KB.issue_token(app_key='k' * 36, secret_key='s' * 32)
+    b = KB(account='fixture-account', bound_account='fixture-account', app_key='k' * 36,
+           token=issued['access_token'], writes_enabled=True, safety=live_safety,
+           order_date=date(2026, 10, 24))
+    assert b.list_orders() == []
+    placed = b.place_order(order(price=Decimal('1000')))
+    amended = b.amend_order(order(price=Decimal('1100'), client_key='amend'), order_id=placed.id)
+    assert b.cancel_order(cancel(order_id=amended.id)).status == 'unknown'
+    assert b.list_orders()[1].remaining == 0
+    assert transport_calls == ['/oauth2/token', '/api/v1/ssqm2341', '/api/v1/ssam1802',
+                               '/api/v1/ssam1805', '/api/v1/ssam1806', '/api/v1/ssqm2341']
