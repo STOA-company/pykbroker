@@ -82,7 +82,7 @@ def test_partial_then_modify_and_cancel_requested_remainder(venue, live_safety):
            "tot_cns_qty": 1, "ny_cns_qty": 2, "cns_avg_uit_pr": 990,
            "sby_dit_cd_nm": "매수", "nmn_pr_tp_cd_nm": "보통가", "rmt_mkt_cd": venue}
     broker, calls = make({
-        DAILY: [response(DAILY, [row])],
+        DAILY: [response(DAILY, [row]) for _ in range(3)],
         ORDER + "modify": [response(ORDER + "modify", {"mkt_orr_no": 102})],
         ORDER + "cancel": [response(ORDER + "cancel", {"mkt_orr_no": 103})],
     }, virtual=True, safety=live_safety, venue=venue)
@@ -90,21 +90,22 @@ def test_partial_then_modify_and_cancel_requested_remainder(venue, live_safety):
     assert (observed.status, observed.filled, observed.remaining, observed.order_type) == ("partial", 1, 2, "limit")
     # The original market number is caller-supplied, never inferred from itg:999.
     req = request(key="modify", quantity=2)
-    modified = broker.modify_order("mkt:101", req, stop_condition_price=Decimal(0))
+    modified = broker.modify_order("mkt:101", req, stop_condition_price=Decimal(0), original_ledger_id="itg:999")
     assert modified.id == "mkt:102" and modified.status == "accepted"
     with pytest.raises(DuplicateOrderError):
-        broker.modify_order("mkt:101", req, stop_condition_price=Decimal(0))
+        broker.modify_order("mkt:101", req, stop_condition_price=Decimal(0), original_ledger_id="itg:999")
     cancelled = broker.cancel_order(CancelRequest(
         order_id=modified.id, symbol="005930", quantity=2, client_key="cancel"
     ))
     assert cancelled.status == "accepted"
-    assert calls[1][3] == {"Input_0": {
+    assert [item[1] for item in calls] == [DAILY, DAILY, ORDER + "modify", DAILY, ORDER + "cancel"]
+    assert calls[2][3] == {"Input_0": {
         "act_no": "12345678901", "org_mkt_orr_no": 101, "all_pat_dit_cd": "2",
         "iem_cd": "005930", "cor_qty": 2, "cor_pr": 1000, "sop_cnd_pr": 0.0,
         "rmt_mkt_cd": venue, "sor_mkt_sli_yn": "N",
     }}
-    assert calls[2][3]["Input_0"]["org_mkt_orr_no"] == 102
-    assert calls[1][3]["Input_0"]["cor_qty"] == calls[2][3]["Input_0"]["cor_qty"] == 2
+    assert calls[4][3]["Input_0"]["org_mkt_orr_no"] == 102
+    assert calls[2][3]["Input_0"]["cor_qty"] == calls[4][3]["Input_0"]["cor_qty"] == 2
     check_requests(calls)
 
 
@@ -160,16 +161,18 @@ def test_order_http_failure_is_not_retried(status, live_safety):
 def test_modify_requires_valid_original_market_number(order_id, live_safety):
     broker, calls = make({}, safety=live_safety)
     with pytest.raises((ConfigurationError, InvalidResponseError)):
-        broker.modify_order(order_id, request(), stop_condition_price=Decimal(0))
+        broker.modify_order(order_id, request(), stop_condition_price=Decimal(0), original_ledger_id="itg:999")
     assert calls == []
 
 
 def test_modify_revalidates_model_and_disallows_market(live_safety):
     broker, calls = make({}, safety=live_safety)
     with pytest.raises(NotSupportedError):
-        broker.modify_order("mkt:101", request(kind="market"), stop_condition_price=Decimal(0))
+        broker.modify_order("mkt:101", request(kind="market"), stop_condition_price=Decimal(0),
+                            original_ledger_id="itg:999")
     with pytest.raises(ValueError):
-        broker.modify_order("mkt:101", request().model_copy(update={"quantity": 0}), stop_condition_price=Decimal(0))
+        broker.modify_order("mkt:101", request().model_copy(update={"quantity": 0}), stop_condition_price=Decimal(0),
+                            original_ledger_id="itg:999")
     assert calls == []
 
 
@@ -248,6 +251,7 @@ def test_stateful_cash_order_partial_modify_cancel_balance_and_positions(live_sa
             "orr_pr": state["price"], "tot_cns_qty": state["filled"],
             "ny_cns_qty": state["remaining"], "can_qty": state["cancelled"],
             "cns_avg_uit_pr": 990 if state["filled"] else 0,
+            "sby_dit_cd_nm": "매수", "nmn_pr_tp_cd_nm": "보통가", "rmt_mkt_cd": "KRX",
         }])
 
     def balance():
@@ -273,7 +277,7 @@ def test_stateful_cash_order_partial_modify_cancel_balance_and_positions(live_sa
     partial, = broker.list_orders()
     assert (partial.status, partial.filled, partial.remaining) == ("partial", 1, 2)
     changed = broker.modify_order(placed.id, request(quantity=2, key="modify").model_copy(
-        update={"price": Decimal(995)}), stop_condition_price=Decimal(0))
+        update={"price": Decimal(995)}), stop_condition_price=Decimal(0), original_ledger_id="itg:9001")
     assert state["price"] == 995 and state["remaining"] == 2
     broker.cancel_order(CancelRequest(order_id=changed.id, symbol="005930", quantity=2, client_key="cancel"))
     final, = broker.list_orders()
@@ -289,7 +293,7 @@ def test_stateful_cash_order_partial_modify_cancel_balance_and_positions(live_sa
 def test_modify_invalid_numeric_value_cannot_reach_transport(value, live_safety):
     broker, calls = make({}, safety=live_safety)
     with pytest.raises(ConfigurationError):
-        broker.modify_order("mkt:101", request(), stop_condition_price=value)
+        broker.modify_order("mkt:101", request(), stop_condition_price=value, original_ledger_id="itg:999")
     assert calls == []
 
 
@@ -336,3 +340,78 @@ def test_real_http_boundary_uses_official_token_query_not_form_body(monkeypatch)
     }
     assert outgoing.data == b"" and outgoing.method == "POST"
     assert outgoing.get_header("Content-type") == "application/x-www-form-urlencoded"
+
+
+def ledger_row(**changes):
+    return {"itg_orr_no": 999, "iem_cd": "005930", "orr_qty": 3, "orr_pr": 1000,
+            "tot_cns_qty": 1, "ny_cns_qty": 2, "cns_avg_uit_pr": 990,
+            "sby_dit_cd_nm": "매수", "nmn_pr_tp_cd_nm": "보통가", "rmt_mkt_cd": "KRX", **changes}
+
+
+def modify_with_ledger(daily, live_safety, *, venue="KRX", side="buy"):
+    broker, calls = make({
+        DAILY: [daily],
+        ORDER + "modify": [response(ORDER + "modify", {"mkt_orr_no": 102})],
+    }, virtual=True, safety=live_safety, venue=venue)
+    req = request(side=side, key="modify", quantity=2)
+    return broker, calls, lambda: broker.modify_order(
+        "mkt:101", req, stop_condition_price=Decimal(0), original_ledger_id="itg:999")
+
+
+def test_market_original_order_price_modification_sends_nothing(live_safety):
+    _, calls, modify = modify_with_ledger(response(DAILY, [ledger_row(nmn_pr_tp_cd_nm="시장가")]), live_safety)
+    with pytest.raises(NotSupportedError, match="market order"):
+        modify()
+    assert [item[1] for item in calls] == [DAILY]
+
+
+def test_modification_uses_original_ledger_market_not_configured_venue(live_safety):
+    _, calls, modify = modify_with_ledger(response(DAILY, [ledger_row(rmt_mkt_cd="NXT")]), live_safety, venue="KRX")
+    assert modify().id == "mkt:102"
+    assert [item[1] for item in calls] == [DAILY, ORDER + "modify"]
+    assert calls[1][3] == {"Input_0": {
+        "act_no": "12345678901", "org_mkt_orr_no": 101, "all_pat_dit_cd": "2",
+        "iem_cd": "005930", "cor_qty": 2, "cor_pr": 1000, "sop_cnd_pr": 0.0,
+        "rmt_mkt_cd": "NXT", "sor_mkt_sli_yn": "N",
+    }}
+    check_requests(calls)
+
+
+@pytest.mark.parametrize("daily", [
+    pytest.param(lambda: response(DAILY, []), id="no-row"),
+    pytest.param(lambda: response(DAILY, [ledger_row(itg_orr_no=998)]), id="other-row"),
+    pytest.param(lambda: response(DAILY, [ledger_row(), ledger_row()]), id="two-rows"),
+    pytest.param(lambda: (500, {}, {}), id="read-http-failure"),
+    pytest.param(lambda: TimeoutError("synthetic"), id="read-transport-failure"),
+    pytest.param(lambda: response(DAILY, [ledger_row(nmn_pr_tp_cd_nm="")]), id="unknown-order-type"),
+    pytest.param(lambda: response(DAILY, [ledger_row(rmt_mkt_cd="SOR")]), id="sor-market"),
+    pytest.param(lambda: response(DAILY, [{k: v for k, v in ledger_row().items() if k != "rmt_mkt_cd"}]),
+                 id="missing-market"),
+])
+def test_unresolved_original_ledger_row_sends_no_modification(daily, live_safety):
+    _, calls, modify = modify_with_ledger(daily(), live_safety)
+    with pytest.raises((InvalidResponseError, NotSupportedError, TransportError, BrokerRejectedError)):
+        modify()
+    assert ORDER + "modify" not in [item[1] for item in calls]
+
+
+@pytest.mark.parametrize("changes, side", [
+    ({"iem_cd": "000660"}, "buy"),
+    ({"sby_dit_cd_nm": "매도"}, "buy"),
+    ({}, "sell"),
+])
+def test_original_ledger_symbol_or_side_mismatch_sends_no_modification(changes, side, live_safety):
+    _, calls, modify = modify_with_ledger(response(DAILY, [ledger_row(**changes)]), live_safety, side=side)
+    with pytest.raises(InvalidResponseError, match="does not match"):
+        modify()
+    assert [item[1] for item in calls] == [DAILY]
+
+
+@pytest.mark.parametrize("ledger_id", [None, "", "mkt:999", "999", "itg:", "itg:bad", "itg:0"])
+def test_modify_requires_caller_asserted_ledger_number(ledger_id, live_safety):
+    broker, calls = make({}, safety=live_safety)
+    with pytest.raises((ConfigurationError, InvalidResponseError)):
+        broker.modify_order("mkt:101", request(), stop_condition_price=Decimal(0), original_ledger_id=ledger_id)
+    with pytest.raises(TypeError):
+        broker.modify_order("mkt:101", request(), stop_condition_price=Decimal(0))
+    assert calls == []

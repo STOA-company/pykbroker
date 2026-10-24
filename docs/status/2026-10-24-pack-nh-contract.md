@@ -32,7 +32,9 @@
 - 일부 정정 all_pat_dit_cd=2와 KRX/NXT 전체 Input_0 dict 회귀 보호.
 - IGW HTTP200 봉투 시험명에 synthetic 명시; 부분체결 정정 원주문은 합성 지정가.
 - dailyOrderExecution 스키마는 itg_orr_no/nmn_pr_tp_cd_nm/rmt_mkt_cd 제공, mkt_orr_no 없음.
-- mkt↔itg 추정 금지. 원장 원주문 지정용 API 결정 전 원장 시장/지정가 검증 미구현.
-- P2-3 시장가 원주문 가격정정 거절도 미구현; 합성 장면/시험명 정리만 반영.
+- 정정은 키워드 필수 original_ledger_id='itg:<번호>'; 당일 원장 행 정확히 1개 필요.
+- 원장 행 종목·방향 불일치·시장가·알 수 없는 호가유형·SOR/시장 없음·조회 실패 → 전송 0.
+- 정정 rmt_mkt_cd는 원장 rmt_mkt_cd(self.venue 아님).
+- 미확인(공식 모의에서 확인): mkt_orr_no↔itg_orr_no 연결은 호출자 단언, SDK 추정·검증 없음.
 - P2-4 미확인 계약·P2-5 위험 장부 재예약은 공식 모의 실측 단계, 이번 구현 제외.
-- 원본시험/돌연변이 로그: /home/quantus/runs/pay-terms-1013/l16-nhp2-1024/.
+- 원본시험/돌연변이 로그: /home/quantus/runs/pay-terms-1013/l16-nhp2-1024/, l16-nhp2b-1024/.

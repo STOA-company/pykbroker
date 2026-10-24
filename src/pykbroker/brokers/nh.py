@@ -765,10 +765,42 @@ class NH(BaseBroker):
             virtual=self.virtual,
         )
 
+    def _original_ledger_row(self, ledger_number: str, code: str, side: str) -> Mapping[str, Any]:
+        """Read the caller-named original order from today's ledger; any doubt sends nothing."""
+        rows = self._daily_rows()
+        matches = [
+            row for row in rows
+            if row.get("itg_orr_no") is not None
+            and _order_number(row["itg_orr_no"], max_digits=11) == ledger_number
+        ]
+        if len(matches) != 1:
+            raise InvalidResponseError("NH original order must appear exactly once in the daily ledger")
+        row = matches[0]
+        if self._symbol(row.get("iem_cd"), "KR") != code:
+            raise InvalidResponseError("NH original ledger order symbol does not match the modification")
+        if {"매수": "buy", "매도": "sell"}.get(str(row.get("sby_dit_cd_nm", "")).strip()) != side:
+            raise InvalidResponseError("NH original ledger order side does not match the modification")
+        kind = str(row.get("nmn_pr_tp_cd_nm", "")).strip()
+        if kind == "시장가":
+            raise NotSupportedError("NH original order is a market order; its price cannot be modified")
+        if kind not in {"보통가", "지정가"}:
+            raise InvalidResponseError("NH original ledger order type is not a known limit order")
+        venue = str(row.get("rmt_mkt_cd", "")).strip()
+        if venue not in {"KRX", "NXT"}:
+            raise NotSupportedError("NH original ledger market must be KRX or NXT")
+        return row
+
     def modify_order(
-        self, order_id: str, request: OrderRequest, *, stop_condition_price: Decimal
+        self, order_id: str, request: OrderRequest, *, stop_condition_price: Decimal,
+        original_ledger_id: str,
     ) -> Order:
         """Reprice a KR cash limit order's requested remainder, with a fresh client key.
+
+        ``original_ledger_id`` ('itg:<number>') is the caller's assertion that this
+        ledger row is the order placed as ``order_id``; the SDK does not infer the
+        mkt/itg link. The row must match symbol and side, be a limit order, and its
+        requested market is sent as ``rmt_mkt_cd``. A missing, duplicated or unreadable
+        row sends nothing.
 
         This uses the placement safety/idempotency scope: reusing a placement or
         modification key cannot transmit another write. Acknowledgement is not a fill.
@@ -779,10 +811,16 @@ class NH(BaseBroker):
         if not isinstance(order_id, str) or not order_id.startswith("mkt:"):
             raise ConfigurationError("NH modification requires the original market order number")
         number = _order_number(order_id[4:])
+        if not isinstance(original_ledger_id, str) or not original_ledger_id.startswith("itg:"):
+            raise ConfigurationError("NH modification requires the original ledger number as 'itg:<number>'")
+        ledger_number = _order_number(original_ledger_id[4:], max_digits=11)
         if (not isinstance(stop_condition_price, Decimal) or not stop_condition_price.is_finite()
                 or stop_condition_price < 0 or not math.isfinite(float(stop_condition_price))):
             raise ConfigurationError("NH stop condition price must be an explicit nonnegative Decimal")
         self._validate_order(request)
+        code = self._symbol(request.symbol, request.market)
+        original = self._call(lambda: self._original_ledger_row(ledger_number, code, request.side))
+        original_venue = str(original["rmt_mkt_cd"]).strip()
 
         def submit() -> Order:
             output = self._write("/krstock/order/v1/modify", {
@@ -795,7 +833,8 @@ class NH(BaseBroker):
                 # Required in the schema, but cash-limit semantics are undocumented.
                 # Caller must supply it explicitly; no invented zero default.
                 "sop_cnd_pr": float(stop_condition_price),
-                "rmt_mkt_cd": self.venue,
+                # Official: same market as the original order, read from its ledger row.
+                "rmt_mkt_cd": original_venue,
                 "sor_mkt_sli_yn": "N",
             })
             return Order(
