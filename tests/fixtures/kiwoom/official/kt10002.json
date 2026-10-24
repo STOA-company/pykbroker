@@ -1,0 +1,18 @@
+{
+  "request": {
+    "dmst_stex_tp": "KRX",
+    "orig_ord_no": "0000139",
+    "stk_cd": "005930",
+    "mdfy_qty": "1",
+    "mdfy_uv": "199700",
+    "mdfy_cond_uv": ""
+  },
+  "response": {
+    "ord_no": "0000140",
+    "base_orig_ord_no": "0000139",
+    "mdfy_qty": "000000000001",
+    "dmst_stex_tp": "KRX",
+    "return_code": 0,
+    "return_msg": "매수정정 주문입력이 완료되었습니다"
+  }
+}
