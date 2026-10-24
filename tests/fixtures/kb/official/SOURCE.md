@@ -31,3 +31,18 @@ SSQM2952 sheet42:51-55,68-72 names all ten quantity fields but gives no formula.
 SSAM1806 sheet28:13 describes 1=일부정정, 2=전부정정; its explicit cancel JSON uses 1 with quantity and reports successful cancellation. Use that demonstrated quantity-specific request, never infer value 2.
 SKAM2101 sheet63:15 and SKAM2102 sheet64:14 specify P4 String(15). The input sample has integer prices; live fractional input acceptance remains unverified.
 SPQM2204 sheet71:11-12 has no timezone definition. Preserve New York default and explicit order_date; live rollover must be checked.
+
+
+2026-10-24 public-document refresh (no broker service endpoint contacted):
+ZIP SHA256: 0635cdf4e52c41d1dbb6f1d62ec7bb0d7e979f676dcd2cf34ea95ff5bbe96e97
+XLSX SHA256: 880b43b447c14f1120d359f3c03deb0689fd0922871e5d961be71fd4dbaf14fe
+Additional samples use fake account/order/device identities and placeholder free-text messages; all other fields retain the downloaded shape and values. SSAM1805 and SSQM2341 exported processFlag B, so accepted/partial scenarios are explicitly synthetic.
+
+| File | Original member sha256 | Sanitized fixture sha256 |
+| --- | --- | --- |
+| SSAM1805.json | 0488d1e25fa7d79c35a3f113fde5b4840cece66f16aec2ee7e13191c8870ef78 | 0305d77c6f6703f9db44589b1277e83227ea696887f9de4e101630e8ba0c05f6 |
+| SSQM2341.json | da5a4d107ea6779a7a08153dbadf5663d2f94da84c31ab5bdc540f2c001e0f7e | 8172dbefc3c5f9ef03310e327f97361d87be1a880179b9e11c8125699abf1a90 |
+| SSQM0004.json | 0c0741f65789ed761f8f55beed8d76566fb5c16d68f7f18eccdcbc72dfba6df0 | a7997edb2f2d81b89fbf9876d537e8390a59b708c70b1af0cd864fdbcb0c3f57 |
+Scope/field evidence and remaining unknowns: [CONTRACT-2026-10-24.md](CONTRACT-2026-10-24.md).
+
+Official public error descriptions: https://openapi.kbsec.com/api/codes/public/B2C_error_code (confirmed 2026-10-24; linked by errorcode_b2c → js/unoCode.js). Unmodified fixture public-errors.json SHA256: ab7ccffcc70957f6baa4e9c6401548dd3a77ea430492faf3714a804df16fde01. This list defines no response-field location or numeric rate budget.

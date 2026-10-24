@@ -1,6 +1,6 @@
 # KB official response correction — 2026-10-08
 - Scope: KB adapter only; integration base a7bf2a84562073807118ab06b2bd83c122a1bb2c.
-- Result: partial; official SPQM2226 export is incomplete and cannot safely become an empty account.
+- Result: partial; SPQM2226 remains incomplete; 10-24 KR limit amendment contract added.
 - Customer scenes: ambiguous/nonempty KR holdings fail explicitly; US nonempty evidence cannot become empty.
 - SKQM3350: count active currency rows; zero/blank fixed-array padding excluded (6 active of 10).
 - Funding rejects missing active rows, nonzero unidentified padding, malformed rows and duplicate USD.
@@ -35,3 +35,9 @@
 - No mock API. First live call: independent review + CEO approval, one real-account read only.
 - Then approved one-share limit order/cancel reconciliation; no live order authorization in this PR.
 - Draft PR + do-not-merge only; no merge, deployment, VM/DB/queue access or independent review invocation.
+
+## 2026-10-24 domestic contract delta
+- Contract/source/unknowns: tests/fixtures/kb/official/CONTRACT-2026-10-24.md and SOURCE.md.
+- KB-only SSAM1805 quantity-specific amendment uses existing safety/dedupe; ACK side unknown.
+- Stateful fake + real REST JSON-byte replay cover limit buy/sell, partial fill, amend/cancel/ledger, explicit token reissue.
+- Market price sentinel, nonempty KR holdings, native error placement and numeric quota remain unverified; scope partial.
