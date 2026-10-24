@@ -18,7 +18,7 @@ from datetime import UTC, date, datetime, timedelta
 from urllib.parse import urlencode
 
 from pykbroker._http import urlopen
-from pykbroker.brokers._common import BaseBroker, decimal, optional_price, whole
+from pykbroker.brokers._common import BaseBroker, PageRows, decimal, optional_price, whole
 from pykbroker.exceptions import (
     BrokerRejectedError,
     ConfigurationError,
@@ -70,6 +70,14 @@ LS_CODES = {
     "broker_type": "",
 }
 LS_US_VENUES = {"NYSE": "81", "NASDAQ": "82"}
+# Holdings continuation (tr_cont/tr_cont_key headers, t0424 cts_expcode): a list that does not
+# end within this many pages is refused, never cut short.
+LS_MAX_PAGES = 20
+# Official row identity: t0424OutBlock1 symbol + 잔고구분 + 대출일자 + 만기일자;
+# COSOQ00201OutBlock4 symbol + currency + 잔고구분 + market + loan fields.
+LS_KR_ROW_KEY = ("expcode", "jangb", "loandt", "lastdt")
+LS_US_ROW_KEY = ("ShtnIsuNo", "IsuNo", "CrcyCode", "AstkBalTpCode", "FcurrMktCode", "LoanDt",
+                 "LoanDtlClssCode", "DueDt")
 LS_SPEC_VERIFIED = False  # Global veto only; True never enables live orders.
 # Official REST address; mock/real account binding is still unverified.
 LS_API_BASE_URL = "https://openapi.ls-sec.co.kr:8080"
@@ -376,8 +384,17 @@ class LS(RestBroker):
                    "tr_cont": tr_cont, "tr_cont_key": tr_cont_key}
         return self._client.post(path, headers=headers, json=body)
 
-    def _response(self, path, tr, body, *, write=False, tr_cont="N", tr_cont_key=""):
+    def _last_headers(self):
+        headers = getattr(self._client, "response_headers", None)
+        if not isinstance(headers, Mapping):
+            return None
+        return {str(k).lower(): v for k, v in headers.items()}
+
+    def _response(self, path, tr, body, *, write=False, tr_cont="N", tr_cont_key="", cont_key=None):
         self._verify_mode(self._client)
+        if cont_key is not None:
+            # Serving-line callers (US holdings continuation) pass the previous response key.
+            tr_cont, tr_cont_key = "Y", cont_key
         result = self._request(path, tr, body, tr_cont=tr_cont, tr_cont_key=tr_cont_key)
         if not isinstance(result, dict):
             raise InvalidResponseError("Invalid LS response; reconcile writes before retrying")
@@ -559,7 +576,7 @@ class LS(RestBroker):
                         last=decimal(row["OvrsScrtsCurpri"]),
                         market_value=decimal(row["FcurrEvalAmt"]),
                     )
-                    for row in self._us_rows(self._us_balance(), "COSOQ00201OutBlock4")
+                    for row in self._us_holdings()
                     if row["CrcyCode"] == "USD"
                 ]
 
@@ -568,6 +585,10 @@ class LS(RestBroker):
         def read():
             body = {key: self._code(key) for key in ("prcgb", "chegb", "dangb", "charge")}
             body["cts_expcode"] = ""
+            pages = PageRows(LS_KR_ROW_KEY, "LS KR")
+            for response in self._pages("/stock/accno", "t0424", {"t0424InBlock": body},
+                                        block="t0424OutBlock", cursor="cts_expcode"):
+                pages.add(self._rows(response, "t0424OutBlock1"))
             return [
                 Position(
                     symbol=self._response_symbol(row["expcode"]),
@@ -578,9 +599,7 @@ class LS(RestBroker):
                     last=decimal(row["price"]),
                     market_value=decimal(row["appamt"]),
                 )
-                for response in self._pages("/stock/accno", "t0424", {"t0424InBlock": body},
-                                            block="t0424OutBlock", cursor="cts_expcode")
-                for row in self._rows(response, "t0424OutBlock1")
+                for row in pages.rows
             ]
 
         return self._call(read)
@@ -710,16 +729,41 @@ class LS(RestBroker):
         if headers.get("tr_cont") != "N" or headers.get("tr_cont_key") not in ("", None):
             raise SpecUnverifiedError("LS US continued account snapshots are not implemented")
 
+    _US_BALANCE_REQUEST = {
+        "COSOQ00201InBlock1": {"RecCnt": 1, "BaseDt": "", "CrcyCode": "USD", "AstkBalTpCode": "10"},
+    }
+
     def _us_balance(self):
-        response = self._response(
-            "/overseas-stock/accno",
-            "COSOQ00201",
-            {
-                "COSOQ00201InBlock1": {"RecCnt": 1, "BaseDt": "", "CrcyCode": "USD", "AstkBalTpCode": "10"},
-            },
-        )
+        response = self._response("/overseas-stock/accno", "COSOQ00201", dict(self._US_BALANCE_REQUEST))
         self._us_complete()
         return response
+
+    def _us_next_key(self, seen):
+        # Official US continuation: response header tr_cont=Y with tr_cont_key; N with no key = last page.
+        headers = self._last_headers()
+        if headers is None:
+            raise SpecUnverifiedError("LS US reads require response continuation headers")
+        flag, key = headers.get("tr_cont"), headers.get("tr_cont_key")
+        if flag == "N" and key in ("", None):
+            return None
+        if flag == "Y" and isinstance(key, str) and key.strip() and key.strip() not in seen:
+            seen.add(key.strip())
+            return key.strip()
+        raise InvalidResponseError("LS US continuation headers do not show where the list ends")
+
+    def _us_holdings(self):
+        pages, seen, key = PageRows(LS_US_ROW_KEY, "LS US"), set(), None
+        for index in range(LS_MAX_PAGES):
+            request = dict(self._US_BALANCE_REQUEST)
+            if index == 0:
+                response = self._response("/overseas-stock/accno", "COSOQ00201", request)
+            else:
+                response = self._response("/overseas-stock/accno", "COSOQ00201", request, cont_key=key)
+            pages.add(self._us_rows(response, "COSOQ00201OutBlock4"))
+            key = self._us_next_key(seen)
+            if key is None:
+                return pages.rows
+        raise InvalidResponseError("LS US holdings exceeded the page limit; refusing a truncated result")
 
     def _us_orders(self, symbol):
         if self._order_date is None:
