@@ -1,4 +1,4 @@
-"""Kiwoom KR/US broker over a stored token, with explicit au10001 issuance: reads, limit orders and single cancels.
+"""Kiwoom broker over a stored token: KR cash market/limit orders, limit amendments and single cancels.
 
 Spec: the official portal pages of 2026-09-26 12:44 KST (openapi.kiwoom.com/guide/apiGuideContents/...), as
 extracted in q-gateway plans/kiwoom_rest_spec.md. US source: official Kiwoom-Securities/Kiwoom-REST-API
@@ -23,7 +23,17 @@ from pykbroker.exceptions import (
     NotSupportedError,
     TransportError,
 )
-from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
+from pykbroker.models import (
+    AmendRequest,
+    Balance,
+    CancelRequest,
+    Capabilities,
+    Order,
+    OrderRequest,
+    Position,
+    Quote,
+    Rules,
+)
 from pykbroker.models.order import OrderType, Side
 from pykbroker.rules.kr import KST, equity_rules
 from pykbroker.safety.gate import OrderSafety
@@ -35,11 +45,12 @@ from ._common import BaseBroker, decimal, whole
 # spelled here once so that `virtual` alone picks it.
 KIWOOM_API_BASE_URL = "https://api.kiwoom.com"
 KIWOOM_MOCK_BASE_URL = "https://mockapi.kiwoom.com"
-# Spec: real 5 order and 5 read calls/s, mock «TR 1개당 1초 1회», but whether a bucket is per TR or per account is
-# unstated. Every TR is at most 1/s and KR read TRs sum to 5 (3 x 1 + 4 x 0.5).
+# Spec per account/token: real 5 order and 5 read calls/s; mock 1 call/TR/s
+# (openapi.kiwoom.com/intro, checked 2026-10-24). Every TR here is at most 1/s;
+# four KR write TRs sum to 4/s and KR read TRs sum to 5 (3 x 1 + 4 x 0.5).
 KIWOOM_TR_RATE_LIMITS: dict[str, float] = {
     "ka10001": 1, "ka10004": 1, "kt00001": 0.5, "kt00018": 1, "ka10075": 0.5, "kt00007": 0.5,
-    "kt00011": 0.5, "kt10000": 1, "kt10001": 1, "kt10003": 1,
+    "kt00011": 0.5, "kt10000": 1, "kt10001": 1, "kt10002": 1, "kt10003": 1,
     "usa20100": 0.4, "usa20101": 0.4, "ust21050": 0.4, "ust21070": 0.4,
     "ust21110": 0.4, "ust21150": 0.4, "ust31490": 0.4,
     "ust20000": 1, "ust20001": 1, "ust20003": 1,
@@ -56,7 +67,8 @@ KIWOOM_POSITION_EXCHANGES = frozenset({"KRX"})
 KIWOOM_POSITION_QUERY_TYPES = frozenset({"1", "2"})
 # Page size and page count are unstated: a list that does not end within this many pages is refused, not cut short.
 KIWOOM_MAX_PAGES = 20
-# expires_dt is 14 digits (YYYYMMDDHHMMSS) in the sample; its zone and the token lifetime are not stated. It is read as
+# expires_dt is 14 digits (YYYYMMDDHHMMSS) in the sample; its zone is not stated. The official serviceInfo page
+# confirms a 24-hour lifetime (2026-10-24), but the returned expiry is still authoritative. It is read as
 # KST, the earlier of the plausible readings, and a margin is kept: expiry is judged early, never late.
 TOKEN_EXPIRY_MARGIN = timedelta(minutes=5)
 _EXPIRES_DT = re.compile(r"\d{14}")
@@ -65,9 +77,10 @@ _ORDER_NO = re.compile(r"[0-9]{1,7}")
 _US_ORDER_NO = re.compile(r"[0-9]{1,9}")
 _US_VENUES = {"NASDAQ": "ND", "NYSE": "NY", "AMEX": "NA"}
 _UNEXPECTED_ERROR_CODE = 1999
-# trde_tp 0 (보통) is the only order type sent; ka10075/kt00007 spell types in Korean (보통 / 지정가 / 시장가), and any
+# trde_tp 0 (보통) and 3 (시장가) are documented; ka10075/kt00007 spell types in Korean, and any
 # other name stays unknown.
 KIWOOM_LIMIT_TRDE_TP = "0"
+KIWOOM_MARKET_TRDE_TP = "3"
 _TYPE_NAMES: dict[str, OrderType] = {"보통": "limit", "지정가": "limit", "시장가": "market"}
 _SIDE_NAMES: dict[str, Side] = {"매수": "buy", "매도": "sell"}
 _JSON_HEADERS = {"content-type": "application/json; charset=utf-8"}
@@ -298,6 +311,7 @@ class Kiwoom(BaseBroker):
         return Capabilities(
             supports_spot=True,
             supports_limit_order=True,
+            supports_market_order=self.market == "KR",
             supports_single_order_cancel=True,
             supports_order_history=True,
             # ka10075 is a snapshot, but the spec does not say how current it is: not declared real-time.
@@ -419,8 +433,10 @@ class Kiwoom(BaseBroker):
 
     def _validate_order(self, request: OrderRequest | CancelRequest) -> None:
         super()._validate_order(request)
-        if isinstance(request, OrderRequest) and request.order_type != "limit":
-            raise NotSupportedError("Kiwoom implements limit orders only")
+        if isinstance(request, OrderRequest) and request.order_type not in (
+            ("limit", "market") if self.market == "KR" else ("limit",)
+        ):
+            raise NotSupportedError("Kiwoom supports KR market/limit orders and US limit orders")
         pattern = _US_ORDER_NO if self.market == "US" else _ORDER_NO
         if isinstance(request, CancelRequest) and not (pattern.fullmatch(request.order_id) and int(request.order_id)):
             # all zeros is the «no original order» filler, never a real order number
@@ -441,8 +457,8 @@ class Kiwoom(BaseBroker):
             "dmst_stex_tp": "KRX",
             "stk_cd": code,
             "ord_qty": str(request.quantity),
-            "ord_uv": str(int(request.price)),
-            "trde_tp": KIWOOM_LIMIT_TRDE_TP,
+            "ord_uv": str(int(request.price)) if request.price is not None else "",
+            "trde_tp": KIWOOM_LIMIT_TRDE_TP if request.order_type == "limit" else KIWOOM_MARKET_TRDE_TP,
         }
         response = self._write("/api/dostk/ordr", "kt10000" if request.side == "buy" else "kt10001", body)
         if response.get("dmst_stex_tp", "KRX") != "KRX":
@@ -452,12 +468,66 @@ class Kiwoom(BaseBroker):
             id=response["ord_no"],
             symbol=code,
             side=request.side,
-            order_type="limit",
+            order_type=request.order_type,
             quantity=request.quantity,
             price=request.price,
             status="accepted",
             virtual=self.virtual,
         )
+
+    def amend_order(self, request: AmendRequest) -> Order:
+        """kt10002: one guarded KR limit amendment. The acknowledgement is not a confirmed fill.
+
+        Quantity must be explicit and positive. The documented zero-for-all variant is deliberately absent,
+        so the safety gate can reserve the full amended notional before sending. Never automatically retried.
+        """
+        request = AmendRequest.model_validate(request.model_dump())
+        if self.market != "KR":
+            raise NotSupportedError("Kiwoom amendment supports KR only")
+        self._validate_order(request)
+        if not (_ORDER_NO.fullmatch(request.order_id) and int(request.order_id)):
+            raise ConfigurationError("Kiwoom order number format is invalid for this market")
+
+        def submit() -> Order:
+            code = self._symbol(request.symbol, request.market)
+            # AmendRequest carries no original type and this adapter keeps no order cache.
+            # kt10002 preserves the original type, so only a listed limit order may receive a price amendment.
+            originals = [order for order in self.list_orders(code) if order.id == request.order_id]
+            if len(originals) != 1 or originals[0].order_type != "limit":
+                raise NotSupportedError(
+                    "Kiwoom price amendment requires a confirmed limit original order; "
+                    "market or unknown original orders are not supported"
+                )
+            response = self._write(
+                "/api/dostk/ordr",
+                "kt10002",
+                {
+                    "dmst_stex_tp": "KRX",
+                    "orig_ord_no": request.order_id,
+                    "stk_cd": code,
+                    "mdfy_qty": str(request.quantity),
+                    "mdfy_uv": str(int(request.price)),
+                },
+            )
+            _order_number(response.get("base_orig_ord_no"))
+            if (
+                response["ord_no"] == request.order_id
+                or whole(response["mdfy_qty"]) != request.quantity
+                or response.get("dmst_stex_tp", "KRX") != "KRX"
+            ):
+                raise InvalidResponseError("Kiwoom amendment acknowledgement differs; reconcile before retrying")
+            # base_orig_ord_no is the root, not necessarily the immediately preceding order number.
+            # Neither side nor original order type is echoed: preserve their unknown broker state.
+            return Order(
+                id=response["ord_no"],
+                symbol=code,
+                quantity=request.quantity,
+                price=request.price,
+                status="accepted",
+                virtual=self.virtual,
+            )
+
+        return self.safety.execute(self.broker_code, self._account, request, lambda: self._call(submit))
 
     def _cancel_order(self, request: CancelRequest) -> Order:
         code = self._symbol(request.symbol, request.market)

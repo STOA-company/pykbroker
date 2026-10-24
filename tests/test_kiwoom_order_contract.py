@@ -130,10 +130,9 @@ def test_sell_goes_to_kt10001_and_a_virtual_account_to_the_mock_host(live_safety
     assert (order.id, order.side, order.status, order.virtual) == ("0000138", "sell", "accepted", True)
 
 
-def test_orders_other_than_kr_limit_krx_are_refused_before_any_request(live_safety):
+def test_orders_other_than_kr_market_limit_krx_are_refused_before_any_request(live_safety):
     broker, client = make({}, safety=live_safety)
     for request in (
-        buy(order_type="market", price=None),
         buy(order_type="close"),
         buy(venue="NXT"),
         buy(venue="SOR"),
@@ -323,11 +322,11 @@ def test_cancel_refusal_and_transport_failure_are_classified_once(live_safety):
     assert len(client.calls) == 1
 
 
-def test_amend_and_market_orders_stay_unsupported():
+def test_us_amend_and_unimplemented_cash_query_stay_unsupported():
     source = inspect.getsource(module)
     code = "\n".join(line.split("#")[0] for line in source.splitlines())
-    assert "kt10002" not in code and "ust20002" not in code and "kt00010" not in code
-    assert not hasattr(Kiwoom, "modify_order") and not hasattr(Kiwoom, "amend_order")
+    assert "ust20002" not in code and "kt00010" not in code
+    assert not hasattr(Kiwoom, "modify_order") and hasattr(Kiwoom, "amend_order")
     assert BROKERS["kiwoom"] is Kiwoom
 
 

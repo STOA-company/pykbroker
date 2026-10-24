@@ -5,7 +5,7 @@ lang: en
 
 # Broker support matrix
 
-This describes the extracted implementation as of 2026-10-01, with Kiwoom changes as of 2026-10-08. All validation uses mocks and synthetic fixtures for offline contract checks. **Real APIs, paper accounts, and live trading have not been validated.**
+This describes the extracted implementation as of 2026-10-01, with Kiwoom changes as of 2026-10-24. All validation uses mocks and synthetic fixtures for offline contract checks. **Real APIs, paper accounts, and live trading have not been validated.**
 
 | Adapter | Query/order markets | Single-order cancellation | Market orders | NXT | Status |
 | --- | --- | --- | --- | --- | --- |
@@ -13,7 +13,7 @@ This describes the extracted implementation as of 2026-10-01, with Kiwoom change
 | DBFI | KR / US | Supported | KR, separate session and valuation authorization required | KR | Conversion implementation and offline tests |
 | Toss | KR | Entire unfilled remainder | KR, separate session and valuation authorization required | Unsupported | SDK bridge checked with mocks |
 | LS | KR | Mapped, locked | Mapped, locked | Unsupported | Formal module/factory, `LS_SPEC_VERIFIED = False` |
-| Kiwoom | KR (KRX) / US, limit orders | Supported (KR confirmed quantities reconciled; US full remainder) | Unsupported | Unsupported | Registered REST adapter; offline contracts |
+| Kiwoom | KR (KRX) cash market/limit orders / US limit orders | Supported (KR confirmed quantities reconciled; US full remainder) | KR, separate session and valuation authorization required | Unsupported | Registered REST adapter; stateful offline contracts |
 | NH | KR (KRX/NXT), cash limit orders | Supported (acknowledgement only) | Unsupported | KRX/NXT | Registered REST adapter; offline contracts; live orders locked by default |
 | KB | KR (KRX) / US limit orders | Quantity-specific KR / entire US remainder (acknowledgement only) | Unsupported | Unsupported | Registered REST adapter; official samples checked offline; writes locked by default, no mock API, KR quantities unverified, US holdings sample incomplete |
 
@@ -23,9 +23,9 @@ KIS/DB US orderable cash varies by account type and requires an injected `cash_p
 
 TODO: Kiwoom US limit orders already exist in the base; this KR change does not add them. LS US requests map the official COSAT00301 limit and cancel fields, and live transmission stays locked by default. LS queries are offline contract checks against official fields, not verified against real account responses. NH KR/US remains offline-verified; actual API responses and domestic market-order-number to integrated-order-number reconciliation remain unverified. KB has official endpoint/TR mappings and explicit token issuance; incomplete official US holdings responses are rejected.
 
-## Kiwoom (2026-10-08)
+## Kiwoom (2026-10-24)
 
-`create_broker("kiwoom", ...)` uses the existing REST adapter with a stored token and app key. Construction never issues a token. Order/cancel transmission remains disabled by default (`OrderSafety` dry run); no new environment toggle enables it. `virtual=True` selects the mock host. Direct amendment is absent from the common SDK contract; amendment ledger fixtures leave an affected original order unknown unless fully executed.
+`create_broker("kiwoom", ...)` uses the existing REST adapter with a stored token and app key. Construction never issues a token. Order/cancel transmission remains disabled by default (`OrderSafety` dry run); no new environment toggle enables it. `virtual=True` selects the mock host. KR cash market/limit buys and sells are mapped; market orders retain the session authorization and KRW valuation requirements. `Kiwoom.amend_order(AmendRequest(...))` submits a KR limit amendment; the common SDK protocol gains no amendment method. Amendment acknowledgements return a new order ID with unknown side/type. Amendment ledger fixtures leave an affected original order unknown unless fully executed.
 
 Official ka10095 lower limit `-85200` and ka10001 yearly low `-91200` establish direction-signed price strings: `+` and `-` preserve magnitude. Band consistency checks remain; quantity parsing receives no price-sign conversion.
 
@@ -39,7 +39,7 @@ Legacy `experimental.kiwoom.get_balance` is blocked before transport because it 
 
 The existing `examples/kiwoom_mock_roundtrip.py` is dry-run by default. With `--execute` and missing/blank mock keys it prints “키 없음”, returns `missing_keys` and exits 0 without constructing a client. That status means skipped, not successful. The mocked order/query/cancel round trip is tested; no broker API was called. The actual mock round trip and independent review remain pending mock-key issuance.
 
-See [KR order change pack](../status/2026-10-08-pack-kiwoom-kr-live.md) and [official provenance](../../tests/fixtures/kiwoom/official/SOURCE.md).
+See [KR order change pack](../status/2026-10-08-pack-kiwoom-kr-live.md) and [official provenance](../../tests/fixtures/kiwoom/official/SOURCE.md), and [KR contract/unknowns](../../tests/fixtures/kiwoom/CONTRACT.md).
 
 ## NH (2026-10-01)
 

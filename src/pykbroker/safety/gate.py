@@ -9,7 +9,7 @@ from typing import TypeVar
 from zoneinfo import ZoneInfo
 
 from pykbroker.exceptions import BrokerError, CircuitOpenError, DuplicateOrderError, RiskCapError, SafetyError
-from pykbroker.models import CancelRequest, OrderRequest
+from pykbroker.models import AmendRequest, CancelRequest, OrderRequest
 
 from .dry_run import DryRun, mask_account
 from .idempotency import IdempotencyStore, scope_key
@@ -56,7 +56,13 @@ class OrderSafety:
             raise RiskCapError("risk_caps: limits and usage ledger are required")
         DryRun(self.limits.dry_run).require_live()
         amount = Decimal(0)
-        action = "cancel" if isinstance(request, CancelRequest) else "place"
+        action = (
+            "cancel"
+            if isinstance(request, CancelRequest)
+            else "amend"
+            if isinstance(request, AmendRequest)
+            else "place"
+        )
         if isinstance(request, OrderRequest):
             if request.order_type == "market":
                 if self.market_order_allowed is None or self.market_order_allowed(request) is not True:

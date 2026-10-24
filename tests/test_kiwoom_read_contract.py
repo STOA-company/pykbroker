@@ -583,20 +583,21 @@ def test_limiter_is_awaited_before_each_post():
 # --- boundaries ---
 
 
-def test_market_and_after_hours_orders_are_refused_before_any_request():
+def test_after_hours_orders_are_refused_before_any_request():
     broker, made = make()
-    for order_type in ("market", "close"):
+    for order_type in ("close",):
         request = OrderRequest(symbol="005930", side="buy", quantity=1, order_type=order_type, client_key="k")
         with pytest.raises(NotSupportedError):
             broker.place_order(request)
     assert made[0].calls == []
 
 
-def test_capabilities_admit_kr_limit_orders_and_single_cancel_only():
+def test_capabilities_admit_kr_market_limit_orders_and_single_cancel():
     caps = make()[0].capabilities()
     assert caps.venues == ("KRX",) and caps.markets == ("KR",) and caps.supports_virtual_account is True
     assert caps.supports_limit_order and caps.supports_single_order_cancel and caps.supports_order_history
-    assert not (caps.supports_market_order or caps.supports_nxt or caps.realtime_open_orders)
+    assert caps.supports_market_order
+    assert not (caps.supports_nxt or caps.realtime_open_orders)
 
 
 def test_us_requires_a_venue_and_wrong_market_quote_is_refused():
@@ -792,7 +793,10 @@ def test_pinned_us_direction_prices_cover_quote_positions_and_order_prices(down_
     assert module._price(basic["oyr_lwst"]) == Decimal("164.2700")
     quote = broker.get_quote("NVDA", market="US")
     assert (quote.last, quote.bid, quote.ask, quote.prev_close) == (
-        Decimal("201.4700"), Decimal("201.4200"), Decimal("201.5300"), Decimal("200.0400")
+        Decimal("201.4700"),
+        Decimal("201.4200"),
+        Decimal("201.5300"),
+        Decimal("200.0400"),
     )
     (position,) = broker.positions()
     assert (position.average_price, position.last) == (Decimal("282.1603"), Decimal("275.2400"))

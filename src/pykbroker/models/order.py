@@ -48,6 +48,17 @@ class Order(Model):
     virtual: bool = False
 
 
+class AmendRequest(OrderRequest):
+    """Change a positive quantity to a new limit price; support is adapter-specific.
+
+    The side describes the caller's original intent for risk valuation. A broker acknowledgement that
+    does not echo the original side must not turn it into a broker-confirmed side.
+    """
+
+    order_id: str = Field(min_length=1)
+    order_type: Literal["limit"] = "limit"
+
+
 class CancelRequest(Model):
     order_id: str = Field(min_length=1)
     symbol: str = Field(min_length=1)
