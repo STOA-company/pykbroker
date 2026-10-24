@@ -1,0 +1,40 @@
+# NH 국내 현금 계약 모의 — 2026-10-24
+- base 2573cad: 기존 등록 brokers.nh.NH와 official fixture를 재사용.
+- experimental/nh.py의 NH_SPEC_VERIFIED=False 유지; 실·공식모의 API 호출 0.
+- trader nh_order.py는 로컬 스켈레톤; 운영 검증 로직 재사용 전제 미실재.
+- 정본 계약표: tests/fixtures/nh/official/CONTRACT-2026-10-24.md.
+- 최신 KR 공개 스키마 7경로: tests/fixtures/nh/official/krstock-1024.json.
+- 공식 token HTTP 경계: form 필드4개를 query로 이동, body는 비움; urlopen fake로 검증.
+- official message.msg_code/usr_msg와 legacy rsp_cd/rsp_msg 수용; 불일치 거절.
+- 정상 코드/주문번호가 실패 문구를 덮지 않음; code/message 타입 검사.
+- IGW40044도 조회 1회 갱신, 송신 주문은 토큰 폐기만 하고 재전송 0.
+- KR 시장가 05, 지정가 01; 시장가 optional 가격·금액 생략.
+- 원장 시장가 이름 매핑; US 지원 범위는 변경 없음.
+- NH.modify_order로 현금 지정가 정정, 기존 safety/place key scope 재사용.
+- 정정 sop_cnd_pr는 명시 Decimal 필수; 합성 0의 실제 의미 미확인.
+- 정정 응답 mkt 번호를 다음 취소에 사용; ack를 최종 취소/체결로 승격하지 않음.
+- mkt↔itg 연결 미확인 유지; placed status unknown, 부분체결 조회만 별도 검증.
+- 성공코드 00000 등은 기존 호환값; 공식 성공 의미 이번 문서에서 미확인.
+- 공식 오류표 IGW40019/31/32/43/44, IGW42901/02/03을 근거로 시험.
+- 오류 코드의 HTTP/envelope 조합은 합성 가정, 문서에 분리.
+- 신규 시험 tests/test_nh_contract_1024.py, 기존 NH fake 2종 재사용.
+- 기존 잔고·보유·토큰 expiry·호출속도 시험 유지; 새 틀 없음.
+- 공통 변경 없음: _rest/base/fake/q_venue_table 미변경.
+- 실제 주문·정정·취소·체결은 안 걸어 봄; 공식 모의·시험 계좌 뒤 확인.
+- 검증 명령: python -m pytest -q tests; python -m bandit -q 변경 Python 파일.
+- 실행 환경: /tmp/nh-contract-venv/bin/python (CPython 3.13.12, dev extra).
+- 롤백: 이 작업 커밋 revert; 배포물 없음, dev/prod/머지 범위 아님.
+
+## P2 검수 후속 (2026-10-24, 완료 범위는 REPORT 참조)
+- 쓰기는 정상 코드+완료/정상처리/접수 문장 전체 허용+유효 번호를 모두 요구.
+- 부족금액·종목코드 원인 서술·빈/없는 메시지는 unknown 예외, 재전송 없음.
+- 성공 합성 fixture는 명시 완료 메시지 포함, 실제 NH 메시지 관측 아님.
+- 일부 정정 all_pat_dit_cd=2와 KRX/NXT 전체 Input_0 dict 회귀 보호.
+- IGW HTTP200 봉투 시험명에 synthetic 명시; 부분체결 정정 원주문은 합성 지정가.
+- dailyOrderExecution 스키마는 itg_orr_no/nmn_pr_tp_cd_nm/rmt_mkt_cd 제공, mkt_orr_no 없음.
+- 정정은 키워드 필수 original_ledger_id='itg:<번호>'; 당일 원장 행 정확히 1개 필요.
+- 원장 행 종목·방향 불일치·시장가·알 수 없는 호가유형·SOR/시장 없음·조회 실패 → 전송 0.
+- 정정 rmt_mkt_cd는 원장 rmt_mkt_cd(self.venue 아님).
+- 미확인(공식 모의에서 확인): mkt_orr_no↔itg_orr_no 연결은 호출자 단언, SDK 추정·검증 없음.
+- P2-4 미확인 계약·P2-5 위험 장부 재예약은 공식 모의 실측 단계, 이번 구현 제외.
+- 원본시험/돌연변이 로그: /home/quantus/runs/pay-terms-1013/l16-nhp2-1024/, l16-nhp2b-1024/.
