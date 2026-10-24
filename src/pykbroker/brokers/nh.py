@@ -1,4 +1,4 @@
-"""NH PLUG KR/US reads and guarded cash limit orders.
+"""NH PLUG reads, KR cash limit/market orders and US cash limit orders.
 
 Specifications: https://www.nhplug.com/openapi-docs/common/openapi.json and
 https://www.nhplug.com/openapi-docs/krstock/openapi.json and
@@ -9,6 +9,7 @@ token file is created by this adapter.
 """
 
 import json
+import math
 import re
 import urllib.error
 import urllib.parse
@@ -52,8 +53,9 @@ NH_MAX_BALANCE_PAGES = 100
 _OPTIONS = {"app_key", "app_secret", "token", "token_type", "expires_at", "acct_type", "brand"}
 _VENUES = frozenset({"KRX", "NXT", "UNT"})
 _COMPLETED = re.compile(
-    r"(?:^|\s)(?:조회\s*)?완료(?:되었습니다|됐습니다|했습니다|됨)?[.!\s]*$|"
-    r"(?:^|\s)정상\s*처리되었습니다[.!\s]*$"
+    r"(?:주문\s*)?(?:완료(?:되었습니다|됐습니다|했습니다|됨)?|"
+    r"정상\s*처리(?:되었습니다|됐습니다|했습니다|됨)?|"
+    r"접수(?:되었습니다|됐습니다|했습니다|됨)?)[.!\s]*"
 )
 
 
@@ -67,7 +69,13 @@ class _NhRestClient:
     def post(
         self, path: str, *, headers: Mapping[str, str], data: bytes
     ) -> tuple[int, Mapping[str, Any], Mapping[str, str]]:
-        request = urllib.request.Request(self.base_url + path, data=data, headers=dict(headers), method="POST")
+        url = self.base_url + path
+        if path == "/oauth2/token":
+            # Official common schema and SDK put all four OAuth fields in query.
+            # Keep the injectable transport input compatible; move only at HTTP boundary.
+            url += "?" + data.decode("ascii")
+            data = b""
+        request = urllib.request.Request(url, data=data, headers=dict(headers), method="POST")
         try:
             with urlopen(request, timeout=self.timeout) as response:
                 return response.status, _json_object(response.read()), dict(response.headers)
@@ -130,6 +138,35 @@ def _order_number(value: Any, *, max_digits: int = 10) -> str:
     if not number.isascii() or not number.isdigit() or len(number) > max_digits or not int(number):
         raise InvalidResponseError("NH order number is invalid; reconcile before retrying")
     return str(int(number))
+
+
+def _response_message(body: Mapping[str, Any]) -> str | None:
+    nested = body.get("message")
+    if nested is not None and not isinstance(nested, Mapping):
+        raise InvalidResponseError("NH response message is malformed")
+    messages = [body.get("rsp_msg"), nested.get("usr_msg") if nested is not None else None]
+    for message in messages:
+        if message is not None and not isinstance(message, str):
+            raise InvalidResponseError("NH response message is malformed")
+    present = [message for message in messages if message is not None]
+    if len(set(present)) > 1:
+        raise InvalidResponseError("NH response messages conflict; reconcile before retrying")
+    return present[0] if present else None
+
+
+def _response_code(body: Mapping[str, Any]) -> str:
+    """Read the official Message envelope, retaining legacy wire compatibility."""
+    message = body.get("message")
+    if message is not None and not isinstance(message, Mapping):
+        raise InvalidResponseError("NH response message is malformed")
+    official = message.get("msg_code") if message is not None else None
+    legacy = body.get("rsp_cd")
+    for code in (official, legacy):
+        if code is not None and not isinstance(code, str):
+            raise InvalidResponseError("NH response code is invalid; reconcile before retrying")
+    if official is not None and legacy is not None and official.strip() != legacy.strip():
+        raise InvalidResponseError("NH response codes conflict; reconcile before retrying")
+    return (official if official is not None else legacy or "").strip()
 
 
 class NH(BaseBroker):
@@ -341,25 +378,25 @@ class NH(BaseBroker):
         data = json.dumps({"Input_0": payload}, ensure_ascii=False).encode("utf-8")
         self._limiter.wait("read")
         status, body, response_headers = self._post_raw(client or self._client, path, headers, data)
-        if status == 401 or (status == 200 and str(body.get("rsp_cd", "")).strip() == "IGW40043"):
+        if status == 401 or (status == 200 and _response_code(body) in {"IGW40043", "IGW40044"}):
             # HTTP 401 and this business code both mean an invalid access token.
             self._discard_token()
             self._ensure_token()
             headers["authorization"] = f"Bearer {self._token}"
             self._limiter.wait("read")
             status, body, response_headers = self._post_raw(client or self._client, path, headers, data)
-        if status == 401 or (status == 200 and str(body.get("rsp_cd", "")).strip() == "IGW40043"):
+        if status == 401 or (status == 200 and _response_code(body) in {"IGW40043", "IGW40044"}):
             self._discard_token()
             raise ConfigurationError("NH token was rejected")
         if status == 429:
             raise TransportError("NH read rate limit")
         if status != 200:
             raise TransportError(f"NH read HTTP {status}")
-        code = str(body.get("rsp_cd", "")).strip()
+        code = _response_code(body)
         nested = body.get("message")
         if nested is not None and not isinstance(nested, Mapping):
             raise InvalidResponseError("NH response message is malformed")
-        message = body.get("rsp_msg") or (nested.get("usr_msg") if nested is not None else None)
+        message = _response_message(body)
         if message is not None and not isinstance(message, str):
             raise InvalidResponseError("NH response message is malformed")
         if code not in NH_SUCCESS_CODES | NH_CONTINUATION_CODES:
@@ -377,7 +414,7 @@ class NH(BaseBroker):
     ) -> Mapping[str, Any]:
         body, headers = self._read_response(path, payload, expected, client=client)
         page_headers = {str(key).lower(): value for key, value in headers.items()}
-        if _cts_flag(page_headers) not in (None, "N") or str(body.get("rsp_cd", "")).strip() in NH_CONTINUATION_CODES:
+        if _cts_flag(page_headers) not in (None, "N") or _response_code(body) in NH_CONTINUATION_CODES:
             raise InvalidResponseError("NH single-result read unexpectedly needs continuation")
         return body
 
@@ -385,7 +422,7 @@ class NH(BaseBroker):
         return Capabilities(
             supports_spot=True,
             supports_limit_order=self.venue in {"KRX", "NXT", "US"},
-            supports_market_order=False,
+            supports_market_order=self.market == "KR" and self.venue in {"KRX", "NXT"},
             supports_single_order_cancel=self.venue in {"KRX", "NXT", "US"},
             supports_order_history=True,
             supports_virtual_account=True,
@@ -500,7 +537,7 @@ class NH(BaseBroker):
             page_headers = {str(key).lower(): value for key, value in headers.items()}
             flag = _cts_flag(page_headers)
             next_cts = str(page_headers.get("cts", "")).strip()
-            code = str(body.get("rsp_cd", "")).strip()
+            code = _response_code(body)
             if flag == "N" and code in NH_CONTINUATION_CODES:
                 raise InvalidResponseError("NH balance continuation signals conflict")
             more = flag == "Y" or (flag is None and code in NH_CONTINUATION_CODES)
@@ -589,7 +626,7 @@ class NH(BaseBroker):
             None,
         )
         row = body.get("Output_0")
-        if row is None and str(body.get("rsp_cd", "")).strip() == "13578":
+        if row is None and _response_code(body) == "13578":
             return 0
         if not isinstance(row, Mapping):
             raise InvalidResponseError("NH sellable quantity block is missing")
@@ -647,8 +684,8 @@ class NH(BaseBroker):
         if request.venue is not None and request.venue != self.venue:
             raise NotSupportedError("NH order venue must match the configured venue")
         if isinstance(request, OrderRequest):
-            if request.order_type != "limit":
-                raise NotSupportedError("NH implements cash limit orders only")
+            if request.order_type not in ({"limit", "market"} if self.market == "KR" else {"limit"}):
+                raise NotSupportedError("NH implements KR cash limit/market and US limit orders only")
             # The shared stock ladder does not cover ETFs and other KR products.
             # Whole won is checked by BaseBroker; the venue decides product ticks.
             if self.market == "US":
@@ -673,25 +710,25 @@ class NH(BaseBroker):
         data = json.dumps({"Input_0": payload}, ensure_ascii=False).encode("utf-8")
         self._limiter.wait("read")
         status, body, _ = self._post_raw(self._client, path, headers, data)
-        if status == 401 or (status == 200 and str(body.get("rsp_cd", "")).strip() == "IGW40043"):
+        if status == 401 or (status == 200 and _response_code(body) in {"IGW40043", "IGW40044"}):
             self._discard_token()
             raise BrokerRejectedError("NH order authorization rejected; no order replay occurred")
         if status != 200:
             raise TransportError("NH order outcome is unknown; reconcile before retrying")
-        code = body.get("rsp_cd")
+        code = _response_code(body)
         if code is not None and not isinstance(code, str):
             raise InvalidResponseError("NH order code is invalid; reconcile before retrying")
         nested = body.get("message")
         if nested is not None and not isinstance(nested, Mapping):
             raise InvalidResponseError("NH order message is invalid; reconcile before retrying")
-        message = body.get("rsp_msg") or (nested.get("usr_msg") if nested is not None else None)
+        message = _response_message(body)
         if message is not None and not isinstance(message, str):
             raise InvalidResponseError("NH order message is invalid; reconcile before retrying")
-        completed = bool(message and _COMPLETED.search(message))
-        # Only known success codes plus a valid market order number acknowledge a write.
+        completed = bool(message and _COMPLETED.fullmatch(message.strip()))
+        # Require a known success code, an explicit completion message and a valid order number.
         if code is None or code.strip() not in NH_SUCCESS_CODES:
             raise InvalidResponseError("NH order outcome is unknown; reconcile before retrying")
-        if message and "완료" in message and not completed:
+        if not completed:
             raise InvalidResponseError("NH order outcome is unknown; reconcile before retrying")
         output = body.get("Output_0")
         if not isinstance(output, Mapping):
@@ -707,25 +744,108 @@ class NH(BaseBroker):
             "act_no": self._account,
             "iem_cd": code,
             "orr_qty": request.quantity,
-            "orr_pr": int(request.price),
-            "orr_amt": int(request.price) * request.quantity,
-            "nmn_pr_tp_cd": "01",
+            "nmn_pr_tp_cd": "05" if request.order_type == "market" else "01",
             "orr_cnd_dit_cd": "00",
             "ssl_nmn_pr_dit_cd": "00",
             "rmt_mkt_cd": self.venue,
             "sor_mkt_sli_yn": "N",
         }
+        if request.order_type == "limit":
+            payload.update(orr_pr=int(request.price), orr_amt=int(request.price) * request.quantity)
         endpoint = "cashBuy" if request.side == "buy" else "cashSell"
         output = self._write(f"/krstock/order/v1/{endpoint}", payload)
         return Order(
             id=f"mkt:{_order_number(output['mkt_orr_no'])}",
             symbol=code,
             side=request.side,
-            order_type="limit",
+            order_type=request.order_type,
             quantity=request.quantity,
             price=request.price,
             status="accepted",
             virtual=self.virtual,
+        )
+
+    def _original_ledger_row(self, ledger_number: str, code: str, side: str) -> Mapping[str, Any]:
+        """Read the caller-named original order from today's ledger; any doubt sends nothing."""
+        rows = self._daily_rows()
+        matches = [
+            row for row in rows
+            if row.get("itg_orr_no") is not None
+            and _order_number(row["itg_orr_no"], max_digits=11) == ledger_number
+        ]
+        if len(matches) != 1:
+            raise InvalidResponseError("NH original order must appear exactly once in the daily ledger")
+        row = matches[0]
+        if self._symbol(row.get("iem_cd"), "KR") != code:
+            raise InvalidResponseError("NH original ledger order symbol does not match the modification")
+        if {"매수": "buy", "매도": "sell"}.get(str(row.get("sby_dit_cd_nm", "")).strip()) != side:
+            raise InvalidResponseError("NH original ledger order side does not match the modification")
+        kind = str(row.get("nmn_pr_tp_cd_nm", "")).strip()
+        if kind == "시장가":
+            raise NotSupportedError("NH original order is a market order; its price cannot be modified")
+        if kind not in {"보통가", "지정가"}:
+            raise InvalidResponseError("NH original ledger order type is not a known limit order")
+        venue = str(row.get("rmt_mkt_cd", "")).strip()
+        if venue not in {"KRX", "NXT"}:
+            raise NotSupportedError("NH original ledger market must be KRX or NXT")
+        return row
+
+    def modify_order(
+        self, order_id: str, request: OrderRequest, *, stop_condition_price: Decimal,
+        original_ledger_id: str,
+    ) -> Order:
+        """Reprice a KR cash limit order's requested remainder, with a fresh client key.
+
+        ``original_ledger_id`` ('itg:<number>') is the caller's assertion that this
+        ledger row is the order placed as ``order_id``; the SDK does not infer the
+        mkt/itg link. The row must match symbol and side, be a limit order, and its
+        requested market is sent as ``rmt_mkt_cd``. A missing, duplicated or unreadable
+        row sends nothing.
+
+        This uses the placement safety/idempotency scope: reusing a placement or
+        modification key cannot transmit another write. Acknowledgement is not a fill.
+        """
+        request = OrderRequest.model_validate(request.model_dump())
+        if self.market != "KR" or request.order_type != "limit":
+            raise NotSupportedError("NH modification supports KR cash limit orders only")
+        if not isinstance(order_id, str) or not order_id.startswith("mkt:"):
+            raise ConfigurationError("NH modification requires the original market order number")
+        number = _order_number(order_id[4:])
+        if not isinstance(original_ledger_id, str) or not original_ledger_id.startswith("itg:"):
+            raise ConfigurationError("NH modification requires the original ledger number as 'itg:<number>'")
+        ledger_number = _order_number(original_ledger_id[4:], max_digits=11)
+        if (not isinstance(stop_condition_price, Decimal) or not stop_condition_price.is_finite()
+                or stop_condition_price < 0 or not math.isfinite(float(stop_condition_price))):
+            raise ConfigurationError("NH stop condition price must be an explicit nonnegative Decimal")
+        self._validate_order(request)
+        code = self._symbol(request.symbol, request.market)
+        original = self._call(lambda: self._original_ledger_row(ledger_number, code, request.side))
+        original_venue = str(original["rmt_mkt_cd"]).strip()
+
+        def submit() -> Order:
+            output = self._write("/krstock/order/v1/modify", {
+                "act_no": self._account,
+                "org_mkt_orr_no": int(number),
+                "all_pat_dit_cd": "2",
+                "iem_cd": self._symbol(request.symbol, request.market),
+                "cor_qty": request.quantity,
+                "cor_pr": int(request.price),
+                # Required in the schema, but cash-limit semantics are undocumented.
+                # Caller must supply it explicitly; no invented zero default.
+                "sop_cnd_pr": float(stop_condition_price),
+                # Official: same market as the original order, read from its ledger row.
+                "rmt_mkt_cd": original_venue,
+                "sor_mkt_sli_yn": "N",
+            })
+            return Order(
+                id=f"mkt:{_order_number(output['mkt_orr_no'])}",
+                symbol=self._symbol(request.symbol, request.market),
+                side=request.side, order_type="limit", quantity=request.quantity,
+                price=request.price, status="accepted", virtual=self.virtual,
+            )
+
+        return self.safety.execute(
+            self.broker_code, self._account, request, lambda: self._call(submit)
         )
 
     def _cancel_order(self, request: CancelRequest) -> Order:
@@ -762,7 +882,7 @@ class NH(BaseBroker):
                 raise InvalidResponseError("NH daily order rows are invalid")
             page = body.get("Output_0") if "Output_0" in body else body.get("Output_1")
             if page is None:
-                if str(body.get("rsp_cd", "")).strip() != "13578":
+                if _response_code(body) != "13578":
                     raise InvalidResponseError("NH daily order rows are missing")
                 page = []
             if not isinstance(page, list) or any(not isinstance(row, Mapping) for row in page):
@@ -770,7 +890,7 @@ class NH(BaseBroker):
             rows.extend(page)
             page_headers = {str(key).lower(): value for key, value in headers.items()}
             flag = _cts_flag(page_headers)
-            code = str(body.get("rsp_cd", "")).strip()
+            code = _response_code(body)
             if flag == "N" and code in NH_CONTINUATION_CODES:
                 raise InvalidResponseError("NH daily order continuation signals conflict")
             more = flag == "Y" or (flag is None and code in NH_CONTINUATION_CODES)
@@ -822,7 +942,9 @@ class NH(BaseBroker):
                     elif remaining:
                         state = "partial" if filled else "open"
                 side = {"매수": "buy", "매도": "sell"}.get(str(row.get("sby_dit_cd_nm", "")).strip())
-                order_type = "limit" if str(row.get("nmn_pr_tp_cd_nm", "")).strip() in {"보통가", "지정가"} else None
+                order_type = {"보통가": "limit", "지정가": "limit", "시장가": "market"}.get(
+                    str(row.get("nmn_pr_tp_cd_nm", "")).strip()
+                )
                 orders.append(
                     Order(
                         id=f"itg:{integrated}",
@@ -913,14 +1035,14 @@ class NH(BaseBroker):
         for _ in range(NH_MAX_BALANCE_PAGES):
             body, headers = self._read_response(path, payload, None, cts=cts)
             page = body.get(block)
-            if page is None and str(body.get("rsp_cd", "")).strip() == "13578":
+            if page is None and _response_code(body) == "13578":
                 page = []
             if not isinstance(page, list) or any(not isinstance(row, Mapping) for row in page):
                 raise InvalidResponseError("NH US list block is missing or invalid")
             rows.extend(page)
             headers = {str(k).lower(): v for k, v in headers.items()}
             flag = _cts_flag(headers)
-            continuing = str(body.get("rsp_cd", "")).strip() in NH_CONTINUATION_CODES
+            continuing = _response_code(body) in NH_CONTINUATION_CODES
             if flag == "N" and continuing:
                 raise InvalidResponseError("NH US continuation signals conflict")
             if flag != "Y" and not (flag is None and continuing):

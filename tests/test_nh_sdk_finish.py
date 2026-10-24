@@ -34,7 +34,7 @@ def make(*, row=None, virtual=False, options=None, factory=False, **kwargs):
             elif path == QUOTE:
                 body = {"Output_0": ROW.copy() if row is None else row}
             else:
-                body = {"Output_0": {"mkt_orr_no": 123}}
+                body = {"Output_0": {"mkt_orr_no": 123}, "rsp_msg": "정상처리되었습니다"}
             return 200, {"rsp_cd": "00000", **body}, {}
 
     options = (
