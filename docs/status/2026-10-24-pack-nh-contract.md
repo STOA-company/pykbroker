@@ -24,3 +24,15 @@
 - 검증 명령: python -m pytest -q tests; python -m bandit -q 변경 Python 파일.
 - 실행 환경: /tmp/nh-contract-venv/bin/python (CPython 3.13.12, dev extra).
 - 롤백: 이 작업 커밋 revert; 배포물 없음, dev/prod/머지 범위 아님.
+
+## P2 검수 후속 (2026-10-24, 완료 범위는 REPORT 참조)
+- 쓰기는 정상 코드+완료/정상처리/접수 문장 전체 허용+유효 번호를 모두 요구.
+- 부족금액·종목코드 원인 서술·빈/없는 메시지는 unknown 예외, 재전송 없음.
+- 성공 합성 fixture는 명시 완료 메시지 포함, 실제 NH 메시지 관측 아님.
+- 일부 정정 all_pat_dit_cd=2와 KRX/NXT 전체 Input_0 dict 회귀 보호.
+- IGW HTTP200 봉투 시험명에 synthetic 명시; 부분체결 정정 원주문은 합성 지정가.
+- dailyOrderExecution 스키마는 itg_orr_no/nmn_pr_tp_cd_nm/rmt_mkt_cd 제공, mkt_orr_no 없음.
+- mkt↔itg 추정 금지. 원장 원주문 지정용 API 결정 전 원장 시장/지정가 검증 미구현.
+- P2-3 시장가 원주문 가격정정 거절도 미구현; 합성 장면/시험명 정리만 반영.
+- P2-4 미확인 계약·P2-5 위험 장부 재예약은 공식 모의 실측 단계, 이번 구현 제외.
+- 원본시험/돌연변이 로그: /home/quantus/runs/pay-terms-1013/l16-nhp2-1024/.

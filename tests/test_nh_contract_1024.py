@@ -35,7 +35,7 @@ def resolved(value):
 
 
 def response(path, output, code="00000"):
-    body = {"message": {"msg_code": code}, "Output_0": output}
+    body = {"message": {"msg_code": code, "usr_msg": "정상처리되었습니다"}, "Output_0": output}
     schema = SCHEMA["paths"][path]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
     check_fields(resolved(schema), body)
     return 200, body, {}
@@ -76,17 +76,18 @@ def test_official_cash_order_shape_and_duplicate_key(side, kind, live_safety):
     assert len(calls) == 1
 
 
-def test_partial_then_modify_and_cancel_requested_remainder(live_safety):
+@pytest.mark.parametrize("venue", ["KRX", "NXT"])
+def test_partial_then_modify_and_cancel_requested_remainder(venue, live_safety):
     row = {"itg_orr_no": 999, "iem_cd": "005930", "orr_qty": 3, "orr_pr": 1000,
            "tot_cns_qty": 1, "ny_cns_qty": 2, "cns_avg_uit_pr": 990,
-           "sby_dit_cd_nm": "매수", "nmn_pr_tp_cd_nm": "시장가"}
+           "sby_dit_cd_nm": "매수", "nmn_pr_tp_cd_nm": "보통가", "rmt_mkt_cd": venue}
     broker, calls = make({
         DAILY: [response(DAILY, [row])],
         ORDER + "modify": [response(ORDER + "modify", {"mkt_orr_no": 102})],
         ORDER + "cancel": [response(ORDER + "cancel", {"mkt_orr_no": 103})],
-    }, virtual=True, safety=live_safety)
+    }, virtual=True, safety=live_safety, venue=venue)
     observed, = broker.list_orders()
-    assert (observed.status, observed.filled, observed.remaining, observed.order_type) == ("partial", 1, 2, "market")
+    assert (observed.status, observed.filled, observed.remaining, observed.order_type) == ("partial", 1, 2, "limit")
     # The original market number is caller-supplied, never inferred from itg:999.
     req = request(key="modify", quantity=2)
     modified = broker.modify_order("mkt:101", req, stop_condition_price=Decimal(0))
@@ -97,14 +98,18 @@ def test_partial_then_modify_and_cancel_requested_remainder(live_safety):
         order_id=modified.id, symbol="005930", quantity=2, client_key="cancel"
     ))
     assert cancelled.status == "accepted"
-    assert calls[1][3]["Input_0"]["org_mkt_orr_no"] == 101
+    assert calls[1][3] == {"Input_0": {
+        "act_no": "12345678901", "org_mkt_orr_no": 101, "all_pat_dit_cd": "2",
+        "iem_cd": "005930", "cor_qty": 2, "cor_pr": 1000, "sop_cnd_pr": 0.0,
+        "rmt_mkt_cd": venue, "sor_mkt_sli_yn": "N",
+    }}
     assert calls[2][3]["Input_0"]["org_mkt_orr_no"] == 102
     assert calls[1][3]["Input_0"]["cor_qty"] == calls[2][3]["Input_0"]["cor_qty"] == 2
     check_requests(calls)
 
 
 @pytest.mark.parametrize("code", ["IGW40019", "IGW40031", "IGW40032", "IGW42901", "IGW42902", "IGW42903"])
-def test_official_error_codes_never_acknowledge_or_replay_order(code, live_safety):
+def test_synthetic_official_error_code_envelope_never_acknowledges_or_replays_order(code, live_safety):
     path = ORDER + "cashBuy"
     broker, calls = make({path: [response(path, {"mkt_orr_no": 101}, code)]}, safety=live_safety)
     with pytest.raises(InvalidResponseError):
@@ -168,7 +173,10 @@ def test_modify_revalidates_model_and_disallows_market(live_safety):
     assert calls == []
 
 
-@pytest.mark.parametrize("message", ["주문 실패", "주문 오류", "처리 에러", "주문 미완료"])
+@pytest.mark.parametrize("message", [
+    "주문 실패", "주문 오류", "처리 에러", "주문 미완료", "주문가능금액이 부족합니다.",
+    "종목코드 항목을 입력하세요.", "", None, "오류 처리 완료",
+])
 def test_success_code_and_number_never_override_failure_message(message, live_safety):
     path = ORDER + "cashBuy"
     status, body, headers = response(path, {"mkt_orr_no": 101})
@@ -176,6 +184,16 @@ def test_success_code_and_number_never_override_failure_message(message, live_sa
     broker, calls = make({path: [(status, body, headers)]}, safety=live_safety)
     with pytest.raises(InvalidResponseError):
         broker.place_order(request())
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("message", ["완료", "주문 완료되었습니다.", "정상처리되었습니다", "주문 접수되었습니다."])
+def test_write_requires_explicit_completion_message(message, live_safety):
+    path = ORDER + "cashBuy"
+    status, body, headers = response(path, {"mkt_orr_no": 101})
+    body["message"]["usr_msg"] = message
+    broker, calls = make({path: [(status, body, headers)]}, safety=live_safety)
+    assert broker.place_order(request()).status == "accepted"
     assert len(calls) == 1
 
 

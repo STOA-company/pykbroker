@@ -53,8 +53,9 @@ NH_MAX_BALANCE_PAGES = 100
 _OPTIONS = {"app_key", "app_secret", "token", "token_type", "expires_at", "acct_type", "brand"}
 _VENUES = frozenset({"KRX", "NXT", "UNT"})
 _COMPLETED = re.compile(
-    r"(?:^|\s)(?:조회\s*)?완료(?:되었습니다|됐습니다|했습니다|됨)?[.!\s]*$|"
-    r"(?:^|\s)정상\s*처리되었습니다[.!\s]*$"
+    r"(?:주문\s*)?(?:완료(?:되었습니다|됐습니다|했습니다|됨)?|"
+    r"정상\s*처리(?:되었습니다|됐습니다|했습니다|됨)?|"
+    r"접수(?:되었습니다|됐습니다|했습니다|됨)?)[.!\s]*"
 )
 
 
@@ -723,12 +724,11 @@ class NH(BaseBroker):
         message = _response_message(body)
         if message is not None and not isinstance(message, str):
             raise InvalidResponseError("NH order message is invalid; reconcile before retrying")
-        completed = bool(message and _COMPLETED.search(message))
-        # Only known success codes plus a valid market order number acknowledge a write.
+        completed = bool(message and _COMPLETED.fullmatch(message.strip()))
+        # Require a known success code, an explicit completion message and a valid order number.
         if code is None or code.strip() not in NH_SUCCESS_CODES:
             raise InvalidResponseError("NH order outcome is unknown; reconcile before retrying")
-        if message and (re.search(r"완료되지|미완료|불완료|실패|오류|에러", message)
-                        or ("완료" in message and not completed)):
+        if not completed:
             raise InvalidResponseError("NH order outcome is unknown; reconcile before retrying")
         output = body.get("Output_0")
         if not isinstance(output, Mapping):
