@@ -6,14 +6,16 @@ successes; COSAT00301 detail supplies a blank BrkTpCode in its Python example.
 Persisted account tokens use the shared no-redirect transport/rate limiter.
 Real writes default OFF, require explicit opt-in, broker account identity read,
 and OrderSafety. Mock REST binding, unified margin enrollment, average fill
-price and continued US balances remain unverified; no token issuer is added.
+price and continued US balances remain unverified. Explicit token issuance uses
+the documented form boundary; expiration never triggers an automatic write replay.
 """
 
 import json
 import re
 import urllib.request
-from collections.abc import Mapping
-from datetime import date
+from collections.abc import Callable, Mapping
+from datetime import UTC, date, datetime, timedelta
+from urllib.parse import urlencode
 
 from pykbroker._http import urlopen
 from pykbroker.brokers._common import BaseBroker, decimal, optional_price, whole
@@ -39,6 +41,7 @@ LS_RATES = {
     "t0424": 2,
     "t0425": 2,
     "CSPAT00601": 10,
+    "CSPAT00701": 3,
     "CSPAT00801": 3,
     "g3101": 10,
     "g3104": 10,
@@ -75,15 +78,21 @@ LS_MOCK_BASE_URL: str | None = None
 
 
 class _LsRestClient:
-    """One POST attempt through the shared no-redirect boundary; no token issue/refresh."""
+    """One POST attempt through the shared no-redirect boundary; no replay."""
 
     def __init__(self):
         self.base_url = LS_API_BASE_URL
         self.response_headers = {}
 
     def post(self, path, *, headers, json):
+        return self._post(path, headers, _json_bytes(json))
+
+    def post_form(self, path, *, headers, form):
+        return self._post(path, headers, urlencode(form).encode("ascii"))
+
+    def _post(self, path, headers, data):
         self.response_headers = {}
-        request = urllib.request.Request(self.base_url + path, data=_json_bytes(json), headers=headers, method="POST")
+        request = urllib.request.Request(self.base_url + path, data=data, headers=headers, method="POST")
         try:
             with urlopen(request, timeout=10.0) as response:
                 self.response_headers = dict(response.headers)
@@ -125,6 +134,7 @@ class LS(RestBroker):
         order_date: date | None = None,
         client_options: Mapping | None = None,
         allow_live_orders: bool = False,
+        clock: Callable[[], datetime] | None = None,
         **kwargs,
     ) -> None:
         if not isinstance(spec_verified, bool) or not isinstance(is_integrated, bool):
@@ -140,7 +150,7 @@ class LS(RestBroker):
         client, codes = kwargs.pop("client", None), kwargs.pop("codes", None)
         headers, limiter = kwargs.pop("headers", None), kwargs.pop("rate_limiter", None)
         options = dict(client_options or {})
-        if set(options) - {"app_key", "token", "token_type", "mac_address"}:
+        if set(options) - {"app_key", "token", "token_type", "mac_address", "expires_at"}:
             raise ConfigurationError("Unknown LS client option")
         token = options.get("token")
         if token is not None and (not isinstance(token, str) or not token.strip()):
@@ -162,6 +172,15 @@ class LS(RestBroker):
         if allow_live_orders and (not token or virtual):
             raise ConfigurationError("LS live opt-in requires a persisted real-account token")
         self._allow_live_orders = allow_live_orders
+        self._clock = clock or (lambda: datetime.now(UTC))
+        self._expires_at = None
+        if "expires_at" in options:
+            try:
+                self._expires_at = datetime.fromisoformat(options["expires_at"])
+                if self._expires_at.utcoffset() is None:
+                    raise ValueError
+            except (TypeError, ValueError):
+                raise ConfigurationError("LS expires_at must be an ISO timestamp with a timezone") from None
         # RestBroker's constructor is domestic-only; reuse its request boundary
         # with BaseBroker's existing KR/US validation and explicit LS state.
         BaseBroker.__init__(self, virtual=virtual, market=market, **kwargs)
@@ -175,6 +194,56 @@ class LS(RestBroker):
         self._bound_virtual = self.virtual
         self._spec_verified = spec_verified
         self._verify_mode(self._client)
+
+    @staticmethod
+    def issue_token(*, app_key: str, app_secret: str, client=None, clock=None) -> dict[str, str]:
+        """Explicit issuance; return caller-owned options, without retaining the secret.
+
+        The TR table spells its TTL ``expire_in`` while the official response
+        example uses ``expires_in``. Both are accepted; conflicting values fail.
+        No API request is retried, and no clock-of-day lifetime is assumed.
+        """
+        if any(not isinstance(value, str) or not value.strip() for value in (app_key, app_secret)):
+            raise ConfigurationError("LS token issuance requires app_key and app_secret")
+        client = client if client is not None else _LsRestClient()
+        if getattr(client, "base_url", None) != LS_API_BASE_URL:
+            raise ConfigurationError("LS token client must use the official REST address")
+        started = (clock or (lambda: datetime.now(UTC)))()
+        if not isinstance(started, datetime) or started.utcoffset() is None:
+            raise ConfigurationError("LS token clock must include a timezone")
+        try:
+            result = client.post_form(
+                "/oauth2/token", headers={"content-type": "application/x-www-form-urlencoded"},
+                form={"grant_type": "client_credentials", "appkey": app_key,
+                      "appsecretkey": app_secret, "scope": "oob"},
+            )
+        except (InvalidResponseError, TransportError):
+            raise
+        except Exception:
+            raise TransportError("LS token issuance failed; no automatic retry") from None
+        try:
+            token, kind = result["access_token"], result["token_type"]
+            values = [result[name] for name in ("expire_in", "expires_in") if name in result]
+            if (not isinstance(token, str) or not token.strip() or len(token) > 1000
+                    or "\r" in token or "\n" in token or kind != "Bearer" or not values
+                    or any(type(value) not in (str, int) or not re.fullmatch(r"[0-9]{1,10}", str(value))
+                           for value in values)):
+                raise ValueError
+            ttl = int(values[0])
+            if ttl <= 0 or any(int(value) != ttl for value in values):
+                raise ValueError
+            return {"token": token, "token_type": kind,
+                    "expires_at": (started + timedelta(seconds=ttl)).isoformat()}
+        except (KeyError, TypeError, ValueError, OverflowError):
+            raise InvalidResponseError("LS token response is invalid") from None
+
+    def _require_current_token(self):
+        if self._expires_at is not None:
+            now = self._clock()
+            if not isinstance(now, datetime) or now.utcoffset() is None:
+                raise ConfigurationError("LS token clock must include a timezone")
+            if now >= self._expires_at:
+                raise ConfigurationError("LS stored token is expired; explicitly issue and supply a fresh token")
 
     def _verify_mode(self, client) -> None:
         expected = LS_MOCK_BASE_URL if self._bound_virtual else LS_API_BASE_URL
@@ -231,6 +300,37 @@ class LS(RestBroker):
         self._call(self._verify_account)
         return super().cancel_order(request)
 
+    def modify_order(self, order_id: str, request: OrderRequest) -> Order:
+        """KR CSPAT00701: amend with a new client key and return the new order ID.
+
+        Reuses the existing place safety namespace conservatively: a key used
+        for a placement or another amendment cannot send a second mutation.
+        Request side is caller/safety context and cannot change the original
+        order side; the amendment response leaves side unknown. Acceptance does
+        not establish that a concurrent fill/cancel completed.
+        """
+        if not self._writes_verified():
+            raise SpecUnverifiedError("LS writes require the explicit real-account opt-in or verified mock")
+        if self.market != "KR":
+            raise NotSupportedError("LS amendment currently supports KR cash orders only")
+        order_id = self._order_id(order_id, request=True)
+        request = OrderRequest.model_validate(request.model_dump())
+        self._validate_order(request)
+        self._verify_mode(self._client)
+        self._call(self._verify_account)
+
+        def submit():
+            body = {"OrgOrdNo": int(order_id), "IsuNo": self._order_symbol(request.symbol),
+                    "OrdQty": request.quantity, "OrdprcPtnCode": self._code(request.order_type),
+                    "OrdCndiTpCode": self._code("condition"), "OrdPrc": int(request.price or 0)}
+            response = self._response("/stock/order", "CSPAT00701", {"CSPAT00701InBlock1": body}, write=True)
+            return Order(id=self._order_id(response["CSPAT00701OutBlock2"]["OrdNo"]),
+                         symbol=self._symbol(request.symbol, "KR"), side=None,
+                         order_type=request.order_type, quantity=request.quantity,
+                         price=request.price, status="accepted", virtual=self._bound_virtual)
+
+        return self.safety.execute(self.broker_code, self._account, request, lambda: self._call(submit))
+
     def _verify_account(self):
         if self._bound_virtual:
             return  # Existing injected, explicitly verified mock contract.
@@ -267,9 +367,11 @@ class LS(RestBroker):
         return optional_price(value)
 
     def _request(self, path, tr, body, *, tr_cont="N", tr_cont_key=""):
+        self._require_current_token()
         if self._client is None or self._limiter is None:
             raise ConfigurationError("Supply a REST client and TR rate limiter")
         self._limiter.wait(tr)
+        self._require_current_token()
         headers = {**self._headers, "content-type": "application/json", "tr_cd": tr,
                    "tr_cont": tr_cont, "tr_cont_key": tr_cont_key}
         return self._client.post(path, headers=headers, json=body)
