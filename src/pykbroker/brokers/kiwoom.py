@@ -490,6 +490,14 @@ class Kiwoom(BaseBroker):
 
         def submit() -> Order:
             code = self._symbol(request.symbol, request.market)
+            # AmendRequest carries no original type and this adapter keeps no order cache.
+            # kt10002 preserves the original type, so only a listed limit order may receive a price amendment.
+            originals = [order for order in self.list_orders(code) if order.id == request.order_id]
+            if len(originals) != 1 or originals[0].order_type != "limit":
+                raise NotSupportedError(
+                    "Kiwoom price amendment requires a confirmed limit original order; "
+                    "market or unknown original orders are not supported"
+                )
             response = self._write(
                 "/api/dostk/ordr",
                 "kt10002",
@@ -505,7 +513,7 @@ class Kiwoom(BaseBroker):
             if (
                 response["ord_no"] == request.order_id
                 or whole(response["mdfy_qty"]) != request.quantity
-                or response.get("dmst_stex_tp") != "KRX"
+                or response.get("dmst_stex_tp", "KRX") != "KRX"
             ):
                 raise InvalidResponseError("Kiwoom amendment acknowledgement differs; reconcile before retrying")
             # base_orig_ord_no is the root, not necessarily the immediately preceding order number.

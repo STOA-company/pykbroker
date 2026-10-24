@@ -1,6 +1,6 @@
 # 키움 국내 현금 주문 계약 모의 — 2026-10-24 확인
 
-이 표와 `test_kiwoom_stateful_contract.py`는 공식 문서의 필드 계약을 검증한다. 가짜 서버의 체결·잔고·원장 전이는 합성 시나리오이며 키움 서버를 실행하거나 실계좌를 검증한 결과가 아니다. 실제 factory의 `brokers.Kiwoom` 경로를 쓰며 `experimental.KIWOOM_SPEC_VERIFIED=False`를 유지한다.
+이 표와 `test_kiwoom_stateful_contract.py`는 공식 문서의 필드 계약을 검증한다. 가짜 서버의 체결·잔고·원장 전이는 합성 시나리오이며 키움 서버를 실행하거나 실계좌를 검증한 결과가 아니다. 실제 factory의 `brokers.Kiwoom` 경로를 쓴다. `experimental.KIWOOM_SPEC_VERIFIED=False`는 experimental 경로만 막으며 등록 어댑터의 실주문 잠금이 아니다. 등록 어댑터의 기본 잠금은 `OrderSafety(dry_run=True)`이고, 트레이더의 별도 잠금은 `LOCKED_BROKERS`·`live_gate(stock_account_live_unsealed)`다. 이 계약 모의는 기본 dry-run에서 주문·정정·취소 전송이 0임을 검증하며 트레이더 잠금의 실행 검증은 포함하지 않는다.
 
 ## 출처
 
@@ -16,7 +16,7 @@
 | --- | --- | --- | --- |
 | 토큰 au10001 | /oauth2/token | grant_type=client_credentials, appkey, secretkey | token, token_type=bearer, expires_dt(예시 14자리), return_code=0 |
 | 매수 kt10000 / 매도 kt10001 | /api/dostk/ordr | dmst_stex_tp=KRX, stk_cd, ord_qty, trde_tp=0(지정가)/3(시장가), ord_uv=원 정수/빈 문자열 | ord_no; 접수는 체결 아님 |
-| 정정 kt10002 | /api/dostk/ordr | dmst_stex_tp, orig_ord_no, stk_cd, mdfy_qty, mdfy_uv; mdfy_cond_uv 선택 | ord_no=새 주문번호, base_orig_ord_no=모주문, mdfy_qty, dmst_stex_tp. 양수 지정 수량만 구현 |
+| 정정 kt10002 | /api/dostk/ordr | dmst_stex_tp, orig_ord_no, stk_cd, mdfy_qty, mdfy_uv; mdfy_cond_uv 선택 | ord_no=새 주문번호, base_orig_ord_no=모주문, mdfy_qty, dmst_stex_tp(선택; 생략=KRX). 양수 지정 수량만 구현. ka10075에서 원주문이 보통/지정가로 확인된 경우만 가격 정정 |
 | 취소 kt10003 | /api/dostk/ordr | dmst_stex_tp, orig_ord_no, stk_cd, cncl_qty | 새 ord_no, base_orig_ord_no, cncl_qty. 요청 수량 일치 확인; 원주문 상태는 원장 조회 |
 | 예수금 kt00001 | /api/dostk/acnt | qry_tp=2 | ord_alow_amt, entr, 100stk_ord_alow_amt, d2_entra의 최소 현금 |
 | 보유 kt00018 | /api/dostk/acnt | dmst_stex_tp=KRX, qry_tp=1 | acnt_evlt_remn_indv_tot: stk_cd, stk_nm, rmnd_qty, trde_able_qty, pur_pric, cur_prc, evlt_amt |
@@ -43,6 +43,7 @@
 - expires_dt 시간대는 미확인: 기존 KST 해석·5분 여유 유지. 재발급이 다른 프로세스의 토큰에 미치는 영향 미확인.
 - 실패가 HTTP 오류인지 JSON return_code인지, 초과 뒤 재개 시각·Retry-After·분/시간 추가 한도·실제 윈도 경계는 미확인. JSON 오류와 전송 실패를 각각 시험하며 자동 재전송하지 않음.
 - 정정·취소 후 실제 원장의 행 결합·전이 시점은 미확인. 모주문 번호는 즉전 주문번호와 다를 수 있음. 정정 접수 응답은 새 id와 accepted만, side/type 확정 없음. 변경 전 주문의 정정 연결 원장은 기존 unknown 판정 유지.
+- 정정 요청에는 원주문 유형이 없고 어댑터는 주문 캐시를 보관하지 않으므로, 기존 안전장치 통과 후 `list_orders(symbol)`로 원주문 유형을 한 번 조회한다(연속 페이지는 기존 조회 계약). 시장가·미확인 유형·조회에 없는 원주문은 `NotSupportedError`로 거절하며 kt10002를 보내지 않는다. 조회 실패에도 정정을 보내지 않고 같은 client_key를 재전송하지 않는다.
 - 실제 부분 체결·수수료·세금·미결제 정산은 미확인. 가짜 서버는 무수수료·즉시 현금 반영을 시험 편의로만 사용하며 공식 서버 동작으로 주장하지 않음.
 - 시장가 주문의 실계좌 허용을 별도로 열지 않음. 기존 명시 세션 허용·보수적 원화 평가·dry-run·중복·중지 장치를 통과해야 함.
 

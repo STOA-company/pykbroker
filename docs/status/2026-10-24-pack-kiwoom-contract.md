@@ -2,7 +2,7 @@
 - 기준 main: 2573cad, 가지 feat/kiwoom-contract-1024.
 - 목표: 본인 키움 계좌 주문을 준비하는 공식 REST 계약 모의; 실주문 0.
 - 경로: factory.create_broker("kiwoom") → brokers.Kiwoom → 기존 post 클라이언트 경계.
-- experimental 경로는 정본이 아니며 KIWOOM_SPEC_VERIFIED=False 유지.
+- KIWOOM_SPEC_VERIFIED=False는 experimental만 차단; 등록 어댑터 기본 잠금은 OrderSafety(dry_run=True), 트레이더 별도 잠금은 LOCKED_BROKERS/live_gate(stock_account_live_unsealed).
 - 범위: 국내 KRX 현금 시장가·지정가 매수/매도, 정정·취소·조회·토큰·오류.
 - 미국·신용·선물·큐 플랫폼 변경 없음.
 ## 공식 근거
@@ -17,6 +17,8 @@
 - 시장가: trde_tp=3, ord_uv=""; 지정가: trde_tp=0, 원 정수 가격.
 - KR market capability만 추가; US 지정가 계약 유지.
 - 정정: Kiwoom.amend_order(AmendRequest), kt10002, 양수 수량·지정가 가격.
+- 정정 전 기존 ka10075 조회로 원주문 보통/지정가 확인; 시장가·유형 미확인·조회 누락/실패는 kt10002 전송 0. 새 주문 캐시 없음.
+- 정정 응답 dmst_stex_tp 생략은 매수/매도와 같은 KRX 기본값; 명시 NXT/SOR 등은 unknown 유지.
 - AmendRequest는 OrderRequest를 확장하며 공통 broker protocol에는 정정 메서드 추가 없음.
 - 기존 safety를 통과해 full amended notional 예약·dry-run·중복·중지 검사.
 - idempotency action은 place/amend/cancel 타입으로 구분; 실패한 key도 보존.
@@ -31,9 +33,9 @@
 - 토큰 발급→만료 전송 차단→명시 재발급; 동일 safety의 key로 중복 방지.
 - 1511·1902·8005·1700·1701·1702·1999를 주문/정정/취소에 모두 주입.
 - 유량 초과 뒤 다음 합성 윈도 조회, 접수 후 응답 소실에서도 중복 없음.
-- 기본 dry-run·중지·정정 위험금액·닫힌 broker·US 거절·잘못된 정정 모델 검사.
-- Python 3.12 동일 런 venv 전체 base 1676 passed/19 skipped, head 1716 passed/19 skipped; 새 실패 0.
-- 변경 production 4파일 bandit -q 무제외 통과. 테스트는 assert/가짜 자격값 B101/B105/B106 제외를 별도 기록.
+- 기본 OrderSafety dry-run에서 주문·정정·취소 모두 POST 0; 중지·정정 위험금액·닫힌 broker·US 거절·잘못된 정정 모델 검사. 트레이더 잠금 실행은 범위 밖.
+- Python 3.12 동일 런 venv 전체 base 1676/이전 HEAD 1716/current P2 1728 passed(모두 19 skipped); P2 회귀 +12, 새 실패 0.
+- 이전 production 4파일 및 P2 변경 kiwoom.py bandit -q 무제외 통과. 별도 소스 사본에서 원주문 유형 가드 제거 돌연변이 1회: 시장가 매수/매도 2실패, 복원 2통과.
 - 변경 Python ruff check·git diff --check 통과; 한/영 지원표 키움 부분 동기화.
 ## 남은 것 (안 걸어 봄)
 - 공식 모의투자·시험 계좌·큐 고객 화면·실체결·수수료·실제 정정 원장 전이 검증.

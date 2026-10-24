@@ -17,13 +17,13 @@ from pykbroker.exceptions import (
     BrokerError,
     BrokerRejectedError,
     ConfigurationError,
+    DryRunError,
     DuplicateOrderError,
     InvalidResponseError,
     NotSupportedError,
     RiskCapError,
     TransportError,
 )
-from pykbroker.experimental.kiwoom import KIWOOM_SPEC_VERIFIED
 from pykbroker.factory import create_broker
 from pykbroker.models import AmendRequest, CancelRequest, OrderRequest
 from pykbroker.rules.kr import KST
@@ -47,6 +47,7 @@ class FakeServer:
         self.calls, self.orders, self.changes, self.tokens = [], {}, [], {}
         self.cash, self.position, self.cost = Decimal(1000000), 10, Decimal(700000)
         self.next_code = None
+        self.next_code_tr = None
         self.uncertain_write = False
         self.enforce_rate = False
         self.windows = {}
@@ -79,7 +80,7 @@ class FakeServer:
         assert path == ("/api/dostk/ordr" if tr.startswith("kt100") else "/api/dostk/acnt")
         if self.tokens.get(headers["authorization"], self.now) <= self.now:
             return {"return_code": 8005}, dict(END)
-        if self.next_code is not None:
+        if self.next_code is not None and (self.next_code_tr is None or self.next_code_tr == tr):
             code, self.next_code = self.next_code, None
             assert code in ERROR_CODES
             return {"return_code": code}, dict(END)
@@ -313,7 +314,7 @@ def amendment(order, **changes):
 def test_cash_market_limit_buy_sell_and_fill(side, kind):
     server = FakeServer()
     broker = connect(server)
-    assert type(broker) is Kiwoom and KIWOOM_SPEC_VERIFIED is False
+    assert type(broker) is Kiwoom
     order = broker.place_order(request(side=side, order_type=kind, price=None if kind == "market" else "70000"))
     assert (order.status, order.order_type, order.virtual) == ("accepted", kind, True)
     assert (broker.status(order).status, broker.list_orders()[0].remaining) == ("open", 3)
@@ -385,13 +386,16 @@ def test_official_errors_no_write_replay_and_retained_client_key(code, operation
         return broker.cancel_order(cancel)
 
     server.next_code = code
+    server.next_code_tr = {"place": "kt10000", "amend": "kt10002", "cancel": "kt10003"}[operation]
     count = len(server.calls)
     with pytest.raises(InvalidResponseError if code == 1999 else BrokerRejectedError):
         mutate()
-    assert len(server.calls) == count + 1
+    expected_calls = 2 if operation == "amend" else 1  # original-type read, then the failed write
+    assert len(server.calls) == count + expected_calls
+    assert server.calls[-1][1]["api-id"] == server.next_code_tr
     with pytest.raises(DuplicateOrderError):
         mutate()
-    assert len(server.calls) == count + 1 and len(server.orders) == 1
+    assert len(server.calls) == count + expected_calls and len(server.orders) == 1
 
 
 def test_rate_limit_window_on_fake_server_and_next_window_read():
@@ -499,7 +503,11 @@ def test_amendment_revalidates_models_and_cannot_be_submitted_as_new_order():
 
 
 @pytest.mark.parametrize(
-    "changes", [{"ord_no": "0000000"}, {"mdfy_qty": "1"}, {"dmst_stex_tp": "NXT"}, {"base_orig_ord_no": "invalid"}]
+    "changes",
+    [
+        {"ord_no": "0000000"}, {"mdfy_qty": "1"}, {"dmst_stex_tp": "NXT"},
+        {"dmst_stex_tp": "SOR"}, {"dmst_stex_tp": None}, {"base_orig_ord_no": "invalid"},
+    ],
 )
 def test_mismatched_amendment_ack_is_unknown_without_retry(changes):
     server = FakeServer()
@@ -517,3 +525,112 @@ def test_mismatched_amendment_ack_is_unknown_without_retry(changes):
     with pytest.raises(DuplicateOrderError):
         broker.amend_order(amendment(original))
     assert len(server.orders) == 2
+
+
+@pytest.mark.parametrize("original_type", ["보통", "지정가"])
+def test_amendment_without_optional_exchange_is_accepted_after_one_original_query(original_type):
+    server = FakeServer()
+    broker = connect(server)
+    original = broker.place_order(request())
+    server.orders[original.id]["type"] = original_type
+    post = server.post
+
+    def omitted(path, *, headers, json):
+        body, response_headers = post(path, headers=headers, json=json)
+        if headers.get("api-id") == "kt10002":
+            body = {key: value for key, value in body.items() if key != "dmst_stex_tp"}
+        return body, response_headers
+
+    server.post = omitted
+    count = len(server.calls)
+    child = broker.amend_order(amendment(original))
+    assert (child.status, child.quantity, child.price) == ("accepted", 2, Decimal("69000"))
+    assert child.id != original.id and len(server.orders) == 2
+    assert [call[1]["api-id"] for call in server.calls[count:]] == ["ka10075", "kt10002"]
+
+
+@pytest.mark.parametrize("side", ["buy", "sell"])
+def test_market_original_price_amendment_is_refused_without_write(side):
+    server = FakeServer()
+    broker = connect(server)
+    original = broker.place_order(request(side=side, order_type="market", price=None))
+    count = len(server.calls)
+    with pytest.raises(NotSupportedError, match="confirmed limit original order"):
+        broker.amend_order(amendment(original, side=side))
+    assert [call[1]["api-id"] for call in server.calls[count:]] == ["ka10075"]
+    assert len(server.orders) == 1 and server.orders[original.id]["type"] == "시장가"
+
+
+@pytest.mark.parametrize("unknown", ["type", "missing", "symbol"])
+def test_unconfirmed_original_type_cannot_send_amendment(unknown):
+    server = FakeServer()
+    broker = connect(server)
+    original = broker.place_order(request())
+    if unknown == "type":
+        server.orders[original.id]["type"] = "unverified"
+    elif unknown == "missing":
+        server.orders.clear()
+    else:
+        server.orders[original.id]["symbol"] = "000660"
+    count = len(server.calls)
+    with pytest.raises(NotSupportedError, match="confirmed limit original order"):
+        broker.amend_order(amendment(original))
+    assert [call[1]["api-id"] for call in server.calls[count:]] == ["ka10075"]
+
+
+def test_original_query_failure_cannot_send_amendment_or_replay():
+    server = FakeServer()
+    broker = connect(server)
+    original = broker.place_order(request())
+    server.next_code = 1700
+    count = len(server.calls)
+    with pytest.raises(BrokerRejectedError):
+        broker.amend_order(amendment(original))
+    with pytest.raises(DuplicateOrderError):
+        broker.amend_order(amendment(original))
+    assert [call[1]["api-id"] for call in server.calls[count:]] == ["ka10075"]
+    assert len(server.orders) == 1
+
+
+def test_accepted_amendment_with_lost_reply_is_not_duplicated():
+    server = FakeServer()
+    broker = connect(server)
+    original = broker.place_order(request())
+    post = server.post
+
+    def lost(path, *, headers, json):
+        reply = post(path, headers=headers, json=json)
+        if headers.get("api-id") == "kt10002":
+            raise TimeoutError("synthetic amendment answer lost after acceptance")
+        return reply
+
+    server.post = lost
+    count = len(server.calls)
+    with pytest.raises(TransportError):
+        broker.amend_order(amendment(original))
+    with pytest.raises(DuplicateOrderError):
+        broker.amend_order(amendment(original))
+    assert [call[1]["api-id"] for call in server.calls[count:]] == ["ka10075", "kt10002"]
+    assert len(server.orders) == 2
+
+
+def test_registered_adapter_default_safety_blocks_writes_without_post():
+    server = FakeServer()
+    token = Kiwoom.issue_token(
+        app_key="fake-app", secret_key="fake-secret", virtual=True, client_factory=server.factory
+    )
+    broker = create_broker(
+        "kiwoom", account="fake-account", virtual=True,
+        client_options={**token, "app_key": "fake-app"}, client_factory=server.factory, clock=server.clock,
+    )
+    assert type(broker) is Kiwoom and broker.safety.dry_run.enabled is True
+    count = len(server.calls)
+    with pytest.raises(DryRunError):
+        broker.place_order(request())
+    with pytest.raises(DryRunError):
+        broker.amend_order(
+            AmendRequest(order_id="0000001", symbol="005930", side="buy", quantity=1, price="70000", client_key="a")
+        )
+    with pytest.raises(DryRunError):
+        broker.cancel_order(CancelRequest(order_id="0000001", symbol="005930", quantity=1, client_key="c"))
+    assert len(server.calls) == count and server.orders == {}
