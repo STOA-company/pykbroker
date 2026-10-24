@@ -115,9 +115,9 @@ def test_cash_buy_and_sell_exact_wire_contract_and_mock_host(live_safety):
 
 @pytest.mark.parametrize(
     "changes,error",
-    [({"order_type": "market", "price": None}, NotSupportedError), ({"price": "70000.5"}, ConfigurationError)],
+    [({"order_type": "close", "price": None}, NotSupportedError), ({"price": "70000.5"}, ConfigurationError)],
 )
-def test_market_and_fractional_won_orders_never_send(changes, error, live_safety):
+def test_close_and_fractional_won_orders_never_send(changes, error, live_safety):
     broker, calls = make({}, safety=live_safety)
     with pytest.raises(error):
         broker.place_order(order(**changes))

@@ -80,7 +80,7 @@ def test_registered_and_limit_order_capability():
     assert BROKERS["nh"] is NH
     assert broker.capabilities().supports_limit_order
     assert broker.capabilities().supports_single_order_cancel
-    assert not broker.capabilities().supports_market_order
+    assert broker.capabilities().supports_market_order
 
 
 def test_token_form_live_host_cache_and_mock_read_host():
