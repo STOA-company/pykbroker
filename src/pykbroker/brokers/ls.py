@@ -703,7 +703,8 @@ class LS(RestBroker):
             "OrdprcPtnCode": self._code(request.order_type),
             "MgntrnCode": self._code("cash"),
             "LoanDt": "",
-            "OrdCndiTpCode": self._code("condition" if request.time_in_force == "day" else "tif_" + request.time_in_force),
+            "OrdCndiTpCode": self._code("condition" if request.time_in_force == "day"
+                                        else "tif_" + request.time_in_force),
             "MbrNo": request.venue or self._code("member"),
         }
         response = self._response("/stock/order", "CSPAT00601", {"CSPAT00601InBlock1": body}, write=True)

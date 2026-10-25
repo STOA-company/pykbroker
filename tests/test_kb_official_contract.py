@@ -491,6 +491,9 @@ class ContractServer(FakeClient):
         self.token = None
         self.orders = {}
         self.error_code = None
+        self.error_for = {}  # path -> code answered once for that path only (a write can fail while reads work)
+        self.lose_next_write = False  # the write lands, its answer is lost
+        self.placed = []  # every accepted ssam1801/1802 body, in order
 
     def fill(self, number, quantity):
         row = self.orders[number]
@@ -513,6 +516,8 @@ class ContractServer(FakeClient):
             return result
         assert headers == {'Content-Type': 'application/json', 'appKey': 'k' * 36,
                            'Authorization': 'bearer ' + self.token}
+        if path in self.error_for:
+            return {'dataHeader': {'resultCode': self.error_for.pop(path), 'processFlag': 'B'}, 'dataBody': {}}
         if self.error_code or self.now >= self.expiry:
             # Public code list gives descriptions, not a response schema.
             # This deliberately synthetic failed envelope must fail safely.
@@ -525,7 +530,12 @@ class ContractServer(FakeClient):
         elif path in ('/api/v1/ssam1801', '/api/v1/ssam1802', '/api/v1/ssam1805'):
             tr = path.rsplit('/', 1)[1]
             assert data.keys() == module._ORDER_LENGTHS[tr].keys()
-            assert data['ordr_ccd'] == '00' and data['sor_ordr_ccd'] == 'K' and data['mkt_tm_clsf'] == '1'
+            # Enumerated in the official XLSX input table (SSAM1801/1802/1805 ordr_ccd, sor_ordr_ccd, mkt_tm_clsf).
+            assert data['ordr_ccd'] in {'00', '03', '12', '13', 'M3'} and data['sor_ordr_ccd'] in {'K', 'N', 'S'}
+            assert data['mkt_tm_clsf'] == '1'
+            assert (data['ordr_ccd'] in {'00'}) == (data['ordr_uprc'] != '0')
+            if tr != 'ssam1805':
+                self.placed.append(dict(data))
             if tr == 'ssam1805':
                 assert data['crct_clsf'] == '1'
                 old = self.orders[data['orgn_ordr_no']]
@@ -558,6 +568,9 @@ class ContractServer(FakeClient):
         else:
             raise AssertionError(f'Unexpected contract path {path}')
         result['dataHeader'].update(resultCode='200', processFlag='A')
+        if self.lose_next_write and path.startswith('/api/v1/ssam'):
+            self.lose_next_write = False
+            raise TimeoutError('fabricated connection loss after acceptance')
         return result
 
 

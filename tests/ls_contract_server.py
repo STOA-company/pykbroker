@@ -21,6 +21,21 @@ def contract(tr):
     return json.loads((FIXTURES / (tr + ".json")).read_text())
 
 
+def enum_codes(tr, block, element):
+    """Codes listed in the official field description (e.g. «00@지정가 03@시장가 ...» or «0:없음,1:IOC»)."""
+    import re
+    for part in contract(tr)["transaction"]["request"]["body"]:
+        if part["element"] == block:
+            for field in part["fields"]:
+                if field["element"] == element:
+                    return set(re.findall(r"(?m)^\s*([0-9A-Za-z]+)\s*[@:]", field["description"].replace(",", "\n")))
+    raise KeyError(element)
+
+
+# Kinds that carry OrdPrc: 00 지정가, 05 조건부지정가, 82 시간외단일가; the venue prices every other kind.
+PRICED_PTN = {"00", "05", "82"}
+
+
 class Reply:
     def __init__(self, body):
         self.body = body
@@ -50,6 +65,9 @@ class ContractServer:
         self.next_response = None
         self.next_http_status = None
         self.after_write_failure = False
+        self.reply_for = {}
+        self.rate_trs = None  # None: every TR is rate checked when enforce_rates is on
+        self.placed = []  # every CSPAT00601 body the server accepted, in order
         self.enforce_rates = False
         self.windows = defaultdict(list)
 
@@ -95,6 +113,8 @@ class ContractServer:
         if self.next_response is not None:
             response, self.next_response = self.next_response, None
             return Reply(response)
+        if tr in self.reply_for:  # one-shot answer for one TR (so a write can fail while its reads work)
+            return Reply(self.reply_for.pop(tr))
         if tr == "token":
             assert body == {"grant_type": "client_credentials", "appkey": "fixture-app-key",
                             "appsecretkey": "fixture-app-secret", "scope": "oob"}
@@ -107,7 +127,7 @@ class ContractServer:
         if token not in self.tokens or self.now >= self.tokens[token]:
             # NOT an LS code: confirms that an unrecognized auth failure cannot become success.
             return Reply({"rsp_cd": "SYNTH_AUTH", "rsp_msg": "fabricated"})
-        if self.enforce_rates:
+        if self.enforce_rates and (self.rate_trs is None or tr in self.rate_trs):
             window = self.windows[tr]
             window[:] = [time for time in window if (self.now - time).total_seconds() < 1]
             rate = int(doc["transaction"]["transactionPerSec"])
@@ -131,19 +151,22 @@ class ContractServer:
         number = self.next_order
         if tr == "CSPAT00601":
             assert row["BnsTpCode"] in {"1", "2"}
-            assert row["OrdprcPtnCode"] in {"00", "03"}
+            assert row["OrdprcPtnCode"] in enum_codes("CSPAT00601", "CSPAT00601InBlock1", "OrdprcPtnCode")
             assert row["MgntrnCode"] == "000" and row["LoanDt"] == ""
-            assert row["OrdCndiTpCode"] == "0" and row["MbrNo"] == "KRX"
-            assert (row["OrdPrc"] == 0) == (row["OrdprcPtnCode"] == "03")
+            assert row["OrdCndiTpCode"] in enum_codes("CSPAT00601", "CSPAT00601InBlock1", "OrdCndiTpCode")
+            assert row["MbrNo"] in {"KRX", "NXT"}
+            assert (row["OrdPrc"] != 0) == (row["OrdprcPtnCode"] in PRICED_PTN)
             self.orders[str(number)] = {"ordno": number, "expcode": "005930", "qty": row["OrdQty"],
                                         "price": row["OrdPrc"], "cheqty": 0, "cheprice": 0,
                                         "ordrem": row["OrdQty"]}
+            self.placed.append(dict(row))
         else:
             original = self.orders[str(row["OrgOrdNo"])]
             assert row["OrdQty"] <= original["ordrem"]
             original["ordrem"] -= row["OrdQty"]
             if tr == "CSPAT00701":
-                assert row["OrdprcPtnCode"] in {"00", "03"} and row["OrdCndiTpCode"] == "0"
+                assert row["OrdprcPtnCode"] in enum_codes("CSPAT00701", "CSPAT00701InBlock1", "OrdprcPtnCode")
+                assert row["OrdCndiTpCode"] in enum_codes("CSPAT00701", "CSPAT00701InBlock1", "OrdCndiTpCode")
                 self.orders[str(number)] = {"ordno": number, "expcode": "005930", "qty": row["OrdQty"],
                                             "price": row["OrdPrc"], "cheqty": 0, "cheprice": 0,
                                             "ordrem": row["OrdQty"]}
