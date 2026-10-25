@@ -6,7 +6,13 @@ from decimal import Decimal
 from importlib import import_module
 from typing import Any
 
-from pykbroker.exceptions import ConfigurationError, FractionalNotSupportedError, InvalidResponseError, MissingDependencyError, NotSupportedError
+from pykbroker.exceptions import (
+    ConfigurationError,
+    FractionalNotSupportedError,
+    InvalidResponseError,
+    MissingDependencyError,
+    NotSupportedError,
+)
 from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
 from pykbroker.rules.kr import equity_rules
 from pykbroker.safety.gate import OrderSafety

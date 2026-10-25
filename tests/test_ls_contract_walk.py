@@ -111,7 +111,9 @@ def test_buy_list_partial_fill_amend_cancel_balance_walk(world):
     assert amended.id != placed.id and amended.status == "accepted" and amended.side is None
     assert amended.client_key == "walk-amend"
     assert broker.status(amended).remaining == 2
-    cancelled = broker.cancel_order(CancelRequest(order_id=amended.id, symbol="005930", quantity=2, client_key="walk-cancel"))
+    cancelled = broker.cancel_order(
+        CancelRequest(order_id=amended.id, symbol="005930", quantity=2, client_key="walk-cancel")
+    )
     assert cancelled.client_key == "walk-cancel"
     assert broker.status(amended).remaining == 0
     assert broker.status(placed).filled == 1

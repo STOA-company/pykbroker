@@ -587,7 +587,10 @@ def test_limiter_is_awaited_before_each_post():
 def test_unlisted_kinds_are_refused_before_any_request():
     # trde_tp 28 (스톱지정가) is in the spec list but its cond_uv meaning is not stated: never built.
     broker, made = make()
-    for changes in ({"time_in_force": "ioc", "order_type": "priority"}, {"session": "single_price", "order_type": "priority"}):
+    for changes in (
+        {"time_in_force": "ioc", "order_type": "priority"},
+        {"session": "single_price", "order_type": "priority"},
+    ):
         request = OrderRequest(symbol="005930", side="buy", quantity=1, client_key="k", **changes)
         with pytest.raises(NotSupportedError):
             broker.place_order(request)

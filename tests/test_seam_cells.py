@@ -70,7 +70,21 @@ def test_support_lists_are_data_on_every_broker_and_never_wider_than_what_is_imp
     assert Capabilities(supports_limit_order=False).order_kinds == ()
     kiwoom = World().broker(virtual=False).capabilities()
     assert kiwoom.order_kinds == ("limit", "market", "close", "conditional_limit", "best", "priority", "midpoint")
-    assert kiwoom.time_in_force == ("day", "ioc", "fok") and kiwoom.sessions == ("regular", "pre", "after", "single_price")
+    assert kiwoom.time_in_force == ("day", "ioc", "fok")
+    assert kiwoom.sessions == ("regular", "pre", "after", "single_price")
     assert kiwoom.venues == ("KRX", "NXT", "SOR")
     mock = World().broker().capabilities()
     assert mock.venues == ("KRX",)
+
+
+def test_meritz_seam_registration_and_capabilities_stay_data_only():
+    from pykbroker.brokers.meritz import MERITZ_MOCK_BASE_URL, Meritz
+    from pykbroker.factory import BROKERS
+
+    broker = object.__new__(Meritz)
+    broker.market = "KR"
+    assert BROKERS["meritz"] is Meritz and MERITZ_MOCK_BASE_URL is None
+    assert broker.capabilities().supports_amend and broker.capabilities().supports_market_order
+    assert DEFINITIVE_REJECTS["meritz"]["EGW00123"].kind == TOKEN_EXPIRED
+    assert DEFINITIVE_REJECTS["meritz"]["EGW00200"].kind == RATE_LIMITED
+    assert "EGW00002" not in DEFINITIVE_REJECTS["meritz"]

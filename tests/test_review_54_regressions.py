@@ -7,7 +7,13 @@ import pytest
 
 from pykbroker.brokers.kis import KIS
 from pykbroker.brokers.toss import Toss
-from pykbroker.exceptions import BrokerRejectedError, ConfigurationError, DuplicateOrderError, InvalidResponseError, NotSupportedError
+from pykbroker.exceptions import (
+    BrokerRejectedError,
+    ConfigurationError,
+    DuplicateOrderError,
+    InvalidResponseError,
+    NotSupportedError,
+)
 from pykbroker.models import AmendRequest, CancelRequest, OrderRequest
 
 from .test_kiwoom_contract_server import World, buy
@@ -50,8 +56,16 @@ def test_expired_kiwoom_token_is_discarded_without_resending(action):
     order = broker.place_order(buy("initial", qty=1))
     requests = {
         "place": ("kt10000", lambda: broker.place_order(buy("expired", qty=1))),
-        "cancel": ("kt10003", lambda: broker.cancel_order(CancelRequest(order_id=order.id, symbol="005930", quantity=1, client_key="expired"))),
-        "amend": ("kt10002", lambda: broker.amend_order(AmendRequest(**buy("expired", qty=1).model_dump(), order_id=order.id))),
+        "cancel": (
+            "kt10003",
+            lambda: broker.cancel_order(
+                CancelRequest(order_id=order.id, symbol="005930", quantity=1, client_key="expired")
+            ),
+        ),
+        "amend": (
+            "kt10002",
+            lambda: broker.amend_order(AmendRequest(**buy("expired", qty=1).model_dump(), order_id=order.id)),
+        ),
     }
     tr, call = requests[action]
     world.server.fail_next[tr] = (8005, "")
@@ -74,7 +88,9 @@ def test_toss_kr_market_capability_reaches_submit_and_echoes_client_key(live_saf
     live_safety.valuation = lambda request: Decimal("70000")
     with Toss(account="fixture", account_seq=1, sdk_factory=factory, sdk_dry_run=False, safety=live_safety) as broker:
         assert broker.capabilities().order_kinds == ("limit", "market")
-        order = broker.place_order(OrderRequest(symbol="005930", side="buy", quantity=1, order_type="market", client_key="market-key"))
+        order = broker.place_order(
+            OrderRequest(symbol="005930", side="buy", quantity=1, order_type="market", client_key="market-key")
+        )
         assert order.client_key == "market-key"
         assert made[0].calls[-1]["order_type"] == "MARKET"
 
@@ -98,12 +114,18 @@ def test_kis_class_share_round_trip_positions_open_orders_place_cancel_status(li
     assert broker.get_positions()[0].symbol == "BRK.B"
     assert broker.available_qty("BRK.B") == 2
     assert broker.list_orders("BRK.B")[0].symbol == "BRK.B"
-    order = broker.place_order(OrderRequest(symbol="BRK.B", market="US", venue="NYSE", side="buy", quantity=1, price="100", client_key="place-key"))
+    order = broker.place_order(
+        OrderRequest(
+            symbol="BRK.B", market="US", venue="NYSE", side="buy", quantity=1, price="100", client_key="place-key"
+        )
+    )
     assert (order.symbol, order.client_key) == ("BRK.B", "place-key")
     assert api.post_order_overseas.call_args.kwargs["ticker"] == "BRK/B"
     status = broker.status(order)
     assert (status.symbol, status.status, status.client_key) == ("BRK.B", "filled", "place-key")
-    cancelled = broker.cancel_order(CancelRequest(symbol="BRK.B", market="US", venue="NYSE", order_id="42", quantity=1, client_key="cancel-key"))
+    cancelled = broker.cancel_order(
+        CancelRequest(symbol="BRK.B", market="US", venue="NYSE", order_id="42", quantity=1, client_key="cancel-key")
+    )
     assert (cancelled.symbol, cancelled.client_key) == ("BRK.B", "cancel-key")
     assert scope.overseas_cancel.call_args.kwargs["code"] == "BRK/B"
 
