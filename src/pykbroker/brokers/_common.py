@@ -28,6 +28,7 @@ from pykbroker.models import (
     Quote,
     Rules,
 )
+from pykbroker.models.markets import CURRENCIES, INTEGER_PRICE_CURRENCIES, TIMEZONES
 from pykbroker.reject_codes import definitive_rejection
 from pykbroker.rules.kr import LOT, equity_rules, normalize_symbol
 from pykbroker.safety.gate import OrderSafety
@@ -120,6 +121,7 @@ def check_response(value: Any, broker: str) -> Any:
 
 class BaseBroker:
     broker_code = "base"
+    supported_markets = ("KR", "US")
     # Mock (virtual) trading exists only where the vendor offers a separate domain.
     supports_virtual = False
     # US routing needs a named venue, so a broker that has not verified its overseas venue
@@ -141,8 +143,8 @@ class BaseBroker:
     ) -> None:
         if not isinstance(account, str) or not account.strip():
             raise ConfigurationError("Supply an account identifier")
-        if market not in {"KR", "US"}:
-            raise NotSupportedError("Supported stock markets: KR, US")
+        if market not in self.supported_markets:
+            raise NotSupportedError("Market is outside this adapter capability declaration")
         # Truthy values never promote or demote an account mode.
         if not isinstance(virtual, bool):
             raise ConfigurationError("virtual must be a boolean; the account mode is never inferred")
@@ -187,16 +189,18 @@ class BaseBroker:
     def _symbol(self, symbol: str, market: str) -> str:
         if market != self.market:
             raise NotSupportedError("Request market must match this broker instance")
-        return normalize_symbol(symbol) if market == "KR" else symbol.replace(".", self.us_class_separator)
+        return (normalize_symbol(symbol) if market == "KR" else
+                symbol.replace(".", self.us_class_separator) if market == "US" else symbol)
 
     def canonical_symbol(self, native: str) -> str:
         """Broker-native US symbol back to the internal ROOT.CLASS form; KR codes are unchanged."""
-        return native if self.market == "KR" else native.replace(self.us_class_separator, ".")
+        return native.replace(self.us_class_separator, ".") if self.market == "US" else native
 
     def capabilities(self) -> Capabilities:
         if self.market == "US" and not self.us_venues:
             raise SpecUnverifiedError("This broker has not verified its US venues; overseas routing is locked")
         return Capabilities(
+            markets=(self.market,),
             supports_virtual_account=self.supports_virtual,
             virtual=self.virtual,
             requires_venue=self.market == "US",
@@ -219,6 +223,10 @@ class BaseBroker:
     ) -> Rules:
         if self.market == "KR":
             return equity_rules(symbol, halted=self._halt_from_provider(symbol), now=now, trading_day=trading_day)
+        if self.market not in {"KR", "US"}:
+            return Rules(symbol=symbol, market=self.market, currency=CURRENCIES[self.market],
+                         timezone=TIMEZONES[self.market],
+                         halted=self._halt_from_provider(symbol))
         # US ticks are venue- and price-dependent and the daily band is intraday (LULD): unknown, not absent.
         return Rules(
             symbol=symbol,
@@ -246,6 +254,8 @@ class BaseBroker:
     def _validate_order(self, request: OrderRequest | CancelRequest) -> None:
         self._symbol(request.symbol, request.market)
         capabilities = self.capabilities()
+        if capabilities.markets and request.market not in capabilities.markets:
+            raise NotSupportedError("Market is outside this adapter capability declaration")
         # capabilities() is the plan the executor makes; validation must agree with it exactly.
         if request.venue == "NXT" and not capabilities.supports_nxt:
             raise NotSupportedError("NXT is not supported")
@@ -260,9 +270,14 @@ class BaseBroker:
                 raise NotSupportedError("Order venue must match the configured venue")
         if isinstance(request, CancelRequest) and not capabilities.supports_single_order_cancel:
             raise NotSupportedError("Single-order cancellation is not supported")
-        if isinstance(request, OrderRequest) and request.price is not None:
-            if self.market == "KR" and request.price != request.price.to_integral_value():
-                raise ConfigurationError("KR prices must be whole won; round explicitly before submission")
+        if isinstance(request, OrderRequest):
+            currency = capabilities.currency.get(request.market)
+            if currency in INTEGER_PRICE_CURRENCIES:
+                for price in (request.price, request.stop_price):
+                    if price is not None and price != price.to_integral_value():
+                        unit = ("KR prices must be whole won" if currency == "KRW"
+                                else f"{currency} prices must be whole")
+                        raise ConfigurationError(unit + "; round explicitly before submission")
         if isinstance(request, AmendRequest):
             if request.time_in_force not in capabilities.amend_time_in_force:
                 raise NotSupportedError("This amendment time in force is not supported")
@@ -270,7 +285,7 @@ class BaseBroker:
                 raise NotSupportedError("This amendment session is not supported")
         if isinstance(request, OrderRequest):
             # A fractional request gets its own explicit refusal below (FractionalNotSupportedError).
-            if not request.fractional and request.order_type not in capabilities.order_kinds:
+            if not request.fractional and request.order_type not in capabilities.kinds_for(request.market):
                 raise NotSupportedError("This order type is not supported")
             if request.time_in_force not in capabilities.time_in_force:
                 raise NotSupportedError("This time in force is not supported")
@@ -290,9 +305,18 @@ class BaseBroker:
             if not capabilities.supports_limit_order:
                 raise NotSupportedError("Limit orders are not supported")
 
+    def _compatible_order(self, request: OrderRequest) -> OrderRequest:
+        aliases = {"best_limit": "best", "priority_limit": "priority", "mid": "midpoint"}
+        if request.order_type in aliases or request.order_type in {"ioc", "fok"}:
+            BaseBroker._validate_order(self, request)
+            updates = ({"order_type": aliases[request.order_type]} if request.order_type in aliases else
+                       {"order_type": "limit", "time_in_force": request.order_type})
+            return OrderRequest.model_validate(request.model_dump() | updates)
+        return request
+
     def place_order(self, request: OrderRequest) -> Order:
         # Revalidate even models constructed with model_construct/model_copy.
-        request = OrderRequest.model_validate(request.model_dump())
+        request = self._compatible_order(OrderRequest.model_validate(request.model_dump()))
         self._validate_order(request)
         return self.safety.execute(
             self.broker_code, self._account, request, lambda: self._call(lambda: self._place_order(request))

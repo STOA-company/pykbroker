@@ -113,7 +113,7 @@ def test_unoffered_kinds_never_reach_the_server(world):
 def test_buy_partial_fill_amend_cancel_balance_walk(world):
     server, broker = world
     caps = broker.capabilities()
-    assert caps.supports_amend and "midpoint" in caps.order_kinds and caps.time_in_force == ("day", "ioc", "fok")
+    assert caps.supports_amend and "midpoint" in caps.kinds_for("KR") and caps.time_in_force == ("day", "ioc", "fok")
     cash0 = broker.get_balance().cash_available
     placed = broker.place_order(req())
     assert placed.id == "mkt:101" and placed.client_key == "walk-place"

@@ -66,7 +66,7 @@ class OrderSafety:
         )
         if isinstance(request, OrderRequest):
             if (
-                request.order_type in ("market", "close", "best", "priority", "midpoint")
+                request.order_type in ("market", "close", "best", "priority", "midpoint", "moo", "moc", "vwap", "twap")
                 or request.session != "regular"
             ):
                 if self.market_order_allowed is None or self.market_order_allowed(request) is not True:

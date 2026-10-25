@@ -1,0 +1,428 @@
+{
+  "미국주식 매수 주문(ust20000)": {
+    "meta": {
+      "◀ API 리스트 이동": "",
+      "키움 REST API": "",
+      "API 정보": "",
+      "메뉴 위치": "미국주식 > 주문 > 미국주식 매수 주문(ust20000)",
+      "API 명": "미국주식 매수 주문",
+      "API ID": "ust20000",
+      "기본정보": "",
+      "Method": "POST",
+      "운영 도메인": "https://api.kiwoom.com",
+      "모의투자 도메인": "https://mockapi.kiwoom.com",
+      "URL": "/api/us/ordr",
+      "Format": "JSON",
+      "Content-Type": "application/json;charset=UTF-8",
+      "개요": "",
+      "미국주식 매수 주문을 요청합니다.\n주문 TR의 경우 영웅문 Global [2000] 해외주식 주문 종합 화면에서 미국 주식 주문 유형별 유의사항을 확인 후 주문해주시기 바랍니다.": ""
+    },
+    "request": {
+      "header": [
+        {
+          "element": "api-id",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "TR명",
+          "type": "String",
+          "required": "Y",
+          "length": "10",
+          "description": "7자리 TR코드, ex) ka00001"
+        },
+        {
+          "element": "authorization",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "접근토큰",
+          "type": "String",
+          "required": "Y",
+          "length": "1000",
+          "description": "토큰 지정시 토큰타입(\"Bearer\") 붙혀서 호출 \n 예) Bearer Egicyx..."
+        },
+        {
+          "element": "cont-yn",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "연속조회여부",
+          "type": "String",
+          "required": "N",
+          "length": "1",
+          "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅"
+        },
+        {
+          "element": "next-key",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "연속조회키",
+          "type": "String",
+          "required": "N",
+          "length": "50",
+          "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅"
+        }
+      ],
+      "body": [
+        {
+          "element": "stex_tp",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "거래소구분",
+          "type": "String",
+          "required": "Y",
+          "length": "",
+          "description": "NA: AMEX, ND: NASDAQ, NY: NYSE"
+        },
+        {
+          "element": "stk_cd",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "종목코드",
+          "type": "String",
+          "required": "Y",
+          "length": "12",
+          "description": ""
+        },
+        {
+          "element": "ord_qty",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "주문수량",
+          "type": "String",
+          "required": "Y",
+          "length": "12",
+          "description": ""
+        },
+        {
+          "element": "ord_uv",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "주문단가",
+          "type": "String",
+          "required": "N",
+          "length": "12",
+          "description": "trde_tp가 00(지정가),30(LOC)...인 경우 필수 입력, 그 외 시장가 거래유형 설정 시 입력 값은 빈 값 처리"
+        },
+        {
+          "element": "trde_tp",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "해외매매구분",
+          "type": "String",
+          "required": "Y",
+          "length": "2",
+          "description": "00:지정가 03시장가 26:VWAP지정가 27:TWAP지정가 30:LOC 36:VWAP시장가 37:TWAP시장가"
+        }
+      ]
+    },
+    "response": {
+      "header": [
+        {
+          "element": "api-id",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "TR명",
+          "type": "String",
+          "required": "Y",
+          "length": "10",
+          "description": "7자리 TR코드, ex) ka00001"
+        },
+        {
+          "element": "cont-yn",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "연속조회여부",
+          "type": "String",
+          "required": "N",
+          "length": "1",
+          "description": "다음 데이터가 있을시 Y값 전달"
+        },
+        {
+          "element": "next-key",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "연속조회키",
+          "type": "String",
+          "required": "N",
+          "length": "50",
+          "description": "다음 데이터가 있을시 다음 키값 전달"
+        }
+      ],
+      "body": [
+        {
+          "element": "stk_nm",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "종목명",
+          "type": "String",
+          "required": "N",
+          "length": "50",
+          "description": ""
+        },
+        {
+          "element": "ord_no",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "주문번호",
+          "type": "String",
+          "required": "N",
+          "length": "9",
+          "description": "취소 혹은 정정 주문 시 사용"
+        },
+        {
+          "element": "fc_entra",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "외화예수금",
+          "type": "String",
+          "required": "N",
+          "length": "12",
+          "description": ""
+        },
+        {
+          "element": "tdy_rebuy_useda",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "금일재매수사용금액",
+          "type": "String",
+          "required": "N",
+          "length": "12",
+          "description": ""
+        },
+        {
+          "element": "pred_rebuy_useda",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "전일재매수사용금액",
+          "type": "String",
+          "required": "N",
+          "length": "12",
+          "description": ""
+        },
+        {
+          "element": "trst_prof_ch",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "사용증거금",
+          "type": "String",
+          "required": "N",
+          "length": "12",
+          "description": ""
+        }
+      ]
+    },
+    "request_example": "{\n    \"stex_tp\": \"ND\",\n    \"stk_cd\": \"NVDA\",\n    \"ord_qty\": \"10\",\n    \"ord_uv\": \"213.04\",\n    \"trde_tp\": \"00\"\n}",
+    "response_example": "{\n    \"acnt_nm\": \"000\",\n    \"stk_nm\": \"엔비디아\",\n    \"ord_no\": \"000000282\",\n    \"fc_entra\": \"18042538.7700\",\n    \"tdy_rebuy_useda\": \"195.7772\",\n    \"pred_rebuy_useda\": \"365.0867\",\n    \"trst_prof_ch\": \"444.1361\",\n    \"return_code\": 0,\n    \"return_msg\": \"미국 매수주문입력 완료되었습니다\"\n}"
+  },
+  "미국주식 매도 주문(ust20001)": {
+    "meta": {
+      "◀ API 리스트 이동": "",
+      "키움 REST API": "",
+      "API 정보": "",
+      "메뉴 위치": "미국주식 > 주문 > 미국주식 매도 주문(ust20001)",
+      "API 명": "미국주식 매도 주문",
+      "API ID": "ust20001",
+      "기본정보": "",
+      "Method": "POST",
+      "운영 도메인": "https://api.kiwoom.com",
+      "모의투자 도메인": "https://mockapi.kiwoom.com",
+      "URL": "/api/us/ordr",
+      "Format": "JSON",
+      "Content-Type": "application/json;charset=UTF-8",
+      "개요": "",
+      "미국주식 매도 주문을 요청합니다.\n주문 TR의 경우 영웅문 Global [2000] 해외주식 주문 종합 화면에서 미국 주식 주문 유형별 유의사항을 확인 후 주문해주시기 바랍니다.": ""
+    },
+    "request": {
+      "header": [
+        {
+          "element": "api-id",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "TR명",
+          "type": "String",
+          "required": "Y",
+          "length": "10",
+          "description": "7자리 TR코드, ex) ka00001"
+        },
+        {
+          "element": "authorization",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "접근토큰",
+          "type": "String",
+          "required": "Y",
+          "length": "1000",
+          "description": "토큰 지정시 토큰타입(\"Bearer\") 붙혀서 호출 \n 예) Bearer Egicyx..."
+        },
+        {
+          "element": "cont-yn",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "연속조회여부",
+          "type": "String",
+          "required": "N",
+          "length": "1",
+          "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅"
+        },
+        {
+          "element": "next-key",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "연속조회키",
+          "type": "String",
+          "required": "N",
+          "length": "50",
+          "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅"
+        }
+      ],
+      "body": [
+        {
+          "element": "stk_cd",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "종목코드",
+          "type": "String",
+          "required": "Y",
+          "length": "12",
+          "description": ""
+        },
+        {
+          "element": "stex_tp",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "거래소구분",
+          "type": "String",
+          "required": "Y",
+          "length": "",
+          "description": "NA: AMEX, ND: NASDAQ, NY: NYSE"
+        },
+        {
+          "element": "ord_qty",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "주문수량",
+          "type": "String",
+          "required": "Y",
+          "length": "12",
+          "description": ""
+        },
+        {
+          "element": "ord_uv",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "주문단가",
+          "type": "String",
+          "required": "N",
+          "length": "12",
+          "description": "trde_tp가 00(지정가),30(LOC)...인 경우 필수 입력, 그 외 시장가 거래유형 설정 시 입력 값은 빈 값 처리"
+        },
+        {
+          "element": "stop_pric",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "STOP가격",
+          "type": "String",
+          "required": "N",
+          "length": "12",
+          "description": "trde_tp가 34(STOP LIMIT) 또는 35(STOP)인 경우 필수 입력, 그 외 거래유형(지정가,시장가 등) 설정 시 입력 값은 무시되거나 빈 값처리."
+        },
+        {
+          "element": "trde_tp",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "매매구분",
+          "type": "String",
+          "required": "Y",
+          "length": "2",
+          "description": "00:지정가 03시장가 26:VWAP지정가 27:TWAP지정가 30:LOC 33:MOC 36:VWAP시장가 37:TWAP시장가 35:STOP 34:STOP LIMIT"
+        }
+      ]
+    },
+    "response": {
+      "header": [
+        {
+          "element": "api-id",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "TR명",
+          "type": "String",
+          "required": "Y",
+          "length": "10",
+          "description": "7자리 TR코드, ex) ka00001"
+        },
+        {
+          "element": "cont-yn",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "연속조회여부",
+          "type": "String",
+          "required": "N",
+          "length": "1",
+          "description": "다음 데이터가 있을시 Y값 전달"
+        },
+        {
+          "element": "next-key",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "연속조회키",
+          "type": "String",
+          "required": "N",
+          "length": "50",
+          "description": "다음 데이터가 있을시 다음 키값 전달"
+        }
+      ],
+      "body": [
+        {
+          "element": "stk_nm",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "종목명",
+          "type": "String",
+          "required": "N",
+          "length": "50",
+          "description": ""
+        },
+        {
+          "element": "ord_no",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "주문번호",
+          "type": "String",
+          "required": "N",
+          "length": "9",
+          "description": "취소 혹은 정정 주문 시 사용"
+        },
+        {
+          "element": "poss_qty",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "보유수량",
+          "type": "String",
+          "required": "N",
+          "length": "12",
+          "description": ""
+        },
+        {
+          "element": "tdy_resel_usedq",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "금일재매도사용수량",
+          "type": "String",
+          "required": "N",
+          "length": "12",
+          "description": ""
+        },
+        {
+          "element": "pred_resel_usedq",
+          "depth": 0,
+          "is_section": false,
+          "한글명": "전일재매도사용수량",
+          "type": "String",
+          "required": "N",
+          "length": "12",
+          "description": ""
+        }
+      ]
+    },
+    "request_example": "{\n    \"stk_cd\": \"NVDA\",\n    \"stex_tp\": \"ND\",\n    \"ord_qty\": \"10\",\n    \"ord_uv\": \"210.05\",\n    \"stop_pric\": \"\",\n    \"trde_tp\": \"00\"\n}",
+    "response_example": "{\n    \"acnt_nm\": \"000\",\n    \"stk_nm\": \"엔비디아\",\n    \"ord_no\": \"000000283\",\n    \"poss_qty\": \"000000000028\",\n    \"tdy_resel_usedq\": \"000000000000\",\n    \"pred_resel_usedq\": \"000000000000\",\n    \"return_code\": 0,\n    \"return_msg\": \"미국 매도주문 입력이 완료되었습니다.\"\n}"
+  }
+}

@@ -69,7 +69,7 @@ def test_buy_list_partial_fill_amend_cancel_walk(world):
     server, broker = world
     caps = broker.capabilities()
     assert caps.supports_amend and caps.supports_nxt and not caps.supports_market_order
-    assert caps.order_kinds == ("limit",)
+    assert caps.kinds_for("KR") == ("limit",)
     placed = broker.place_order(order(quantity=2, price=Decimal("1000")))
     server.fill(placed.id, 1)
     [partial] = broker.list_orders()

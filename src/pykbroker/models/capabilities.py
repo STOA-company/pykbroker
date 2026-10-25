@@ -1,6 +1,7 @@
-from pydantic import model_validator
+from pydantic import Field, model_validator
 
 from ._base import Model
+from .markets import CURRENCIES
 
 
 class Capabilities(Model):
@@ -13,7 +14,8 @@ class Capabilities(Model):
     # Support lists as data (SEAM): what the adapter will put on the wire. A request outside a list is refused before
     # any HTTP. Left empty they derive from the flags below: limit/market kinds, "day", "regular". An adapter that
     # accepts more (close, IOC/FOK, off-session, conditional kinds) lists it explicitly.
-    order_kinds: tuple[str, ...] = ()
+    order_kinds: dict[str, tuple[str, ...]] | tuple[str, ...] = ()
+    currency: dict[str, str] = Field(default_factory=dict)
     time_in_force: tuple[str, ...] = ()
     sessions: tuple[str, ...] = ()
     # Amend transports may preserve fewer conditions than new-order transports.
@@ -48,7 +50,22 @@ class Capabilities(Model):
             object.__setattr__(self, "time_in_force", ("day",))
         if not self.sessions:
             object.__setattr__(self, "sessions", ("regular",))
+        if isinstance(self.order_kinds, tuple):
+            kinds = self.order_kinds
+            for alias, old in {"best_limit": "best", "priority_limit": "priority", "mid": "midpoint"}.items():
+                if old in kinds:
+                    kinds += (alias,)
+            if "limit" in kinds:
+                kinds += tuple(tif for tif in ("ioc", "fok") if tif in self.time_in_force)
+            object.__setattr__(self, "order_kinds", kinds)
+        if self.markets and isinstance(self.order_kinds, tuple):
+            object.__setattr__(self, "order_kinds", {market: self.order_kinds for market in self.markets})
+        if not self.currency:
+            object.__setattr__(self, "currency", {market: CURRENCIES[market] for market in self.markets})
         return self
+
+    def kinds_for(self, market: str) -> tuple[str, ...]:
+        return self.order_kinds.get(market, ()) if isinstance(self.order_kinds, dict) else self.order_kinds
 
     @model_validator(mode="after")
     def _venue_requirement_names_its_venues(self) -> "Capabilities":

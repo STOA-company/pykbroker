@@ -36,6 +36,6 @@
 35. KR 현금/보유평가와 US USD 주문가능현금/보유평가를 각각 반환한다.
 36. KR sellable 미확인: 양수 Position 반환은 아직 미충족이다.
 37. KR 정정 뒤 취소의 가격별 배분·US 클래스주 실제 표기는 미확인; KR 취소 사슬은 unknown/None.
-38. KR/US 외 시장·해외 특수주문은 SEAM 칸이 없어 전체 목표 미충족이다.
+38. S-추가3 해외시장·LOO/LOC/MOO/MOC 확장은 2026-10-25-pack-seam-s3.md 정본; 알고 기간 필드는 미확인.
 39. 모의 서버/걸음 시험은 합성 증거이며 운영·실주문·독립 리뷰는 안 했다.
 40. connector_ready/live 변경 0; draft PR만, do-not-merge 유지.
