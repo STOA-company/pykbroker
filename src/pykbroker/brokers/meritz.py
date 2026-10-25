@@ -402,6 +402,14 @@ class Meritz(BaseBroker):
             raise InvalidResponseError("Meritz US ledger symbol has unknown exchange suffix")
         return self.canonical_symbol(root)
 
+    def _matches_shared_venue(self, row):
+        vendor = row.get("ovrs_exch_vndr_idno")
+        known = {v[0] for market, venues in MARKET_VENUES.items()
+                 if MARKET_CODES[market] == MARKET_CODES[self.market] for v in venues.values()}
+        if not isinstance(vendor, str) or vendor not in known:
+            raise InvalidResponseError("Meritz shared-market row lacks known exchange evidence")
+        return vendor == MARKET_VENUES[self.market][self.venue][0]
+
     def list_orders(self, symbol=None):
         wanted = self._symbol(symbol, self.market) if symbol is not None else None
         def read():
@@ -429,8 +437,9 @@ class Meritz(BaseBroker):
                     continue
                 if self.market in SHARED_MARKETS:
                     evidence = today.get((r["oder_date"], _number_id(r["oder_no"])))
-                    if (evidence is None or evidence.get("ovrs_exch_vndr_idno")
-                            != MARKET_VENUES[self.market][self.venue][0]):
+                    if evidence is None:
+                        raise InvalidResponseError("Meritz shared-market order lacks today evidence")
+                    if not self._matches_shared_venue(evidence):
                         continue
                 code = self._ledger_symbol(r)
                 ident = _number_id(r["oder_no"])
@@ -505,8 +514,7 @@ class Meritz(BaseBroker):
                     continue
                 if row["ovrs_stck_mrkt_tr_cls_code"] != MARKET_CODES[self.market]:
                     continue
-                if (self.market in SHARED_MARKETS and row.get("ovrs_exch_vndr_idno")
-                        != MARKET_VENUES[self.market][self.venue][0]):
+                if self.market in SHARED_MARKETS and not self._matches_shared_venue(row):
                     continue
                 if row["crcd"] != CURRENCIES[self.market]:
                     raise InvalidResponseError("Meritz holding currency inconsistent")
