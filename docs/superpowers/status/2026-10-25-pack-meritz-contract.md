@@ -4,7 +4,7 @@
 3. 원본 SHA: 2cef2e9f51f31f0ca13d9cd884bd9c80b685512d.
 4. REST 73개, OpenAPI 3.1; 발주서의 62개보다 늘어난 판이다.
 5. 정본 필드 증거: tests/fixtures/meritz/official/CONTRACT-2026-10-25.md.
-6. 18개 사용 경로 JSON을 원본 그대로 추출했다.
+6. 19개 사용 경로 JSON을 원본 그대로 추출했다.
 7. 어댑터: src/pykbroker/brokers/meritz.py.
 8. factory BROKERS 표에 meritz 한 행을 추가했다.
 9. 새 증권사 이름 분기를 제품 공용 경로에 추가하지 않았다.
@@ -32,10 +32,10 @@
 31. 오류 표에 문서 있는 코드만 rejected/token_expired/rate_limited로 넣었다.
 32. 표 밖 코드·응답 유실·비JSON은 unknown이며 재송신하지 않는다.
 33. 페이지 키의 공백을 보존하고 누락·반복을 오류로 처리한다.
-34. KR 미체결 ncnt_qty, US는 문서에 따라 주문수량-체결수량이다.
+34. KR 미체결 ncnt_qty, US q-f; 대체 원행은 unknown/None, 당일 취소는 today 확정수량·잔량·가능수량 대사.
 35. KR 현금/보유평가와 US USD 주문가능현금/보유평가를 각각 반환한다.
 36. KR sellable 미확인: 양수 Position 반환은 아직 미충족이다.
-37. US 취소 후 원주문 종료와 클래스주 실제 표기는 미확인이다.
+37. KR 정정 뒤 취소의 가격별 배분·US 클래스주 실제 표기는 미확인; KR 취소 사슬은 unknown/None.
 38. KR/US 외 시장·해외 특수주문은 SEAM 칸이 없어 전체 목표 미충족이다.
 39. 모의 서버/걸음 시험은 합성 증거이며 운영·실주문·독립 리뷰는 안 했다.
 40. connector_ready/live 변경 0; draft PR만, do-not-merge 유지.

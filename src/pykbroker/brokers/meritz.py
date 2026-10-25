@@ -37,6 +37,7 @@ US_VENUES = {"NASDAQ": ("0537", "OQ"), "NYSE": ("0321", "NY"), "AMEX": ("0066", 
 TIF = {"day": "0", "ioc": "3", "fok": "4"}
 US_KINDS = {"limit": "01", "market": "05"}
 US_ASPR = {"1": "market", "2": "limit"}
+DATA_SUCCESS_PATHS = {"/market/v1/prices"}  # corrections.json: market_prices degraded rsp_cd
 SUCCESS = {"0000", "0001", "5762", "5766", "5820", "5822"}
 
 
@@ -172,6 +173,8 @@ class Meritz(BaseBroker):
             raise TransportError("Meritz request failed; reconcile writes before retrying") from None
         if not isinstance(data, Mapping):
             raise InvalidResponseError("Meritz response is not an object")
+        if not write and path in DATA_SUCCESS_PATHS and isinstance(data.get("data"), Mapping):
+            return data  # get_quote checks the returned identity and numeric price
         code = data.get("rsp_cd")
         refusal = rejection_for_code(self.broker_code, code)
         if refusal is not None:
@@ -262,11 +265,28 @@ class Meritz(BaseBroker):
                      venue=request.venue, market=self.market, status="accepted")
 
     def _original(self, request):
-        rows = [r for r in self._ledger() if _number_id(r["oder_no"]) == request.order_id]
+        ledger = self._ledger()
+        rows = [r for r in ledger if _number_id(r["oder_no"]) == request.order_id]
         if len(rows) != 1 or self._ledger_symbol(rows[0]) != request.symbol:
             raise InvalidResponseError("Mutation requires one matching original ledger row")
         row = rows[0]
         if self.market == "US":
+            visited = set()
+            while True:
+                ident = _number_id(row["oder_no"])
+                if ident in visited:
+                    raise InvalidResponseError("Cyclic Meritz amendment chain")
+                visited.add(ident)
+                children = [r for r in ledger if str(r["orgl_oder_no"]) == ident
+                            and r["oder_rctf_cncl_cls_code"] == "1"
+                            and r["ovrs_stck_oder_stat_cls_code"] == "0"]
+                if not children:
+                    break
+                if len(children) != 1:
+                    raise InvalidResponseError("Ambiguous Meritz amendment chain")
+                row = children[0]
+                if self._ledger_symbol(row) != request.symbol:
+                    raise InvalidResponseError("Amended order symbol differs")
             if row["oder_date"] != self._day():
                 raise InvalidResponseError("Original order date differs from the configured trading date")
             if not row["iscd"].endswith("." + US_VENUES[self.venue][1]):
@@ -349,7 +369,25 @@ class Meritz(BaseBroker):
         wanted = self._symbol(symbol, self.market) if symbol is not None else None
         def read():
             result, seen = [], set()
-            for r in self._ledger():
+            ledger = self._ledger()
+            today = {}
+            if self.market == "US":
+                page = self._response("GET", self._prefix() + "today",
+                                      params={"cntg_cls_code": "0", "seln_byov_clcd": "0"})
+                if page.get("tr_cont") != "0" or not isinstance(page.get("data"), list):
+                    raise InvalidResponseError("Meritz today evidence incomplete")
+                for row in page["data"]:
+                    key = (row["oder_date"], _number_id(row["oder_no"]))
+                    if key in today:
+                        raise InvalidResponseError("Meritz duplicate today identity")
+                    today[key] = row
+            replaced = {str(r["orgl_oder_no"]) for r in ledger
+                        if self.market == "US" and r["oder_rctf_cncl_cls_code"] in {"1", "2"}}
+            kr_amended = {str(r["orgl_oder_no"]) for r in ledger
+                          if self.market == "KR" and r["rctf_cncl_cls_code"] == "2"}
+            kr_uncertain = {str(r["orgl_oder_no"]) for r in ledger
+                            if self.market == "KR" and r["rctf_cncl_cls_code"] == "3"} & kr_amended
+            for r in ledger:
                 if self.market == "US" and r["ovrs_stck_mrkt_tr_cls_code"] != "01":
                     continue
                 code = self._ledger_symbol(r)
@@ -362,7 +400,7 @@ class Meritz(BaseBroker):
                 if self.market == "KR":
                     q, f, remaining = (whole(r[k]) for k in ("odqt", "total_cntg_qty", "ncnt_qty"))
                     status = "rejected" if r["oder_pros_stat_cls_code"] == "3" else "unknown"
-                    if r["oder_rfus_reas_code"] != "0000":
+                    if status != "rejected" and r["oder_rfus_reas_code"] != "0000":
                         status = "unknown"  # no sourced rejection semantics for individual reason codes
                     elif r["oder_pros_stat_cls_code"] in {"1", "2"}:
                         if f == q and q > 0:
@@ -388,6 +426,23 @@ class Meritz(BaseBroker):
                     kind = US_ASPR.get(r["aspr_type_code"])
                 if f > q or remaining < 0 or f + remaining > q:
                     raise InvalidResponseError("Meritz ledger quantities inconsistent")
+                if self.market == "KR":
+                    if ident in kr_uncertain or str(r["orgl_oder_no"]) in kr_uncertain:
+                        status, remaining = "unknown", None
+                else:
+                    if ident in replaced or r["oder_rctf_cncl_cls_code"] == "2":
+                        status, remaining = "unknown", None
+                    evidence = today.get((r["oder_date"], ident))
+                    if evidence is not None:
+                        if (evidence["iscd"] != r["iscd"]
+                                or whole(evidence["odqt"]) != q or whole(evidence["cntg_qty"]) != f
+                                or evidence["seln_byov_clcd"] != r["seln_byov_clcd"]):
+                            raise InvalidResponseError("Meritz today/history identity or quantity differs")
+                        cancelled, unfilled, amendable = (whole(evidence[k]) for k in
+                                                         ("cncl_cnfr_qty", "ncnt_qty", "oder_able_qty"))
+                        if (r["ovrs_stck_oder_stat_cls_code"] == "0" and q > f
+                                and cancelled == q - f and unfilled == 0 and amendable == 0):
+                            status, remaining = "cancelled", 0
                 result.append(Order(id=ident, symbol=code, market=self.market, quantity=q, filled=f,
                                     remaining=remaining, status=status, price=price, side=side, order_type=kind,
                                     fill_price=fill if f == 1 else None))

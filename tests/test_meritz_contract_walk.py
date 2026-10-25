@@ -74,6 +74,16 @@ def test_order_partial_amend_cancel_balance_and_fill_walk(world, market, venue):
     assert cancelled.status == "unknown" and cancelled.client_key == "cancel"
     if market == "KR":
         assert server.calls[-1][3]["orgl_oder_no"] == int(placed.id)
+    rows = broker.list_orders()
+    assert not [r for r in rows if r.status in {"open", "partial"}]
+    if market == "KR":
+        assert all(r.status == "unknown" and r.remaining is None for r in rows)
+        assert server.orders["KR"][amended.id]["ncnt_qty"] == 2  # allocation not invented
+    else:
+        assert server.calls[-2][1].endswith("/history")
+        assert next(r for r in rows if r.id == amended.id).status == "cancelled"
+        assert next(r for r in rows if r.id == amended.id).remaining == 0
+        assert next(r for r in rows if r.id == placed.id).remaining is None
     assert broker.status(placed).filled == 1  # cancellation must not erase the execution
     balance = broker.get_balance()
     assert balance.position_value == 990
@@ -102,7 +112,9 @@ def test_kr_kinds_and_venues(world, side, venue, kind, price, stop, native):
     body = server.calls[-1][3]
     assert (body["iscd"], body["oder_cls_code"], body["exch_kind_code"]) == (
         "A005930", native, {"KRX": "01", "NXT": "02", "SOR": "03"}[venue])
-    assert broker.status(placed).remaining == 3
+    result = broker.status(placed)
+    assert result.remaining == 3
+    assert (result.side, result.order_type, result.price) == (side, kind, Decimal(price) if price else None)
     broker.cancel_order(cancel(placed, venue=venue, quantity=3))
 
 
@@ -132,6 +144,9 @@ def test_us_kinds_and_venues(world, venue, vendor, side, kind, price, native):
     body = server.calls[-1][3]
     assert (body["ovrs_stck_symb_iscd"], body["ovrs_exch_vndr_idno"], body["oder_cls_code"],
             body["oder_cond_cls_code"]) == ("BRK.B", vendor, native, "0")
+    assert body["ovrs_stck_oder_prc"] == (price if price else "0")
+    result = broker.status(placed)
+    assert (result.side, result.order_type, result.price) == (side, kind, Decimal(price) if price else None)
     broker.cancel_order(cancel(placed, venue=venue, quantity=3))
     assert server.calls[-1][3]["oder_cls_code"] == native
 
@@ -383,3 +398,56 @@ def test_us_mutation_checks_the_original_exchange(world):
     with pytest.raises(InvalidResponseError, match="exchange"):
         broker.amend_order(amend(placed))
     assert len(server.orders["US"]) == 1
+
+
+def test_us_cancel_old_number_resolves_latest_amendment(world):
+    server, broker = world("US", "NYSE")
+    placed = broker.place_order(order("US"))
+    amended = broker.amend_order(amend(placed))
+    broker.cancel_order(cancel(placed))
+    assert server.calls[-1][3]["orgl_oder_no"] == int(amended.id)
+    assert broker.status(amended).status == "cancelled"
+
+
+def test_us_replaced_without_today_evidence_is_unknown(world):
+    server, broker = world("US", "NYSE")
+    placed = broker.place_order(order("US"))
+    server.fill("US", placed.id)
+    amended = broker.amend_order(amend(placed))
+    broker.cancel_order(cancel(amended))
+    server.today.clear()
+    rows = broker.list_orders()
+    assert all(r.status == "unknown" and r.remaining is None for r in rows)
+
+
+@pytest.mark.parametrize("field,value", [("cncl_cnfr_qty", 0), ("ncnt_qty", 1), ("oder_able_qty", 1)])
+def test_us_cancellation_requires_all_three_today_fields(world, field, value):
+    server, broker = world("US", "NYSE")
+    placed = broker.place_order(order("US"))
+    broker.cancel_order(cancel(placed, quantity=3))
+    server.today[placed.id][field] = value
+    result = broker.status(placed)
+    assert (result.status, result.remaining) == ("unknown", None)
+
+
+def test_kr_quote_degraded_code_requires_data_and_matching_symbol(world):
+    server, broker = world()
+    path = "/market/v1/prices"
+    server.overrides[path] = {"rsp_cd": "\x00\x00", "data": {"shrn_iscd": "005930", "stck_prpr": "70000"}}
+    assert broker.get_quote("005930").last == 70000
+    server.overrides[path]["data"]["shrn_iscd"] = "000660"
+    with pytest.raises(InvalidResponseError):
+        broker.get_quote("005930")
+    server.overrides[path] = {"rsp_cd": "\x00"}
+    with pytest.raises(InvalidResponseError):
+        broker.get_quote("005930")
+    server.overrides["/trading/v1/orders/buy"] = {"rsp_cd": "\x00", "data": {"oder_no": 1, "warn_cls_code": "0"}}
+    with pytest.raises(InvalidResponseError):
+        broker.place_order(order())
+
+
+def test_kr_rejected_keeps_status_with_reason(world):
+    server, broker = world()
+    placed = broker.place_order(order())
+    server.orders["KR"][placed.id].update(oder_pros_stat_cls_code="3", oder_rfus_reas_code="S607")
+    assert broker.status(placed).status == "rejected"

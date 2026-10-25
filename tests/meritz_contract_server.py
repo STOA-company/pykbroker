@@ -49,6 +49,7 @@ class ContractServer:
         self.holdings = {"KR": [], "US": []}
         self.cash = {"KR": Decimal(100000), "US": Decimal(10000)}
         self.overrides = {}
+        self.today = {}
 
     def example(self, method, path):
         return copy.deepcopy(SPEC["paths"][path][method.lower()]["responses"]["200"]
@@ -96,12 +97,6 @@ class ContractServer:
                 original = self.orders[market][str(body["orgl_oder_no"])]
                 if market == "KR":
                     assert original["rctf_cncl_cls_code"] == "1"
-                    # Synthetic latest active remainder; docs pin the root reference, not allocation order.
-                    children = [r for r in self.orders[market].values()
-                                if r["orgl_oder_no"] == original["oder_no"]
-                                and r["rctf_cncl_cls_code"] == "2" and r["ncnt_qty"] >= body["odqt"]]
-                    if children:
-                        original = children[-1]
                 row = self._change(market, action, body, original)
             self.orders[market][str(row["oder_no"])] = row
             result = {"rsp_cd": "0001", "data": {"oder_no": row["oder_no"], "warn_cls_code": "0"}}
@@ -109,6 +104,8 @@ class ContractServer:
                 self.lose_next_write = False
                 raise TimeoutError("synthetic lost acknowledgement")
             return result
+        if path.endswith("/today"):
+            return {"rsp_cd": "5766", "tr_cont": "0", "data": copy.deepcopy(list(self.today.values()))}
         if path.endswith("/history"):
             rows = list(self.orders[market].values())
             return self._page(rows, params)
@@ -142,6 +139,7 @@ class ContractServer:
         row["oder_no"] = self.next_id
         if market == "KR":
             assert body["iscd"].startswith("A") and len(body["iscd"]) == 7
+            # openapi.json /trading/v1/orders/buy requestBody: oder_cls_code description.
             assert body["oder_cls_code"] in {"01", "05", "06", "12", "13", "61", "71", "83", "84"}
             assert body["exch_kind_code"] in {"01", "02", "03"}
             assert body["oder_cond_cls_code"] in {"0", "3", "4"}
@@ -154,6 +152,7 @@ class ContractServer:
                        deal_cls_code="2" if side == "buy" else "1", cncl_qty=0, cnfr_qty=0, rctf_qty=0,
                        orgl_oder_no=0, rctf_cncl_cls_code="1", oder_rfus_reas_code="0000")
         else:
+            # openapi.json overseas holdings: ovrs_exch_vndr_idno description maps these codes.
             suffix = {"0537": "OQ", "0321": "NY", "0066": "AX"}[body["ovrs_exch_vndr_idno"]]
             assert body["oder_cls_code"] in {"01", "05"} and body["oder_cond_cls_code"] == "0"
             row.update(iscd=body["ovrs_stck_symb_iscd"] + "." + suffix, oder_dqty=str(body["odqt"]),
@@ -161,6 +160,12 @@ class ContractServer:
                        cntg_crnc_prc="0", cntg_camt="0", aspr_type_code="2" if body["oder_cls_code"] == "01" else "1",
                        seln_byov_clcd="2" if side == "buy" else "1", oder_date="20261025",
                        ovrs_stck_oder_stat_cls_code="0", oder_rctf_cncl_cls_code="0", orgl_oder_no=0)
+            current = self.example("GET", "/trading/v1/overseas/orders/today")["data"][0]
+            current.update(oder_date=row["oder_date"], oder_no=row["oder_no"], iscd=row["iscd"],
+                           seln_byov_clcd=row["seln_byov_clcd"], odqt=body["odqt"], cntg_qty=0,
+                           ncnt_qty=body["odqt"], oder_able_qty=body["odqt"],
+                           cncl_cnfr_qty=0, rctf_cnfr_qty=0)
+            self.today[str(row["oder_no"])] = current
         return row
 
     def _change(self, market, action, body, original):
@@ -171,22 +176,39 @@ class ContractServer:
         if market == "KR":
             assert body["iscd"] == original["iscd"]
             assert body["whol_rctf_cncl_yn"] == "N"
-            assert body["odqt"] <= original["ncnt_qty"]
+            ambiguous = action == "cancel" and any(
+                r["rctf_cncl_cls_code"] == "2" and r["orgl_oder_no"] == original["oder_no"]
+                for r in self.orders["KR"].values())
+            if not ambiguous:
+                assert body["odqt"] <= original["ncnt_qty"]
             if action == "modify":
                 original["rctf_qty"] += body["odqt"]
                 original["ncnt_qty"] -= body["odqt"]
                 row.update(odqt=body["odqt"], total_cntg_qty=0, cntg_unpr=0, ncnt_qty=body["odqt"],
                            oder_unpr=body["oder_unpr"], rctf_cncl_cls_code="2", rctf_qty=0)
             else:
-                original["ncnt_qty"] -= body["odqt"]
-                original["cncl_qty"] += body["odqt"]
-                original["cnfr_qty"] += body["odqt"]
+                # No documented allocation among original/amended prices: do not invent one.
+                if not ambiguous:
+                    original["ncnt_qty"] -= body["odqt"]
+                    original["cncl_qty"] += body["odqt"]
+                    original["cnfr_qty"] += body["odqt"]
                 row.update(rctf_cncl_cls_code="3", odqt=body["odqt"], total_cntg_qty=0, ncnt_qty=0,
                            cncl_qty=body["odqt"], cnfr_qty=body["odqt"])
         else:
             assert body["oder_date"] == original["oder_date"]
             assert body["odqt"] <= Decimal(original["oder_dqty"]) - Decimal(original["cntg_dqty"])
-            # Fixture closure is NOT a claimed vendor cancellation echo. Preserve status evidence as unknown.
+            # Explicit synthetic today evidence in official fields, not a vendor execution claim.
+            current = self.today[str(original["oder_no"])]
+            current["rctf_cnfr_qty" if action == "modify" else "cncl_cnfr_qty"] += body["odqt"]
+            current["ncnt_qty"] -= body["odqt"]
+            current["oder_able_qty"] -= body["odqt"]
+            changed = copy.deepcopy(current)
+            changed.update(oder_no=row["oder_no"], orgl_oder_no=body["orgl_oder_no"],
+                           odqt=body["odqt"], cntg_qty=0, rctf_cnfr_qty=0,
+                           cncl_cnfr_qty=body["odqt"] if action == "cancel" else 0,
+                           ncnt_qty=0 if action == "cancel" else body["odqt"],
+                           oder_able_qty=0 if action == "cancel" else body["odqt"])
+            self.today[str(row["oder_no"])] = changed
             row.update(oder_rctf_cncl_cls_code="1" if action == "modify" else "2",
                        oder_dqty=str(body["odqt"]), cntg_dqty="0", cntg_crnc_prc="0", cntg_camt="0")
             if action == "modify":
@@ -200,6 +222,10 @@ class ContractServer:
             row["ncnt_qty"] -= quantity
             row["cntg_unpr"] = price
         else:
+            current = self.today[ident]
+            current["cntg_qty"] += quantity
+            current["ncnt_qty"] -= quantity
+            current["oder_able_qty"] -= quantity
             row["cntg_dqty"] = str(Decimal(row["cntg_dqty"]) + quantity)
             row["cntg_crnc_prc"] = str(price)
             row["cntg_camt"] = str(Decimal(row["cntg_dqty"]) * price)
