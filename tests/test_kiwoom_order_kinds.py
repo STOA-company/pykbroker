@@ -140,13 +140,14 @@ def test_mock_account_takes_krx_only_and_the_wire_is_untouched():
     assert broker.place_order(req("ok", order_type="market")).status == "accepted"
 
 
-def test_market_style_orders_need_session_authorization_before_any_request():
+@pytest.mark.parametrize("kind", ["market", "best", "priority", "midpoint"])
+def test_market_style_orders_need_session_authorization_before_any_request(kind):
     world = World()
     broker = world.broker(virtual=False)
     broker.safety.valuation = lambda request: Decimal(100_000)
     before = len(world.server.calls)
     with pytest.raises(Exception, match="market-order session authorization"):
-        broker.place_order(req("k", order_type="best"))
+        broker.place_order(req("k", order_type=kind))
     assert len(world.server.calls) == before
 
 
