@@ -73,7 +73,7 @@ def test_toss_kr_market_capability_reaches_submit_and_echoes_client_key(live_saf
     live_safety.market_order_allowed = lambda request: True
     live_safety.valuation = lambda request: Decimal("70000")
     with Toss(account="fixture", account_seq=1, sdk_factory=factory, sdk_dry_run=False, safety=live_safety) as broker:
-        assert "market" in broker.capabilities().order_kinds
+        assert broker.capabilities().order_kinds == ("limit", "market")
         order = broker.place_order(OrderRequest(symbol="005930", side="buy", quantity=1, order_type="market", client_key="market-key"))
         assert order.client_key == "market-key"
         assert made[0].calls[-1]["order_type"] == "MARKET"
