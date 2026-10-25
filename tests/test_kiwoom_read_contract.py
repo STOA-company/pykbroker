@@ -500,9 +500,10 @@ def test_positions_without_the_holdings_list_or_with_oversold_row_are_invalid():
 
 
 @pytest.mark.parametrize("code", [1, 8005, 1700, "8005", "-1", "0", True, None])
-def test_any_body_code_but_integer_zero_is_a_rejection(code):
+def test_only_listed_integer_read_codes_are_definite_rejections(code):
     body = {**BASIC, "return_code": code, "return_msg": "secret detail"}
-    with pytest.raises(BrokerRejectedError) as raised:
+    expected = BrokerRejectedError if type(code) is int and code in (8005, 1700) else InvalidResponseError
+    with pytest.raises(expected) as raised:
         make({**RESPONSES, "ka10001": body})[0].get_quote("005930")
     assert "secret detail" not in str(raised.value)
 
@@ -586,7 +587,7 @@ def test_limiter_is_awaited_before_each_post():
 def test_unlisted_kinds_are_refused_before_any_request():
     # trde_tp 28 (스톱지정가) is in the spec list but its cond_uv meaning is not stated: never built.
     broker, made = make()
-    for changes in ({"time_in_force": "ioc", "order_type": "top"}, {"session": "single", "order_type": "top"}):
+    for changes in ({"time_in_force": "ioc", "order_type": "priority"}, {"session": "single_price", "order_type": "priority"}):
         request = OrderRequest(symbol="005930", side="buy", quantity=1, client_key="k", **changes)
         with pytest.raises(NotSupportedError):
             broker.place_order(request)

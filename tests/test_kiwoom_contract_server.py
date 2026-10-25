@@ -170,8 +170,8 @@ def test_business_rejection_and_unexpected_error_on_a_write():
 
     world = World(cash=10_000)
     broker = world.broker()
-    with pytest.raises(BrokerRejectedError):
-        broker.place_order(buy("k1", qty=1))  # more than the orderable cash
+    with pytest.raises(InvalidResponseError):
+        broker.place_order(buy("k1", qty=1))  # unlisted synthetic code 20, more than the orderable cash
     assert not world.server.orders
     world.server.cash = 1_000_000
     world.server.fail_next["kt10000"] = (1999, "")

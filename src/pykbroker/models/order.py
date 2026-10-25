@@ -7,10 +7,10 @@ from ._base import FractionalQuantity, Model, Money, PositiveMoney, PositiveQuan
 
 Side = Literal["buy", "sell"]
 # limit/market/close are the shared kinds (close = after-hours close session: KIS 장후 시간외, DB "81", Toss CLS).
-# The rest are priced-by-venue kinds an adapter must declare in Capabilities.order_types before any HTTP.
-OrderType = Literal["limit", "market", "close", "conditional_limit", "best", "top", "mid", "stop_limit"]
+# The rest are priced-by-venue kinds an adapter must declare in Capabilities.order_kinds before any HTTP.
+OrderType = Literal["limit", "market", "close", "conditional_limit", "best", "priority", "midpoint", "stop_limit"]
 TimeInForce = Literal["day", "ioc", "fok"]
-OrderSession = Literal["regular", "pre", "single"]
+OrderSession = Literal["regular", "pre", "after", "single_price"]
 PRICED_TYPES = ("limit", "conditional_limit", "stop_limit")
 OrderStatus = Literal["accepted", "open", "partial", "filled", "cancelled", "rejected", "unknown"]
 
@@ -65,7 +65,7 @@ class OrderRequest(Model):
     def valid_price(self) -> Self:
         if self.order_type in PRICED_TYPES and self.price is None:
             raise ValueError("A limit order requires a positive price")
-        if self.order_type in ("market", "best", "top", "mid") and self.price is not None:
+        if self.order_type in ("market", "best", "priority", "midpoint") and self.price is not None:
             raise ValueError("A market-style order cannot carry a limit price")
         if (self.order_type == "stop_limit") != (self.stop_price is not None):
             raise ValueError("stop_price is required for, and only for, a stop_limit order")
@@ -113,6 +113,8 @@ class AmendRequest(OrderRequest):
 
     order_id: str = Field(min_length=1)
     order_type: Literal["limit"] = "limit"
+    # Original-order references required by an adapter; unknown keys must be rejected.
+    broker_ref: dict[str, str] = Field(default_factory=dict, repr=False)
 
 
 class CancelRequest(Model):

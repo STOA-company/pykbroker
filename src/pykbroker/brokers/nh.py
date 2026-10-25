@@ -846,7 +846,7 @@ class NH(BaseBroker):
 
         return self.safety.execute(
             self.broker_code, self._account, request, lambda: self._call(submit)
-        )
+        ).model_copy(update={"client_key": request.client_key})
 
     def _cancel_order(self, request: CancelRequest) -> Order:
         if self.market == "US":

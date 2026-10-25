@@ -167,8 +167,8 @@ def test_a_failed_or_unreadable_send_is_unknown_and_the_post_goes_out_once(live_
     assert "fixture-token" not in str(raised.value) and not isinstance(raised.value, BrokerRejectedError)
 
 
-@pytest.mark.parametrize("code", [1, 8005, 1700, -1, 1998, 2000])
-def test_an_integer_return_code_but_zero_and_1999_is_a_refusal(live_safety, code):
+@pytest.mark.parametrize("code", [8005, 1700, 1511])
+def test_only_documented_return_codes_are_definite_refusals(live_safety, code):
     body = {**OFFICIAL["kt10000"], "return_code": code, "return_msg": "secret detail"}
     broker, client = make({"kt10000": [body]}, safety=live_safety)
     with pytest.raises(BrokerRejectedError) as raised:
@@ -314,7 +314,7 @@ def test_a_cancel_answer_that_cannot_be_read_is_unknown(live_safety, body):
 
 def test_cancel_refusal_and_transport_failure_are_classified_once(live_safety):
     broker, client = make(
-        {"kt10003": [{**OFFICIAL["kt10003"], "return_code": 1, "return_msg": "secret detail"}]}, safety=live_safety
+        {"kt10003": [{**OFFICIAL["kt10003"], "return_code": 1511, "return_msg": "secret detail"}]}, safety=live_safety
     )
     with pytest.raises(BrokerRejectedError) as raised:
         broker.cancel_order(cancel())
@@ -568,6 +568,7 @@ def test_us_limit_order_uses_official_tr_and_decimal_price_once(live_safety, sid
         "trde_tp": "00",
     }
     assert (order.id, order.status, order.market, order.side) == ("000000282", "accepted", "US", side)
+    assert order.client_key == buy().client_key
 
 
 @pytest.mark.parametrize("failure", [TimeoutError("uncertain"), {"return_code": 1999}, {"return_code": "0"}])
@@ -598,6 +599,7 @@ def test_us_full_cancel_verifies_remainder_and_never_names_a_cancel_ack_as_final
     assert client.base_url == KIWOOM_MOCK_BASE_URL
     assert client.calls[-1]["json"] == {"stex_tp": "ND", "stk_cd": "NVDA", "orig_ord_no": "000000282"}
     assert (order.id, order.status, order.market) == ("000000282", "accepted", "US")
+    assert order.client_key == cancel().client_key
 
 
 @pytest.mark.parametrize(

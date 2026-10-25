@@ -55,10 +55,9 @@ cash, bad order number) are not in this table.
 ## Not confirmed (kept fail-closed or unknown)
 
 1. Where an error arrives: HTTP status vs body `return_code`. Adapter: HTTP failure = transport (unknown for a write),
-   body code != 0 = refusal. The contract server answers in the body.
+   only documented rejection codes prove refusal; unlisted codes stay unknown. The contract server answers in the body.
 2. Token lifetime and `expires_dt` time zone. 3. Whether the rate bucket is per TR or per account.
-4. Order business error codes (spec gives none); the contract server uses code 20 as a stand-in, adapter treats every
-   non-zero integer as refusal.
+4. Order business error codes (spec gives none); the contract server uses code 20 as a stand-in, adapter keeps this unlisted synthetic code unknown.
 5. kt00007/ka10075 row text after cancel or partial fill (`mdfy_cncl` "취소확인", `cnfm_qty`) is only shown in the
    official examples without a cancel case; the adapter reads a cancel only when the linked confirmed quantities add up.
 6. `cond_uv` / `mdfy_cond_uv` meaning for trde_tp 28 스톱지정가. Searched 2026-10-25: official spec JSON, the official GitHub
@@ -86,14 +85,14 @@ the official mock info, 2026-10-24); none has been walked there (no mock key).
 | Limit | `limit` + price | kt10000/1 `trde_tp=0` | trde_tp list «0:보통» | yes | yes | not run |
 | Market | `market` | `3` | «3:시장가» | yes (needs session authorization) | yes (fills at quote) | not run |
 | Conditional limit | `conditional_limit` + price | `5` | «5:조건부지정가» | yes | yes (sent) | not run |
-| Best / top limit | `best` / `top` | `6` / `7` | «6:최유리지정가, 7:최우선지정가» | yes | yes | not run |
-| Mid price | `mid` | `29` | «29:중간가» | yes | yes | not run |
-| IOC | `time_in_force=ioc` on limit/market/best/mid | `10/13/16/30` | «10:보통(IOC) 13 16 30» | yes | yes (remainder killed) | not run |
-| FOK | `time_in_force=fok` on limit/market/best/mid | `20/23/26/31` | «20:보통(FOK) 23 26 31» | yes | yes (all or nothing) | not run |
+| Best / top limit | `best` / `priority` | `6` / `7` | «6:최유리지정가, 7:최우선지정가» | yes | yes | not run |
+| Mid price | `midpoint` | `29` | «29:중간가» | yes | yes | not run |
+| IOC | `time_in_force=ioc` on limit/market/best/midpoint | `10/13/16/30` | «10:보통(IOC) 13 16 30» | yes | yes (remainder killed) | not run |
+| FOK | `time_in_force=fok` on limit/market/best/midpoint | `20/23/26/31` | «20:보통(FOK) 23 26 31» | yes | yes (all or nothing) | not run |
 | Stop limit | `stop_limit` + price + `stop_price` | `28`, trigger in `cond_uv` | «28:스톱지정가» listed; `cond_uv` is «조건단가 (단위: 원)» on the order pages, called «스톱가» only in query responses (kt00007, kt00009, kt50030/31/75) and `stop_pric` «스톱지정가주문 스톱가» in ka10075/ka10076 | **slot built, shut** (`KIWOOM_STOP_LIMIT_VERIFIED=False`; not in `order_kinds`) | yes: refused before the wire; with the flag on, 28 + `cond_uv` is built | - |
 | After-hours close | `close` | `81` | «81:장마감후시간외»; same meaning as KIS/DB `close` | yes | yes | not run |
 | Pre-open session | `market` + `session=pre` | `61` | «61:장시작전시간외» | yes | yes | not run |
-| Single-price session | `limit`/`market` + `session=single` | `62` | «62:시간외단일가» (price rule unstated) | yes | yes | not run |
+| Single-price session | `limit`/`market` + `session=single_price` | `62` | «62:시간외단일가» (price rule unstated) | yes | yes | not run |
 | NXT | `venue=NXT` | `dmst_stex_tp=NXT` | «KRX,NXT,SOR»; ka10075 `stex_tp` 0/1/2, kt00007 `%/KRX/NXT/SOR` | yes (real host only) | yes (all kinds above) | impossible: mock is KRX only |
 | SOR | `venue=SOR` | `dmst_stex_tp=SOR` | same | yes (real host only) | yes | impossible: mock is KRX only |
 | Amend (native) | `amend_order(AmendRequest)` | kt10002 | kt10002 page: `mdfy_qty`, `mdfy_uv`; new `ord_no` | yes, KR limit original only | yes (partial fill then amend) | not run |
@@ -119,7 +118,7 @@ order's venue (KRX when unknown); cancel/amend answers must echo the requested v
 | §7 I2 `Order.client_key` echo | added (optional, hidden from repr); Kiwoom place/amend/cancel fill it; other brokers still None | partial: only Kiwoom fills it (KB/LS/NH/KIS/DB/Toss are other workers' share) |
 | §4 reject classes as data rows with source | `DEFINITIVE_REJECTS["kiwoom"]` = 36 rows of the official error table, 1999 excluded (unknown) | match; business errors (insufficient cash) are not in the table so they stay a plain refusal |
 | §5 `us_class_separator` + `canonical_symbol` | BaseBroker `"."`, KIS `"/"`, inverse added | partial: responses of KIS are not yet rewired to `canonical_symbol` |
-| §2 B `OrderRequest` fields | unchanged shape; added `time_in_force`, `session` (defaults keep every old call identical); `order_type` gained `conditional_limit/best/top/mid` | different on purpose: A (`limit·market`) cannot yet express these; the trader's map must pass them through |
+| §2 B `OrderRequest` fields | unchanged shape; added `time_in_force`, `session` (defaults keep every old call identical); `order_type` gained `conditional_limit/best/priority/midpoint` | different on purpose: A (`limit·market`) cannot yet express these; the trader's map must pass them through |
 | §2 `venue` for NXT | existing `venue`/`supports_nxt` cells, SOR added to `venues` | match |
 | Capability support lists (S-추가) | `Capabilities.order_kinds`, `time_in_force`, `sessions`, `venues` as data; empty ones derive from the flags (limit/market, day, regular). Kiwoom KR: 7 kinds (+stop_limit when verified), day/ioc/fok, regular/pre/single, KRX/NXT/SOR (mock KRX); KIS and DB KR: limit/market/close; US of every broker and every other broker: what the flags already said. The trader's capability response is not wired (D1) | match |
 | §8 item 5 contract mock for Kiwoom | `tests/kiwoom_contract_server.py` | match |

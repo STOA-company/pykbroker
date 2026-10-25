@@ -16,6 +16,9 @@ class Capabilities(Model):
     order_kinds: tuple[str, ...] = ()
     time_in_force: tuple[str, ...] = ()
     sessions: tuple[str, ...] = ()
+    # Amend transports may preserve fewer conditions than new-order transports.
+    amend_time_in_force: tuple[str, ...] = ("day",)
+    amend_sessions: tuple[str, ...] = ("regular",)
     supports_order_history: bool = False
     # True only where the venue answers an unfilled-order snapshot in real time.
     # A daily ledger read back for today (the KIS mock domain) is not one: it lags.

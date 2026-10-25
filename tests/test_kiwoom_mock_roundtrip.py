@@ -267,7 +267,7 @@ def test_an_unclear_write_response_aborts_once_with_no_retry():
 
 def test_an_explicit_rejection_is_reported_distinctly_from_an_unclear_answer():
     responses = full_responses()
-    responses["kt10000"] = [{**PLACE_RESPONSE, "return_code": 1, "return_msg": "잔고 부족"}]
+    responses["kt10000"] = [{**PLACE_RESPONSE, "return_code": 1511, "return_msg": "잔고 부족"}]
     factory, _ = make_factory(responses)
 
     result = script.run(execute=True, env=FAKE_ENV, client_factory=factory, rate_limiter=RateLimiter(FAST_RATES))

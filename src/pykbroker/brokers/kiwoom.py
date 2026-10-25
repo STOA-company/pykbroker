@@ -93,8 +93,8 @@ _TRDE_REGULAR: dict[tuple[str, str], str] = {
     ("market", "day"): "3", ("market", "ioc"): "13", ("market", "fok"): "23",
     ("conditional_limit", "day"): "5",
     ("best", "day"): "6", ("best", "ioc"): "16", ("best", "fok"): "26",
-    ("top", "day"): "7",
-    ("mid", "day"): "29", ("mid", "ioc"): "30", ("mid", "fok"): "31",
+    ("priority", "day"): "7",
+    ("midpoint", "day"): "29", ("midpoint", "ioc"): "30", ("midpoint", "fok"): "31",
     ("close", "day"): "81",
 }  # fmt: skip
 # Off-session: pre = 장시작전시간외 61 (market style), single = 시간외단일가 62. The spec does not say whether 61/81
@@ -103,12 +103,12 @@ _TRDE_REGULAR: dict[tuple[str, str], str] = {
 # «조건단가 (단위: 원)» on kt10000/kt10001; only the query responses (kt00007, ka10075 stop_pric) call the same value
 # «스톱가». No order page states it, so the mapping below is ready but off until Kiwoom confirms (docs/kiwoom-spec.md).
 KIWOOM_STOP_LIMIT_VERIFIED = False
-_KR_KINDS = ("limit", "market", "close", "conditional_limit", "best", "top", "mid")
-_TRDE_SESSION = {"pre": "61", "single": "62"}
+_KR_KINDS = ("limit", "market", "close", "conditional_limit", "best", "priority", "midpoint")
+_TRDE_SESSION = {"pre": "61", "after": "81", "single_price": "62"}
 KIWOOM_VENUE_CODES = {"KRX": "KRX", "NXT": "NXT", "SOR": "SOR"}
 _TYPE_NAMES: dict[str, OrderType] = {
     "보통": "limit", "지정가": "limit", "시장가": "market", "조건부지정가": "conditional_limit",
-    "최유리지정가": "best", "최우선지정가": "top", "중간가": "mid",
+    "최유리지정가": "best", "최우선지정가": "priority", "중간가": "midpoint",
 }  # fmt: skip
 _SIDE_NAMES: dict[str, Side] = {"매수": "buy", "매도": "sell"}
 _JSON_HEADERS = {"content-type": "application/json; charset=utf-8"}
@@ -154,7 +154,7 @@ def _unpack(reply: Any, *, write: bool = False) -> tuple[Mapping[str, Any], Mapp
         raise InvalidResponseError("Kiwoom client must return a JSON object and its headers")
     body, headers = reply
     # Spec: success carries an integer return_code 0. The spec does not say whether failures arrive as HTTP status or
-    # as a body code, so an HTTP error surfaces as a transport failure and any body code but 0 is a refusal.
+    # as a body code; HTTP errors and codes outside the documented rejection table stay unknown.
     if "return_code" not in body:
         raise InvalidResponseError("Kiwoom response has no return_code")
     # A write is refused only by an integer code: a code that is not one is «unknown», never «safe to resubmit».
@@ -171,7 +171,7 @@ def _unpack(reply: Any, *, write: bool = False) -> tuple[Mapping[str, Any], Mapp
             raise BrokerRejectedError(
                 "Kiwoom rejected the request", code=str(body["return_code"]), kind=listed.kind, reason=listed.reason
             )
-        raise BrokerRejectedError("Kiwoom rejected the request")
+        raise InvalidResponseError("Kiwoom returned an unlisted code; reconcile before retrying")
     return body, {str(key).lower(): value for key, value in headers.items()}
 
 
@@ -180,7 +180,7 @@ def _trde_tp(request: OrderRequest) -> str:
     if request.session != "regular":
         code = _TRDE_SESSION.get(request.session)
         # pre-open is market style; the single-price session is either; both are plain day orders.
-        allowed = ("market",) if request.session == "pre" else ("limit", "market")
+        allowed = ("market",) if request.session in ("pre", "after") else ("limit", "market")
         if code is None or request.order_type not in allowed or request.time_in_force != "day":
             raise NotSupportedError("Kiwoom does not list this off-session order")
         return code
@@ -340,13 +340,21 @@ class Kiwoom(BaseBroker):
     def _post(
         self, path: str, tr: str, body: dict[str, Any], continuation: str | None = None, *, write: bool = False
     ) -> tuple[Mapping[str, Any], Mapping[str, str]]:
+        if not self._authorization:
+            raise ConfigurationError("The stored Kiwoom token was discarded; issue a new one")
         if self._expires_at is not None and self._clock() >= self._expires_at - TOKEN_EXPIRY_MARGIN:
             raise ConfigurationError("The stored Kiwoom token is expired or about to expire; issue a new one")
         headers = {**_JSON_HEADERS, "authorization": self._authorization, "api-id": tr}
         if continuation is not None:
             headers.update({"cont-yn": "Y", "next-key": continuation})
         self._limiter.wait(tr)
-        return _unpack(self._client.post(path, headers=headers, json=body), write=write)
+        try:
+            return _unpack(self._client.post(path, headers=headers, json=body), write=write)
+        except BrokerRejectedError as exc:
+            if exc.kind == "token_expired":
+                self._authorization = None
+                self._expires_at = None
+            raise
 
     def _rows(self, path: str, tr: str, body: dict[str, Any], key: str) -> list[Mapping[str, Any]]:
         """Every page of a list TR. Spec: the response headers `cont-yn`=Y and `next-key` are set on the next request
@@ -379,7 +387,7 @@ class Kiwoom(BaseBroker):
             if self.market == "KR"
             else ("limit",),
             time_in_force=("day", "ioc", "fok") if self.market == "KR" else ("day",),
-            sessions=("regular", "pre", "single") if self.market == "KR" else ("regular",),
+            sessions=("regular", "pre", "after", "single_price") if self.market == "KR" else ("regular",),
             supports_single_order_cancel=True,
             supports_amend=self.market == "KR",
             supports_order_history=True,
@@ -514,7 +522,7 @@ class Kiwoom(BaseBroker):
 
     def _write(self, path: str, tr: str, body: dict[str, Any]) -> Mapping[str, Any]:
         """One POST, never repeated: this client does not retry and no caller loop may. A refusal is a return_code
-        integer other than 0; a failed send or an unreadable answer is unknown, so `_call` reports it as such."""
+        listed in the rejection table; failed sends and unlisted codes stay unknown."""
         response = self._post(path, tr, body, write=True)[0]
         _order_number(response.get("ord_no"), market=self.market)
         return response
@@ -559,6 +567,8 @@ class Kiwoom(BaseBroker):
         if self.market != "KR":
             raise NotSupportedError("Kiwoom amendment supports KR only")
         self._validate_order(request)
+        if request.broker_ref:
+            raise NotSupportedError("Kiwoom amendment does not accept broker_ref")
         if not (_ORDER_NO.fullmatch(request.order_id) and int(request.order_id)):
             raise ConfigurationError("Kiwoom order number format is invalid for this market")
 

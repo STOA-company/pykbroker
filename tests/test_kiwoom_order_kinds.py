@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from pykbroker.exceptions import BrokerRejectedError, NotSupportedError, TransportError
+from pykbroker.exceptions import InvalidResponseError, NotSupportedError, TransportError
 from pykbroker.models import AmendRequest, CancelRequest, OrderRequest
 
 from .kiwoom_contract_server import SCHEMA, TRDE
@@ -36,13 +36,14 @@ CASES = [  # (request changes, expected trde_tp)
     ({"order_type": "best"}, "6"),
     ({"order_type": "best", "time_in_force": "ioc"}, "16"),
     ({"order_type": "best", "time_in_force": "fok"}, "26"),
-    ({"order_type": "top"}, "7"),
-    ({"order_type": "mid"}, "29"),
-    ({"order_type": "mid", "time_in_force": "ioc"}, "30"),
-    ({"order_type": "mid", "time_in_force": "fok"}, "31"),
+    ({"order_type": "priority"}, "7"),
+    ({"order_type": "midpoint"}, "29"),
+    ({"order_type": "midpoint", "time_in_force": "ioc"}, "30"),
+    ({"order_type": "midpoint", "time_in_force": "fok"}, "31"),
     ({"order_type": "close"}, "81"),
     ({"order_type": "market", "session": "pre"}, "61"),
-    ({"order_type": "limit", "price": "60000", "session": "single"}, "62"),
+    ({"order_type": "market", "session": "after"}, "81"),
+    ({"order_type": "limit", "price": "60000", "session": "single_price"}, "62"),
 ]
 
 
@@ -92,10 +93,10 @@ def test_market_buy_nxt_amend_then_cancel_walk_with_partial_fill():
     assert broker.get_positions()[0].quantity == 6
 
 
-def test_cancel_with_the_wrong_venue_is_refused_by_the_server():
+def test_cancel_with_the_wrong_venue_and_unlisted_code_stays_unknown():
     world, broker = live_world()
     order = broker.place_order(req("k", venue="NXT", order_type="limit", price="60000"))
-    with pytest.raises(BrokerRejectedError):
+    with pytest.raises(InvalidResponseError):
         broker.cancel_order(CancelRequest(order_id=order.id, symbol="005930", quantity=5, client_key="c"))  # KRX
     assert world.server.orders[order.id]["remaining"] == 5
 
@@ -121,7 +122,7 @@ def test_ioc_remainder_and_fok_all_or_nothing():
 def test_off_session_orders_rest_until_filled():
     world, broker = live_world()
     pre = broker.place_order(req("p1", order_type="market", session="pre"))
-    single = broker.place_order(req("s1", order_type="limit", price="60000", session="single"))
+    single = broker.place_order(req("s1", order_type="limit", price="60000", session="single_price"))
     after = broker.place_order(req("c1", order_type="close"))
     assert {o.id for o in broker.list_orders()} == {pre.id, single.id, after.id}
 
@@ -187,7 +188,7 @@ def test_amend_after_partial_fill_never_exceeds_the_remainder():
     order = broker.place_order(req("b1", quantity=5, order_type="limit", price="60000"))
     world.server.fill(order.id, 3)
     too_big = AmendRequest(order_id=order.id, symbol="005930", side="buy", quantity=5, price="60500", client_key="a1")
-    with pytest.raises(BrokerRejectedError):
+    with pytest.raises(InvalidResponseError):
         broker.amend_order(too_big)  # only 2 remain: the server refuses, nothing is created
     assert len(world.server.orders) == 1
     ok = AmendRequest(order_id=order.id, symbol="005930", side="buy", quantity=2, price="60500", client_key="a2")

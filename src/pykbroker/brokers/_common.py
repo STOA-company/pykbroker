@@ -18,7 +18,7 @@ from pykbroker.exceptions import (
     TransportError,
 )
 from pykbroker.reject_codes import definitive_rejection
-from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
+from pykbroker.models import AmendRequest, Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
 from pykbroker.rules.kr import LOT, equity_rules, normalize_symbol
 from pykbroker.safety.gate import OrderSafety
 
@@ -229,7 +229,7 @@ class BaseBroker:
         """Shares the venue will let the next order sell. Not held means nothing to sell."""
         code = self._symbol(symbol, self.market)
         for position in self.get_positions():
-            if position.symbol == code:
+            if position.symbol == self.canonical_symbol(code):
                 return position.sellable
         return 0
 
@@ -253,6 +253,11 @@ class BaseBroker:
         if isinstance(request, OrderRequest) and request.price is not None:
             if self.market == "KR" and request.price != request.price.to_integral_value():
                 raise ConfigurationError("KR prices must be whole won; round explicitly before submission")
+        if isinstance(request, AmendRequest):
+            if request.time_in_force not in capabilities.amend_time_in_force:
+                raise NotSupportedError("This amendment time in force is not supported")
+            if request.session not in capabilities.amend_sessions:
+                raise NotSupportedError("This amendment session is not supported")
         if isinstance(request, OrderRequest):
             # A fractional request gets its own explicit refusal below (FractionalNotSupportedError).
             if not request.fractional and request.order_type not in capabilities.order_kinds:
@@ -281,14 +286,14 @@ class BaseBroker:
         self._validate_order(request)
         return self.safety.execute(
             self.broker_code, self._account, request, lambda: self._call(lambda: self._place_order(request))
-        )
+        ).model_copy(update={"client_key": request.client_key})
 
     def cancel_order(self, request: CancelRequest) -> Order:
         request = CancelRequest.model_validate(request.model_dump())
         self._validate_order(request)
         return self.safety.execute(
             self.broker_code, self._account, request, lambda: self._call(lambda: self._cancel_order(request))
-        )
+        ).model_copy(update={"client_key": request.client_key})
 
     def _place_order(self, request: OrderRequest) -> Order:
         raise NotSupportedError("Order submission is not implemented")
@@ -311,7 +316,7 @@ class BaseBroker:
     def status(self, order: Order) -> Order:
         for candidate in self.list_orders(order.symbol):
             if candidate.id == order.id:
-                return candidate
+                return candidate.model_copy(update={"client_key": order.client_key})
         # Missing from an open-order list never proves a fill or cancellation.
         return order.model_copy(update={"status": "unknown"})
 

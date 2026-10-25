@@ -337,7 +337,8 @@ class KB(BaseBroker):
                          order_type=request.order_type, quantity=request.quantity,
                          price=request.price, status="accepted", virtual=False)
 
-        return self.safety.execute(self.broker_code, self._account, request, lambda: self._call(submit))
+        return self.safety.execute(self.broker_code, self._account, request, lambda: self._call(submit)).model_copy(
+            update={"client_key": request.client_key})
 
     @staticmethod
     def _rows(row, block, count):
