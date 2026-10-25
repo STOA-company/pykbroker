@@ -307,10 +307,36 @@ def test_meritz_sibling_exchange_orders_and_holdings_are_excluded(safety, market
     expected_qty = next(i + 1 for i, row in enumerate(siblings) if row[0] == market)
     assert holding.quantity == holding.sellable == broker.available_qty("0700") == expected_qty
     server.today.pop(expected_id)
-    assert broker.list_orders() == []  # No exchange evidence cannot become this market's order.
+    with pytest.raises(InvalidResponseError, match="lacks today evidence"):
+        broker.list_orders()
     for holding in server.holdings["US"]:
         holding.pop("ovrs_exch_vndr_idno")
-    assert broker.get_positions() == []
+    with pytest.raises(InvalidResponseError, match="lacks known exchange evidence"):
+        broker.get_positions()
+
+
+@pytest.mark.parametrize("market,venue,vendor,currency", MERITZ_MARKETS[4:])
+@pytest.mark.parametrize("damage", ["missing", "", "0000", "0537", None])
+@pytest.mark.parametrize("surface", ["positions", "balance", "orders", "quantity", "symbol_orders"])
+def test_meritz_unknown_shared_exchange_is_not_empty(safety, market, venue, vendor, currency, damage, surface):
+    server, broker = meritz(safety, market, venue)
+    server.overrides["/trading/v1/overseas/orders/estimate"] = {
+        "rsp_cd": "5766", "tr_cont": "0",
+        "data": [{"crcd": currency, "oder_crnc_oder_able_camt": "150"}]}
+    placed = broker.place_order(req(market, venue))
+    holding = server.example("GET", "/accounts/v1/me/overseas/holdings")["data"][0]
+    holding.update(ovrs_stck_mrkt_tr_cls_code="05" if currency == "JPY" else "24", crcd=currency,
+                   ovrs_stck_symb_iscd="0700", ovrs_exch_vndr_idno=vendor)
+    server.holdings["US"].append(holding)
+    for row in (holding, server.today[placed.id]):
+        if damage == "missing":
+            row.pop("ovrs_exch_vndr_idno")
+        else:
+            row["ovrs_exch_vndr_idno"] = damage
+    read = {"positions": broker.get_positions, "balance": broker.get_balance, "orders": broker.list_orders,
+            "quantity": lambda: broker.available_qty("0700"), "symbol_orders": lambda: broker.list_orders("0700")}
+    with pytest.raises(InvalidResponseError, match="lacks known exchange evidence"):
+        read[surface]()
 
 
 @pytest.mark.parametrize("factory,markets", [(meritz, MERITZ_MARKETS[4:]), (kis_broker, KIS_MARKETS[3:])])
