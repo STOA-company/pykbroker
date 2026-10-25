@@ -38,3 +38,20 @@
 - 미확인(공식 모의에서 확인): mkt_orr_no↔itg_orr_no 연결은 호출자 단언, SDK 추정·검증 없음.
 - P2-4 미확인 계약·P2-5 위험 장부 재예약은 공식 모의 실측 단계, 이번 구현 제외.
 - 원본시험/돌연변이 로그: /home/quantus/runs/pay-terms-1013/l16-nhp2-1024/, l16-nhp2b-1024/.
+
+## 2026-10-25 검수 #55 후속 — #54 위 공용 모델 통합
+- models/order.py·capabilities.py는 #54 최종 c62cd04와 동일; 공용 입력 네 어댑터 제출 시험 추가.
+- priority/midpoint, order_kinds, regular/pre/after/single_price로 통일; 시간외는 시장가/지정가+session 데이터 행.
+- NH·LS 정정 IOC/FOK 및 비정규 세션은 amend 능력에 없으므로 조회·주문 모두 전송 전 거절.
+- NH 무코드 HTTP401은 토큰만 버리고 unknown 유지; 접수 후 401·같은 키 재시도는 주문 1건.
+- KB token_expired 코드 응답은 _token 폐기; 신규·정정·취소 이후 읽기도 명시 재발급 전 HTTP 0.
+- I2: 공용 place/cancel/amend 결과에 요청 client_key 복사; NH US와 세 증권사 정정 회귀 단언.
+- LS 모의: 초기 현금900000·보유3·매입금액29700에서 각 체결 수량/금액만큼 현금·수량·평균가 변동.
+- LS 정정·취소는 실제 체결 금액을 중복 계산하지 않음; 매수→부분체결→정정체결→매도체결 대사.
+- 선택 SDK 미설치 시 토스 직접 import 전에 importorskip; 문서 PYTHONPATH 설치 경로에서는 실제 SDK 모의 시험.
+- 검증은 지정 파일 python -m pytest -x -q만; 실키·실주문·머지·배포 0, draft/do-not-merge 유지.
+
+## 2026-10-25 재검수 fix2
+- test_every_order_kind_and_venue_goes_out_with_its_documented_code의 세션 기대값을 독립 상수로 고정.
+- 장전 market=61, 장후 market=71; 구현 NH_KR_SESSION_PRICE_TYPE에서 기대값을 가져오지 않음.
+- 두 코드 뒤바꿈 변이를 각각 실패로 검출; 실제 NH 서버·실계좌는 안 걸어 봄.

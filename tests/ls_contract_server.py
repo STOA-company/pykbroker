@@ -9,6 +9,7 @@ import json
 from collections import defaultdict
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 from urllib.error import HTTPError
@@ -19,6 +20,21 @@ FIXTURES = Path(__file__).parent / "fixtures" / "ls" / "contract-20261024"
 
 def contract(tr):
     return json.loads((FIXTURES / (tr + ".json")).read_text())
+
+
+def enum_codes(tr, block, element):
+    """Codes listed in the official field description (e.g. «00@지정가 03@시장가 ...» or «0:없음,1:IOC»)."""
+    import re
+    for part in contract(tr)["transaction"]["request"]["body"]:
+        if part["element"] == block:
+            for field in part["fields"]:
+                if field["element"] == element:
+                    return set(re.findall(r"(?m)^\s*([0-9A-Za-z]+)\s*[@:]", field["description"].replace(",", "\n")))
+    raise KeyError(element)
+
+
+# Kinds that carry OrdPrc: 00 지정가, 05 조건부지정가, 82 시간외단일가; the venue prices every other kind.
+PRICED_PTN = {"00", "05", "82"}
 
 
 class Reply:
@@ -44,12 +60,20 @@ class ContractServer:
         self.calls = []
         self.tokens = {}
         self.orders = {}
+        self.cash = Decimal(900000)
+        self.quantity = 3
+        self.sellable = 3
+        self.position_cost = Decimal(29700)
+        self.last_price = Decimal(10000)
         self.next_order = 100
         self.token_ttl = 120
         self.ttl_field = "expire_in"
         self.next_response = None
         self.next_http_status = None
         self.after_write_failure = False
+        self.reply_for = {}
+        self.rate_trs = None  # None: every TR is rate checked when enforce_rates is on
+        self.placed = []  # every CSPAT00601 body the server accepted, in order
         self.enforce_rates = False
         self.windows = defaultdict(list)
 
@@ -95,6 +119,8 @@ class ContractServer:
         if self.next_response is not None:
             response, self.next_response = self.next_response, None
             return Reply(response)
+        if tr in self.reply_for:  # one-shot answer for one TR (so a write can fail while its reads work)
+            return Reply(self.reply_for.pop(tr))
         if tr == "token":
             assert body == {"grant_type": "client_credentials", "appkey": "fixture-app-key",
                             "appsecretkey": "fixture-app-secret", "scope": "oob"}
@@ -107,7 +133,7 @@ class ContractServer:
         if token not in self.tokens or self.now >= self.tokens[token]:
             # NOT an LS code: confirms that an unrecognized auth failure cannot become success.
             return Reply({"rsp_cd": "SYNTH_AUTH", "rsp_msg": "fabricated"})
-        if self.enforce_rates:
+        if self.enforce_rates and (self.rate_trs is None or tr in self.rate_trs):
             window = self.windows[tr]
             window[:] = [time for time in window if (self.now - time).total_seconds() < 1]
             rate = int(doc["transaction"]["transactionPerSec"])
@@ -116,12 +142,15 @@ class ContractServer:
             window.append(self.now)
         if tr == "CSPAQ12200":
             return Reply({"rsp_cd": "00000", "CSPAQ12200OutBlock1": {"AcntNo": "fixture-account"},
-                          "CSPAQ12200OutBlock2": {"MnyOrdAbleAmt": 900000, "BalEvalAmt": 30000}})
+                          "CSPAQ12200OutBlock2": {"MnyOrdAbleAmt": str(self.cash),
+                                                 "BalEvalAmt": str(self.quantity * self.last_price)}})
         if tr == "t0424":
             return Reply({"rsp_cd": "00000", "t0424OutBlock": {"cts_expcode": ""},
                           "t0424OutBlock1": [{"expcode": "005930", "hname": "fabricated-stock",
-                                              "janqty": 3, "mdposqt": 2, "pamt": 9900,
-                                              "price": 10000, "appamt": 30000}]})
+                                              "janqty": self.quantity, "mdposqt": self.sellable,
+                                              "pamt": str(self.position_cost / self.quantity) if self.quantity else "0",
+                                              "price": str(self.last_price),
+                                              "appamt": str(self.quantity * self.last_price)}]})
         if tr == "t0425":
             return Reply({"rsp_cd": "00000", "t0425OutBlock": {"cts_ordno": ""},
                           "t0425OutBlock1": list(deepcopy(self.orders).values())})
@@ -131,22 +160,25 @@ class ContractServer:
         number = self.next_order
         if tr == "CSPAT00601":
             assert row["BnsTpCode"] in {"1", "2"}
-            assert row["OrdprcPtnCode"] in {"00", "03"}
+            assert row["OrdprcPtnCode"] in enum_codes("CSPAT00601", "CSPAT00601InBlock1", "OrdprcPtnCode")
             assert row["MgntrnCode"] == "000" and row["LoanDt"] == ""
-            assert row["OrdCndiTpCode"] == "0" and row["MbrNo"] == "KRX"
-            assert (row["OrdPrc"] == 0) == (row["OrdprcPtnCode"] == "03")
+            assert row["OrdCndiTpCode"] in enum_codes("CSPAT00601", "CSPAT00601InBlock1", "OrdCndiTpCode")
+            assert row["MbrNo"] in {"KRX", "NXT"}
+            assert (row["OrdPrc"] != 0) == (row["OrdprcPtnCode"] in PRICED_PTN)
             self.orders[str(number)] = {"ordno": number, "expcode": "005930", "qty": row["OrdQty"],
                                         "price": row["OrdPrc"], "cheqty": 0, "cheprice": 0,
-                                        "ordrem": row["OrdQty"]}
+                                        "ordrem": row["OrdQty"], "side": row["BnsTpCode"]}
+            self.placed.append(dict(row))
         else:
             original = self.orders[str(row["OrgOrdNo"])]
             assert row["OrdQty"] <= original["ordrem"]
             original["ordrem"] -= row["OrdQty"]
             if tr == "CSPAT00701":
-                assert row["OrdprcPtnCode"] in {"00", "03"} and row["OrdCndiTpCode"] == "0"
+                assert row["OrdprcPtnCode"] in enum_codes("CSPAT00701", "CSPAT00701InBlock1", "OrdprcPtnCode")
+                assert row["OrdCndiTpCode"] in enum_codes("CSPAT00701", "CSPAT00701InBlock1", "OrdCndiTpCode")
                 self.orders[str(number)] = {"ordno": number, "expcode": "005930", "qty": row["OrdQty"],
                                             "price": row["OrdPrc"], "cheqty": 0, "cheprice": 0,
-                                            "ordrem": row["OrdQty"]}
+                                            "ordrem": row["OrdQty"], "side": original["side"]}
             else:
                 assert tr == "CSPAT00801"
         if self.after_write_failure:
@@ -163,9 +195,21 @@ class ContractServer:
         else:
             raise AssertionError("Unsupported contract field")
 
-    def fill(self, order_id, quantity):
+    def fill(self, order_id, quantity, price=9950):
         row = self.orders[order_id]
         assert 0 < quantity <= row["ordrem"]
         row["cheqty"] += quantity
         row["ordrem"] -= quantity
-        row["cheprice"] = 9950
+        row["cheprice"] = price
+        amount = Decimal(price) * quantity
+        if row["side"] == "2":
+            self.cash -= amount
+            self.position_cost += amount
+            self.quantity += quantity
+            self.sellable += quantity
+        else:
+            assert quantity <= self.sellable
+            self.position_cost -= self.position_cost / self.quantity * quantity
+            self.cash += amount
+            self.quantity -= quantity
+            self.sellable -= quantity

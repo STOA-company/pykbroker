@@ -111,12 +111,16 @@ def test_partial_then_modify_and_cancel_requested_remainder(venue, live_safety):
     check_requests(calls)
 
 
-@pytest.mark.parametrize("code", ["IGW40019", "IGW40031", "IGW40032", "IGW42901", "IGW42902", "IGW42903"])
-def test_synthetic_official_error_code_envelope_never_acknowledges_or_replays_order(code, live_safety):
+@pytest.mark.parametrize("code,kind", [("IGW40019", "rejected"), ("IGW40031", "rejected"),
+                                       ("IGW40032", "rejected"), ("IGW42901", "rate_limited"),
+                                       ("IGW42902", "rate_limited"), ("IGW42903", "rate_limited")])
+def test_synthetic_official_error_code_envelope_never_acknowledges_or_replays_order(code, kind, live_safety):
     path = ORDER + "cashBuy"
     broker, calls = make({path: [response(path, {"mkt_orr_no": 101}, code)]}, safety=live_safety)
-    with pytest.raises(InvalidResponseError):
+    # Listed gateway codes (reject_codes "nh", sourced) are definitive refusals; envelope placement is synthetic.
+    with pytest.raises(BrokerRejectedError) as raised:
         broker.place_order(request())
+    assert raised.value.kind == kind and raised.value.code == code
     with pytest.raises(DuplicateOrderError):
         broker.place_order(request())
     assert len(calls) == 1

@@ -30,7 +30,18 @@ from pykbroker.exceptions import (
     SafetyError,
     TransportError,
 )
-from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
+from pykbroker.models import (
+    AmendRequest,
+    Balance,
+    CancelRequest,
+    Capabilities,
+    Order,
+    OrderRequest,
+    Position,
+    Quote,
+    Rules,
+)
+from pykbroker.reject_codes import TOKEN_EXPIRED, rejection_for_code
 from pykbroker.rules.kr import KST, equity_rules
 from pykbroker.safety.gate import OrderSafety
 from pykbroker.safety.rate_limit import RateLimiter, credential_rate_limiter
@@ -52,6 +63,21 @@ NH_READ_RATES = {"read": 4.0}
 NH_MAX_BALANCE_PAGES = 100
 _OPTIONS = {"app_key", "app_secret", "token", "token_type", "expires_at", "acct_type", "brand"}
 _VENUES = frozenset({"KRX", "NXT", "UNT"})
+# cashBuy/cashSell nmn_pr_tp_cd (호가유형코드, official KR OpenAPI JSON, 2026-10-24): data rows, one per kind.
+# 06 조건부지정가 · 12 최유리 · 13 최우선 · 17 중간가 · 61 장전시간외 · 71 장후시간외. 16 스톱지정가 needs
+# sop_cnd_pr and a trigger order kind this SDK does not model (docs/nh-spec.md); 09/10/11 자기주식 and 91/92
+# 대량 are institutional kinds and are not offered.
+NH_KR_PRICE_TYPE = {"limit": "01", "market": "05", "conditional_limit": "06", "best": "12", "priority": "13",
+                    "midpoint": "17"}
+NH_KR_SESSION_PRICE_TYPE = {("pre", "market"): "61", ("after", "market"): "71"}
+# dailyOrderExecution nmn_pr_tp_cd_nm: the official code table's own names (the ledger's name column has no
+# separate enum), read back into the same order kinds; an unlisted name stays None (unknown), never guessed.
+NH_KR_PRICE_TYPE_NAME = {"보통가": "limit", "지정가": "limit", "시장가": "market", "조건부지정가": "conditional_limit",
+                         "최유리지정가": "best", "최우선지정가": "priority", "중간가": "midpoint",
+                         "장전시간외": "market", "장후시간외": "market"}
+NH_PRICED_KR = frozenset({"limit", "conditional_limit"})
+# orr_cnd_dit_cd (주문조건구분코드): 00 없음, 01 IOC, 02 FOK (05 GTP is not offered).
+NH_KR_TIF = {"day": "00", "ioc": "01", "fok": "02"}
 _COMPLETED = re.compile(
     r"(?:주문\s*)?(?:완료(?:되었습니다|됐습니다|했습니다|됨)?|"
     r"정상\s*처리(?:되었습니다|됐습니다|했습니다|됨)?|"
@@ -421,6 +447,12 @@ class NH(BaseBroker):
     def capabilities(self) -> Capabilities:
         return Capabilities(
             supports_spot=True,
+            supports_amend=self.market == "KR" and self.venue in {"KRX", "NXT"},
+            order_kinds=tuple(NH_KR_PRICE_TYPE)
+            if self.market == "KR" and self.venue in {"KRX", "NXT"} else (),
+            sessions=("regular", "pre", "after")
+            if self.market == "KR" and self.venue in {"KRX", "NXT"} else ("regular",),
+            time_in_force=tuple(NH_KR_TIF) if self.market == "KR" and self.venue in {"KRX", "NXT"} else ("day",),
             supports_limit_order=self.venue in {"KRX", "NXT", "US"},
             supports_market_order=self.market == "KR" and self.venue in {"KRX", "NXT"},
             supports_single_order_cancel=self.venue in {"KRX", "NXT", "US"},
@@ -679,13 +711,18 @@ class NH(BaseBroker):
 
     def _validate_order(self, request: OrderRequest | CancelRequest) -> None:
         super()._validate_order(request)
+        if (isinstance(request, OrderRequest) and request.session != "regular"
+                and (request.session, request.order_type) not in NH_KR_SESSION_PRICE_TYPE):
+            raise NotSupportedError("This off-session order kind is not supported")
         if not self.virtual and self._allow_live_orders is not True:
             raise SafetyError("NH live orders are locked until order-to-ledger reconciliation is verified")
         if request.venue is not None and request.venue != self.venue:
             raise NotSupportedError("NH order venue must match the configured venue")
         if isinstance(request, OrderRequest):
-            if request.order_type not in ({"limit", "market"} if self.market == "KR" else {"limit"}):
-                raise NotSupportedError("NH implements KR cash limit/market and US limit orders only")
+            if self.market == "US" and request.order_type != "limit":
+                raise NotSupportedError("NH implements US limit orders only")
+            if self.market == "KR" and request.order_type not in NH_KR_PRICE_TYPE:
+                raise NotSupportedError("NH does not offer this KR order type")
             # The shared stock ladder does not cover ETFs and other KR products.
             # Whole won is checked by BaseBroker; the venue decides product ticks.
             if self.market == "US":
@@ -710,9 +747,15 @@ class NH(BaseBroker):
         data = json.dumps({"Input_0": payload}, ensure_ascii=False).encode("utf-8")
         self._limiter.wait("read")
         status, body, _ = self._post_raw(self._client, path, headers, data)
-        if status == 401 or (status == 200 and _response_code(body) in {"IGW40043", "IGW40044"}):
+        listed = rejection_for_code(self.broker_code, _response_code(body)) if status == 200 else None
+        if status == 401 or (listed is not None and listed.kind == TOKEN_EXPIRED):
             self._discard_token()
-            raise BrokerRejectedError("NH order authorization rejected; no order replay occurred")
+            if listed is None:
+                raise TransportError("NH order authorization outcome is unknown; reconcile before retrying")
+            raise listed
+        if listed is not None:
+            # A table row with a source proves the gateway refused before an order existed; never re-sent.
+            raise listed
         if status != 200:
             raise TransportError("NH order outcome is unknown; reconcile before retrying")
         code = _response_code(body)
@@ -744,13 +787,14 @@ class NH(BaseBroker):
             "act_no": self._account,
             "iem_cd": code,
             "orr_qty": request.quantity,
-            "nmn_pr_tp_cd": "05" if request.order_type == "market" else "01",
-            "orr_cnd_dit_cd": "00",
+            "nmn_pr_tp_cd": NH_KR_SESSION_PRICE_TYPE.get(
+                (request.session, request.order_type), NH_KR_PRICE_TYPE[request.order_type]),
+            "orr_cnd_dit_cd": NH_KR_TIF[request.time_in_force],
             "ssl_nmn_pr_dit_cd": "00",
             "rmt_mkt_cd": self.venue,
             "sor_mkt_sli_yn": "N",
         }
-        if request.order_type == "limit":
+        if request.order_type in NH_PRICED_KR:
             payload.update(orr_pr=int(request.price), orr_amt=int(request.price) * request.quantity)
         endpoint = "cashBuy" if request.side == "buy" else "cashSell"
         output = self._write(f"/krstock/order/v1/{endpoint}", payload)
@@ -794,59 +838,67 @@ class NH(BaseBroker):
         self, order_id: str, request: OrderRequest, *, stop_condition_price: Decimal,
         original_ledger_id: str,
     ) -> Order:
-        """Reprice a KR cash limit order's requested remainder, with a fresh client key.
+        """Pre-unification name; a thin wrapper of ``amend_order`` (extras travel in ``broker_ref``)."""
+        if not isinstance(stop_condition_price, Decimal):
+            raise ConfigurationError("NH stop condition price must be an explicit nonnegative Decimal")
+        if not isinstance(original_ledger_id, str):
+            raise ConfigurationError("NH modification requires the original ledger number as 'itg:<number>'")
+        ref = {"original_ledger_id": original_ledger_id, "stop_condition_price": str(stop_condition_price)}
+        return self.amend_order(request, order_id=order_id, broker_ref=ref)
 
-        ``original_ledger_id`` ('itg:<number>') is the caller's assertion that this
-        ledger row is the order placed as ``order_id``; the SDK does not infer the
-        mkt/itg link. The row must match symbol and side, be a limit order, and its
-        requested market is sent as ``rmt_mkt_cd``. A missing, duplicated or unreadable
-        row sends nothing.
+    # amend_order(AmendRequest) is the shared BaseBroker shape. NH needs two caller assertions that no
+    # other broker does, carried in ``AmendRequest.broker_ref`` (data, not a signature fork):
+    #   original_ledger_id  'itg:<number>' of the ledger row the caller asserts is order_id; the SDK does not
+    #                       infer the mkt/itg link. The row must match symbol and side, be a limit order, and
+    #                       its requested market is sent as ``rmt_mkt_cd``; a missing, duplicated or
+    #                       unreadable row sends nothing.
+    #   stop_condition_price  explicit nonnegative Decimal text the schema requires (cash-limit meaning is
+    #                       undocumented, so no default).
+    # Placement safety scope is shared: a placement key cannot also send an amendment. Ack is not a fill.
 
-        This uses the placement safety/idempotency scope: reusing a placement or
-        modification key cannot transmit another write. Acknowledgement is not a fill.
-        """
-        request = OrderRequest.model_validate(request.model_dump())
-        if self.market != "KR" or request.order_type != "limit":
+    def _prepare_amend(self, request: AmendRequest) -> Any:
+        if request.broker_ref.keys() != {"original_ledger_id", "stop_condition_price"}:
+            raise ConfigurationError("NH amendment requires broker_ref original_ledger_id and stop_condition_price")
+        if self.market != "KR":
             raise NotSupportedError("NH modification supports KR cash limit orders only")
-        if not isinstance(order_id, str) or not order_id.startswith("mkt:"):
+        if not request.order_id.startswith("mkt:"):
             raise ConfigurationError("NH modification requires the original market order number")
-        number = _order_number(order_id[4:])
-        if not isinstance(original_ledger_id, str) or not original_ledger_id.startswith("itg:"):
+        number = _order_number(request.order_id[4:])
+        original_ledger_id = request.broker_ref["original_ledger_id"]
+        if not original_ledger_id.startswith("itg:"):
             raise ConfigurationError("NH modification requires the original ledger number as 'itg:<number>'")
         ledger_number = _order_number(original_ledger_id[4:], max_digits=11)
-        if (not isinstance(stop_condition_price, Decimal) or not stop_condition_price.is_finite()
-                or stop_condition_price < 0 or not math.isfinite(float(stop_condition_price))):
+        try:
+            stop = Decimal(request.broker_ref["stop_condition_price"])
+        except ArithmeticError:
+            raise ConfigurationError("NH stop condition price must be an explicit nonnegative Decimal") from None
+        if not stop.is_finite() or stop < 0 or not math.isfinite(float(stop)):
             raise ConfigurationError("NH stop condition price must be an explicit nonnegative Decimal")
-        self._validate_order(request)
         code = self._symbol(request.symbol, request.market)
         original = self._call(lambda: self._original_ledger_row(ledger_number, code, request.side))
-        original_venue = str(original["rmt_mkt_cd"]).strip()
+        return {"number": number, "stop": stop, "venue": str(original["rmt_mkt_cd"]).strip()}
 
-        def submit() -> Order:
-            output = self._write("/krstock/order/v1/modify", {
-                "act_no": self._account,
-                "org_mkt_orr_no": int(number),
-                "all_pat_dit_cd": "2",
-                "iem_cd": self._symbol(request.symbol, request.market),
-                "cor_qty": request.quantity,
-                "cor_pr": int(request.price),
-                # Required in the schema, but cash-limit semantics are undocumented.
-                # Caller must supply it explicitly; no invented zero default.
-                "sop_cnd_pr": float(stop_condition_price),
-                # Official: same market as the original order, read from its ledger row.
-                "rmt_mkt_cd": original_venue,
-                "sor_mkt_sli_yn": "N",
-            })
-            return Order(
-                id=f"mkt:{_order_number(output['mkt_orr_no'])}",
-                symbol=self._symbol(request.symbol, request.market),
-                side=request.side, order_type="limit", quantity=request.quantity,
-                price=request.price, status="accepted", virtual=self.virtual,
-            )
-
-        return self.safety.execute(
-            self.broker_code, self._account, request, lambda: self._call(submit)
-        ).model_copy(update={"client_key": request.client_key})
+    def _amend_order(self, request: AmendRequest, prepared: Any = None) -> Order:
+        output = self._write("/krstock/order/v1/modify", {
+            "act_no": self._account,
+            "org_mkt_orr_no": int(prepared["number"]),
+            "all_pat_dit_cd": "2",
+            "iem_cd": self._symbol(request.symbol, request.market),
+            "cor_qty": request.quantity,
+            "cor_pr": int(request.price),
+            # Required in the schema, but cash-limit semantics are undocumented.
+            # Caller must supply it explicitly; no invented zero default.
+            "sop_cnd_pr": float(prepared["stop"]),
+            # Official: same market as the original order, read from its ledger row.
+            "rmt_mkt_cd": prepared["venue"],
+            "sor_mkt_sli_yn": "N",
+        })
+        return Order(
+            id=f"mkt:{_order_number(output['mkt_orr_no'])}",
+            symbol=self._symbol(request.symbol, request.market),
+            side=request.side, order_type="limit", quantity=request.quantity,
+            price=request.price, status="accepted", virtual=self.virtual,
+        )
 
     def _cancel_order(self, request: CancelRequest) -> Order:
         if self.market == "US":
@@ -942,9 +994,7 @@ class NH(BaseBroker):
                     elif remaining:
                         state = "partial" if filled else "open"
                 side = {"매수": "buy", "매도": "sell"}.get(str(row.get("sby_dit_cd_nm", "")).strip())
-                order_type = {"보통가": "limit", "지정가": "limit", "시장가": "market"}.get(
-                    str(row.get("nmn_pr_tp_cd_nm", "")).strip()
-                )
+                order_type = NH_KR_PRICE_TYPE_NAME.get(str(row.get("nmn_pr_tp_cd_nm", "")).strip())
                 orders.append(
                     Order(
                         id=f"itg:{integrated}",

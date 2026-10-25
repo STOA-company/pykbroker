@@ -15,6 +15,7 @@ import re
 import urllib.request
 from collections.abc import Callable, Mapping
 from datetime import UTC, date, datetime, timedelta
+from typing import Any
 from urllib.parse import urlencode
 
 from pykbroker._http import urlopen
@@ -28,7 +29,17 @@ from pykbroker.exceptions import (
     TransportError,
 )
 from pykbroker.experimental._rest import RestBroker
-from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
+from pykbroker.models import (
+    AmendRequest,
+    Balance,
+    CancelRequest,
+    Capabilities,
+    Order,
+    OrderRequest,
+    Position,
+    Quote,
+    Rules,
+)
 from pykbroker.safety.rate_limit import credential_rate_limiter
 
 # Field contracts: tests/fixtures/ls/official, guide version 20261007070834325.
@@ -68,7 +79,23 @@ LS_CODES = {
     "condition": "0",
     "member": "KRX",
     "broker_type": "",
+    # CSPAT00601/00701 OrdprcPtnCode (호가유형코드, official TR guide): one data row per order kind.
+    "conditional_limit": "05",
+    "best": "06",
+    "priority": "07",
+    "midpoint": "12",
+    "pre_close": "61",     # 장개시전시간외종가
+    "after_close": "81",   # 시간외종가
+    "after_single": "82",  # 시간외단일가
+    # OrdCndiTpCode (주문조건구분): "condition" = 0 없음 (day), 1 IOC, 2 FOK.
+    "tif_ioc": "1",
+    "tif_fok": "2",
 }
+# MbrNo (회원사번호): KRX / NXT; any other input is processed as KRX by LS, so only these two are offered.
+LS_KR_VENUES = ("KRX", "NXT")
+LS_KR_EXTRA_ORDER_TYPES = ("conditional_limit", "best", "priority", "midpoint")
+LS_SESSION_ORDER_KEYS = {("pre", "market"): "pre_close", ("after", "market"): "after_close",
+                         ("single_price", "limit"): "after_single"}
 LS_US_VENUES = {"NYSE": "81", "NASDAQ": "82"}
 # Holdings continuation (tr_cont/tr_cont_key headers, t0424 cts_expcode): a list that does not
 # end within this many pages is refused, never cut short.
@@ -275,16 +302,26 @@ class LS(RestBroker):
             supports_limit_order=verified,
             supports_market_order=verified and self.market == "KR",
             supports_single_order_cancel=verified,
+            supports_amend=verified and self.market == "KR",
+            supports_nxt=verified and self.market == "KR",
+            order_kinds=("limit", "market") + LS_KR_EXTRA_ORDER_TYPES
+            if verified and self.market == "KR" else (("limit",) if verified else ()),
+            sessions=("regular", "pre", "after", "single_price")
+            if verified and self.market == "KR" else ("regular",),
+            time_in_force=("day", "ioc", "fok") if verified and self.market == "KR" else ("day",),
             # UNVERIFIED: t0425 is not yet proof of real-time/history coverage.
             supports_order_history=False,
             realtime_open_orders=False,
             markets=(self.market,),
             requires_venue=self.market == "US",
-            venues=("KRX",) if self.market == "KR" else self.us_venues,
+            venues=LS_KR_VENUES if self.market == "KR" else self.us_venues,
         )
 
     def _validate_order(self, request: OrderRequest | CancelRequest) -> None:
         super()._validate_order(request)
+        if (isinstance(request, OrderRequest) and request.session != "regular"
+                and (request.session, request.order_type) not in LS_SESSION_ORDER_KEYS):
+            raise NotSupportedError("This off-session order kind is not supported")
         if isinstance(request, OrderRequest) and request.order_type == "close":
             raise NotSupportedError("LS close orders have not been verified")
         if isinstance(request, CancelRequest):
@@ -297,6 +334,8 @@ class LS(RestBroker):
             raise SpecUnverifiedError("LS writes require the explicit real-account opt-in or verified mock")
         if request.market == "US" and type(self._order_date) is not date:
             raise ConfigurationError("LS US submission requires an explicit broker order_date for reconciliation")
+        request = OrderRequest.model_validate(request.model_dump())
+        self._validate_order(request)
         self._verify_mode(self._client)
         self._call(self._verify_account)
         return super().place_order(request)
@@ -308,37 +347,38 @@ class LS(RestBroker):
         self._call(self._verify_account)
         return super().cancel_order(request)
 
-    def modify_order(self, order_id: str, request: OrderRequest) -> Order:
-        """KR CSPAT00701: amend with a new client key and return the new order ID.
+    def amend_order(self, request, *, order_id: str | None = None) -> Order:
+        """KR CSPAT00701 through the shared ``amend_order(AmendRequest)`` shape.
 
-        Reuses the existing place safety namespace conservatively: a key used
-        for a placement or another amendment cannot send a second mutation.
-        Request side is caller/safety context and cannot change the original
-        order side; the amendment response leaves side unknown. Acceptance does
-        not establish that a concurrent fill/cancel completed.
+        Request side is caller/safety context and cannot change the original order side; the amendment
+        response leaves side unknown. Acceptance does not establish that a concurrent fill/cancel completed.
         """
         if not self._writes_verified():
             raise SpecUnverifiedError("LS writes require the explicit real-account opt-in or verified mock")
         if self.market != "KR":
             raise NotSupportedError("LS amendment currently supports KR cash orders only")
-        order_id = self._order_id(order_id, request=True)
-        request = OrderRequest.model_validate(request.model_dump())
-        self._validate_order(request)
+        return super().amend_order(request, order_id=order_id)
+
+    def modify_order(self, order_id: str, request: OrderRequest) -> Order:
+        """Pre-unification name; a thin wrapper of ``amend_order``."""
+        return self.amend_order(request, order_id=order_id)
+
+    def _prepare_amend(self, request: AmendRequest) -> None:
+        super()._prepare_amend(request)
+        self._order_id(request.order_id, request=True)
         self._verify_mode(self._client)
         self._call(self._verify_account)
 
-        def submit():
-            body = {"OrgOrdNo": int(order_id), "IsuNo": self._order_symbol(request.symbol),
-                    "OrdQty": request.quantity, "OrdprcPtnCode": self._code(request.order_type),
-                    "OrdCndiTpCode": self._code("condition"), "OrdPrc": int(request.price or 0)}
-            response = self._response("/stock/order", "CSPAT00701", {"CSPAT00701InBlock1": body}, write=True)
-            return Order(id=self._order_id(response["CSPAT00701OutBlock2"]["OrdNo"]),
-                         symbol=self._symbol(request.symbol, "KR"), side=None,
-                         order_type=request.order_type, quantity=request.quantity,
-                         price=request.price, status="accepted", virtual=self._bound_virtual)
-
-        return self.safety.execute(self.broker_code, self._account, request, lambda: self._call(submit)).model_copy(
-            update={"client_key": request.client_key})
+    def _amend_order(self, request: AmendRequest, prepared: Any = None) -> Order:
+        body = {"OrgOrdNo": int(self._order_id(request.order_id, request=True)),
+                "IsuNo": self._order_symbol(request.symbol),
+                "OrdQty": request.quantity, "OrdprcPtnCode": self._code(request.order_type),
+                "OrdCndiTpCode": self._code("condition"), "OrdPrc": int(request.price or 0)}
+        response = self._response("/stock/order", "CSPAT00701", {"CSPAT00701InBlock1": body}, write=True)
+        return Order(id=self._order_id(response["CSPAT00701OutBlock2"]["OrdNo"]),
+                     symbol=self._symbol(request.symbol, "KR"), side=None,
+                     order_type=request.order_type, quantity=request.quantity,
+                     price=request.price, status="accepted", virtual=self._bound_virtual)
 
     def _verify_account(self):
         if self._bound_virtual:
@@ -669,11 +709,13 @@ class LS(RestBroker):
             "OrdQty": request.quantity,
             "OrdPrc": int(request.price or 0),
             "BnsTpCode": self._code(request.side),
-            "OrdprcPtnCode": self._code(request.order_type),
+            "OrdprcPtnCode": self._code(LS_SESSION_ORDER_KEYS.get(
+                (request.session, request.order_type), request.order_type)),
             "MgntrnCode": self._code("cash"),
             "LoanDt": "",
-            "OrdCndiTpCode": self._code("condition"),
-            "MbrNo": self._code("member"),
+            "OrdCndiTpCode": self._code("condition" if request.time_in_force == "day"
+                                        else "tif_" + request.time_in_force),
+            "MbrNo": request.venue or self._code("member"),
         }
         response = self._response("/stock/order", "CSPAT00601", {"CSPAT00601InBlock1": body}, write=True)
         return Order(
