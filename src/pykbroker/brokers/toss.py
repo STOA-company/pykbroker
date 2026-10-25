@@ -345,6 +345,9 @@ class Toss(BaseBroker):
             return Capabilities(
                 supports_spot=True,
                 supports_limit_order=True,
+                # market is listed for the two fractional paths only; a whole-share MARKET is refused by the
+                # supports_market_order=False check in BaseBroker._validate_order.
+                order_kinds=("limit", "market"),
                 # Toss OpenAPI 1.2.24: US fractional shares — `orderAmount` MARKET BUY and
                 # decimal `quantity` MARKET SELL (<=6 dp), regular session only. Whole-share
                 # MARKET stays closed (supports_market_order=False, D11 limit-only pilot).

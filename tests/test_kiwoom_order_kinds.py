@@ -203,3 +203,38 @@ def test_amending_a_market_original_is_refused_without_a_write():
         broker.amend_order(AmendRequest(order_id=order.id, symbol="005930", side="buy", quantity=5,
                                         price="60500", client_key="a"))
     assert not [b for _, b in world.server.calls if "mdfy_qty" in b]
+
+
+# --- trde_tp 28 (스톱지정가): the slot exists, shut until Kiwoom confirms what cond_uv means ---
+
+
+def stop_req(key="st"):
+    return req(key, order_type="stop_limit", price="59000", stop_price="59500")
+
+
+def test_stop_limit_is_listed_by_the_spec_but_refused_before_the_wire():
+    world, broker = live_world()
+    assert "stop_limit" not in broker.capabilities().order_kinds
+    before = len(world.server.calls)
+    with pytest.raises(NotSupportedError):
+        broker.place_order(stop_req())
+    assert len(world.server.calls) == before
+
+
+def test_stop_limit_slot_builds_trde_tp_28_with_cond_uv_once_verified(monkeypatch):
+    from pykbroker.brokers import kiwoom as module
+
+    monkeypatch.setattr(module, "KIWOOM_STOP_LIMIT_VERIFIED", True)
+    world, broker = live_world()
+    assert "stop_limit" in broker.capabilities().order_kinds
+    order = broker.place_order(stop_req())
+    body = next(b for _, b in world.server.calls if b.get("ord_qty"))
+    assert (body["trde_tp"], body["ord_uv"], body["cond_uv"]) == ("28", "59000", "59500")
+    assert order.status == "accepted"
+
+
+def test_stop_limit_request_shape_is_validated():
+    with pytest.raises(ValueError):
+        req("a", order_type="stop_limit", price="59000")  # no stop_price
+    with pytest.raises(ValueError):
+        req("b", order_type="limit", price="59000", stop_price="59500")  # stop_price on another kind

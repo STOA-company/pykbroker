@@ -214,6 +214,8 @@ class KIS(BaseBroker):
             supports_spot=True,
             # KIS overseas has no market order; the executor must plan a limit price itself.
             supports_market_order=self.market == "KR",
+            # 장후 시간외 (`close`) is the KR dvsn; US is limit only.
+            order_kinds=("limit", "market", "close") if self.market == "KR" else ("limit",),
             supports_single_order_cancel=not (self.market == "US" and self.virtual),
             supports_virtual_account=True,
             virtual=self.virtual,

@@ -59,3 +59,18 @@ def test_supports_amend_is_declared_only_where_a_native_amend_exists():
     assert Capabilities().supports_amend is False
     assert World().broker().capabilities().supports_amend is True
     assert Kiwoom.__mro__  # adapter class unchanged; the cell is read from capabilities()
+
+
+def test_support_lists_are_data_on_every_broker_and_never_wider_than_what_is_implemented():
+    from pykbroker.models import Capabilities
+
+    # derived defaults: flags decide kinds, plain day regular session
+    base = Capabilities(supports_market_order=True)
+    assert (base.order_kinds, base.time_in_force, base.sessions) == (("limit", "market"), ("day",), ("regular",))
+    assert Capabilities(supports_limit_order=False).order_kinds == ()
+    kiwoom = World().broker(virtual=False).capabilities()
+    assert kiwoom.order_kinds == ("limit", "market", "close", "conditional_limit", "best", "top", "mid")
+    assert kiwoom.time_in_force == ("day", "ioc", "fok") and kiwoom.sessions == ("regular", "pre", "single")
+    assert kiwoom.venues == ("KRX", "NXT", "SOR")
+    mock = World().broker().capabilities()
+    assert mock.venues == ("KRX",)

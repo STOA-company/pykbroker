@@ -172,6 +172,8 @@ class KiwoomContractServer:
         label, needs_price, tif, style = TRDE[body["trde_tp"]]
         if needs_price and not int(body.get("ord_uv") or 0):
             return self._err(1517, p="ord_uv")
+        if body["trde_tp"] == "28" and not int(body.get("cond_uv") or 0):
+            return self._err(1517, p="cond_uv")  # assumption (unconfirmed): cond_uv is the stop trigger price
         qty = int(body["ord_qty"])
         price = int(body.get("ord_uv") or 0)
         if side == "buy" and qty * (price or self.price) > self.cash:

@@ -254,12 +254,12 @@ class BaseBroker:
             if self.market == "KR" and request.price != request.price.to_integral_value():
                 raise ConfigurationError("KR prices must be whole won; round explicitly before submission")
         if isinstance(request, OrderRequest):
-            basic = ("limit", "market", "close")
-            if request.order_type not in basic and request.order_type not in capabilities.order_types:
+            # A fractional request gets its own explicit refusal below (FractionalNotSupportedError).
+            if not request.fractional and request.order_type not in capabilities.order_kinds:
                 raise NotSupportedError("This order type is not supported")
-            if request.time_in_force != "day" and request.time_in_force not in capabilities.time_in_forces:
+            if request.time_in_force not in capabilities.time_in_force:
                 raise NotSupportedError("This time in force is not supported")
-            if request.session != "regular" and request.session not in capabilities.sessions:
+            if request.session not in capabilities.sessions:
                 raise NotSupportedError("This order session is not supported")
         if isinstance(request, OrderRequest) and request.fractional:
             # Fractional shares are refused here, before any vendor call, unless the

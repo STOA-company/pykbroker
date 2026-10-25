@@ -63,6 +63,7 @@ class DBFI(BaseBroker):
             supports_spot=True,
             # DB overseas has no market order either; US is limit-only on both brokers.
             supports_market_order=self.market == "KR",
+            order_kinds=("limit", "market", "close") if self.market == "KR" else ("limit",),
             supports_single_order_cancel=True,
             supports_nxt=self.market == "KR",
             supports_order_history=True,

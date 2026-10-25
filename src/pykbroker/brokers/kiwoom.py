@@ -21,6 +21,7 @@ from pykbroker.exceptions import (
     ConfigurationError,
     InvalidResponseError,
     NotSupportedError,
+    SpecUnverifiedError,
     TransportError,
 )
 from pykbroker.models import (
@@ -98,6 +99,11 @@ _TRDE_REGULAR: dict[tuple[str, str], str] = {
 }  # fmt: skip
 # Off-session: pre = 장시작전시간외 61 (market style), single = 시간외단일가 62. The spec does not say whether 61/81
 # take a price (sent empty) or 62 does (sent when the caller gives one); see docs/kiwoom-spec.md.
+# trde_tp 28 (스톱지정가) is the one listed code kept shut. Its only trigger-price field, cond_uv, is labelled
+# «조건단가 (단위: 원)» on kt10000/kt10001; only the query responses (kt00007, ka10075 stop_pric) call the same value
+# «스톱가». No order page states it, so the mapping below is ready but off until Kiwoom confirms (docs/kiwoom-spec.md).
+KIWOOM_STOP_LIMIT_VERIFIED = False
+_KR_KINDS = ("limit", "market", "close", "conditional_limit", "best", "top", "mid")
 _TRDE_SESSION = {"pre": "61", "single": "62"}
 KIWOOM_VENUE_CODES = {"KRX": "KRX", "NXT": "NXT", "SOR": "SOR"}
 _TYPE_NAMES: dict[str, OrderType] = {
@@ -178,10 +184,18 @@ def _trde_tp(request: OrderRequest) -> str:
         if code is None or request.order_type not in allowed or request.time_in_force != "day":
             raise NotSupportedError("Kiwoom does not list this off-session order")
         return code
+    if request.order_type == "stop_limit":
+        if not KIWOOM_STOP_LIMIT_VERIFIED:
+            raise SpecUnverifiedError("Kiwoom trde_tp 28: the meaning of cond_uv is unconfirmed")
+        return "28" if request.time_in_force == "day" else _unlisted()
     code = _TRDE_REGULAR.get((request.order_type, request.time_in_force))
     if code is None:
         raise NotSupportedError("Kiwoom does not list this order type and time in force")
     return code
+
+
+def _unlisted() -> str:
+    raise NotSupportedError("Kiwoom does not list this order type and time in force")
 
 
 def _venue_code(venue: str | None) -> str:
@@ -361,9 +375,11 @@ class Kiwoom(BaseBroker):
             supports_market_order=self.market == "KR",
             supports_nxt=self.market == "KR" and not self.virtual,
             # Official mock info (2026-10-24): domestic mock trades and queries KRX only.
-            order_types=("conditional_limit", "best", "top", "mid") if self.market == "KR" else (),
-            time_in_forces=("ioc", "fok") if self.market == "KR" else (),
-            sessions=("pre", "single") if self.market == "KR" else (),
+            order_kinds=_KR_KINDS + (("stop_limit",) if KIWOOM_STOP_LIMIT_VERIFIED else ())
+            if self.market == "KR"
+            else ("limit",),
+            time_in_force=("day", "ioc", "fok") if self.market == "KR" else ("day",),
+            sessions=("regular", "pre", "single") if self.market == "KR" else ("regular",),
             supports_single_order_cancel=True,
             supports_amend=self.market == "KR",
             supports_order_history=True,
@@ -514,6 +530,8 @@ class Kiwoom(BaseBroker):
             "ord_uv": str(int(request.price)) if request.price is not None else "",
             "trde_tp": _trde_tp(request),
         }
+        if request.stop_price is not None:
+            body["cond_uv"] = str(int(request.stop_price))  # only reachable once KIWOOM_STOP_LIMIT_VERIFIED
         response = self._write("/api/dostk/ordr", "kt10000" if request.side == "buy" else "kt10001", body)
         if response.get("dmst_stex_tp", body["dmst_stex_tp"]) != body["dmst_stex_tp"]:
             raise InvalidResponseError("Kiwoom order went to another exchange; reconcile before retrying")
