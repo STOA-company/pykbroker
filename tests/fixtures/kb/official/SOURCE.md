@@ -31,3 +31,11 @@ SSQM2952 sheet42:51-55,68-72 names all ten quantity fields but gives no formula.
 SSAM1806 sheet28:13 describes 1=일부정정, 2=전부정정; its explicit cancel JSON uses 1 with quantity and reports successful cancellation. Use that demonstrated quantity-specific request, never infer value 2.
 SKAM2101 sheet63:15 and SKAM2102 sheet64:14 specify P4 String(15). The input sample has integer prices; live fractional input acceptance remains unverified.
 SPQM2204 sheet71:11-12 has no timezone definition. Preserve New York default and explicit order_date; live rollover must be checked.
+
+## Re-verification 2026-10-26 (KST)
+
+The official XLSX and ZIP are regenerated on every download: the XLSX carries an Apache POI creation timestamp and a per-sheet "최초작성일" cell (C7) equal to the download date, so the container hash changes daily even when the specification does not. The XLSX itself is not stored in this repository; only its hash is recorded above.
+- XLSX re-downloaded from the same URL: sha256 1cbd462d31e826afc7613e92d08c9a12badf725173aff72f9a0d6e6062848e7d (76 sheets). Compared cell by cell with the 2026-10-24 download (sha256 880b43b447c14f1120d359f3c03deb0689fd0922871e5d961be71fd4dbaf14fe): the only differing cells are C7 on 75 sheets (2026-10-24 -> 2026-10-26).
+- ZIP re-downloaded: container sha256 differs from the 2026-10-04 value, but every one of the ten original member hashes in the table above is identical in the new ZIP, so the sanitized fixtures remain valid.
+- Every sheet/row citation above (sheet42:51-55,68-72; sheet28:13; sheet63:15; sheet64:14; sheet71:11-12) still points at the same field and text, and every field name and length limit used by brokers/kb.py exists with the same length in the new XLSX.
+- The 2026-10-04 XLSX bytes were not retained, so a byte-level diff against ba4db891 is not possible; fixtures were not replaced.
