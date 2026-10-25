@@ -247,6 +247,7 @@ def test_stop_limit_request_shape_is_validated():
 def test_us_amend_is_refused_before_any_http():
     world = World()
     broker = world.broker(virtual=False, market="US", venue="NASDAQ")
+    broker.safety.valuation = lambda request: Decimal(100_000)
     before = list(world.server.calls)
     request = AmendRequest(order_id="1234567", symbol="AAPL", market="US", venue="NASDAQ",
                            side="buy", quantity=1, price="200", client_key="us-amend")
