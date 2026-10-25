@@ -8,6 +8,11 @@ class Capabilities(Model):
     supports_market_order: bool = False
     supports_single_order_cancel: bool = False
     supports_nxt: bool = False
+    # Kinds beyond plain limit/market/close, time-in-force other than "day", sessions other than "regular".
+    # Empty means refused: an unlisted kind never reaches the wire.
+    order_types: tuple[str, ...] = ()
+    time_in_forces: tuple[str, ...] = ()
+    sessions: tuple[str, ...] = ()
     supports_order_history: bool = False
     # True only where the venue answers an unfilled-order snapshot in real time.
     # A daily ledger read back for today (the KIS mock domain) is not one: it lags.

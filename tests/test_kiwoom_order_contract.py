@@ -130,13 +130,15 @@ def test_sell_goes_to_kt10001_and_a_virtual_account_to_the_mock_host(live_safety
     assert (order.id, order.side, order.status, order.virtual) == ("0000138", "sell", "accepted", True)
 
 
-def test_orders_other_than_kr_market_limit_krx_are_refused_before_any_request(live_safety):
-    broker, client = make({}, safety=live_safety)
+def test_orders_the_account_mode_or_market_cannot_take_are_refused_before_any_request(live_safety):
+    # a mock (virtual) account trades KRX only (official mock info); NXT/SOR on the real host are covered in
+    # test_kiwoom_order_kinds.py. US takes plain day limit orders only.
+    broker, client = make({}, safety=live_safety, virtual=True)
     for request in (
-        buy(order_type="close"),
         buy(venue="NXT"),
         buy(venue="SOR"),
         buy(market="US"),
+        buy(time_in_force="ioc", venue="KRX", order_type="limit", market="US"),
     ):
         with pytest.raises(NotSupportedError):
             broker.place_order(request)

@@ -1,6 +1,16 @@
 from .balance import Balance
 from .capabilities import Capabilities
-from .order import AmendRequest, CancelRequest, Order, OrderRequest, OrderStatus, OrderType, Side
+from .order import (
+    AmendRequest,
+    CancelRequest,
+    Order,
+    OrderRequest,
+    OrderSession,
+    OrderStatus,
+    OrderType,
+    Side,
+    TimeInForce,
+)
 from .position import Position
 from .quote import Quote
 from .rules import Rules
@@ -13,7 +23,9 @@ __all__ = [
     "Order",
     "OrderRequest",
     "OrderStatus",
+    "OrderSession",
     "OrderType",
+    "TimeInForce",
     "Side",
     "Position",
     "Quote",
