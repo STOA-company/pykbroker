@@ -9,7 +9,7 @@ from decimal import Decimal
 
 import pytest
 
-from pykbroker.brokers.nh import NH, NH_KR_PRICE_TYPE, NH_KR_TIF
+from pykbroker.brokers.nh import NH, NH_KR_PRICE_TYPE, NH_KR_SESSION_PRICE_TYPE, NH_KR_TIF
 from pykbroker.exceptions import (
     BrokerRejectedError,
     DuplicateOrderError,
@@ -64,16 +64,18 @@ def test_kind_and_tif_tables_cover_the_official_codes_the_adapter_offers():
 
 
 @pytest.mark.parametrize("venue", ["KRX", "NXT"])
-@pytest.mark.parametrize("kind", list(NH_KR_PRICE_TYPE))
+@pytest.mark.parametrize("session,kind,code",
+    [("regular", kind, code) for kind, code in NH_KR_PRICE_TYPE.items()] +
+    [(session, kind, code) for (session, kind), code in NH_KR_SESSION_PRICE_TYPE.items()])
 @pytest.mark.parametrize("side,endpoint", [("buy", "cashBuy"), ("sell", "cashSell")])
-def test_every_order_kind_and_venue_goes_out_with_its_documented_code(live_safety, kind, venue, side, endpoint):
+def test_every_order_kind_and_venue_goes_out_with_its_documented_code(live_safety, session, kind, code, venue, side, endpoint):
     live_safety.market_order_allowed = lambda request: True
     live_safety.valuation = lambda request: Decimal(3000)
     server = NHContractServer()
     broker = build(server, live_safety, venue=venue)
-    placed = broker.place_order(req(kind, side))
+    placed = broker.place_order(req(kind, side, session=session))
     wire = server.placed[-1]
-    assert wire["nmn_pr_tp_cd"] == NH_KR_PRICE_TYPE[kind] and wire["rmt_mkt_cd"] == venue
+    assert wire["nmn_pr_tp_cd"] == code and wire["rmt_mkt_cd"] == venue
     assert count(server, ORDER + endpoint) == 1 and placed.status == "accepted" and placed.order_type == kind
     [row] = broker.list_orders()
     assert row.status == "open" and row.order_type == kind
@@ -92,7 +94,7 @@ def test_unoffered_kinds_never_reach_the_server(world):
         broker.place_order(OrderRequest(symbol="005930", side="buy", quantity=1, order_type="close",
                                         client_key="c"))
     with pytest.raises(NotSupportedError):
-        broker.place_order(OrderRequest(symbol="005930", side="buy", quantity=1, order_type="after_single",
+        broker.place_order(OrderRequest(symbol="005930", side="buy", quantity=1, order_type="limit", session="single_price",
                                         price=Decimal(1000), client_key="s"))
     assert server.placed == []
 
@@ -100,16 +102,18 @@ def test_unoffered_kinds_never_reach_the_server(world):
 def test_buy_partial_fill_amend_cancel_balance_walk(world):
     server, broker = world
     caps = broker.capabilities()
-    assert caps.supports_amend and "midpoint" in caps.order_types and caps.time_in_force == ("day", "ioc", "fok")
+    assert caps.supports_amend and "midpoint" in caps.order_kinds and caps.time_in_force == ("day", "ioc", "fok")
     cash0 = broker.get_balance().cash_available
     placed = broker.place_order(req())
-    assert placed.id == "mkt:101"
+    assert placed.id == "mkt:101" and placed.client_key == "walk-place"
     server.fill(101, 1, 990)
     [partial] = broker.list_orders()
     assert (partial.status, partial.filled, partial.remaining) == ("partial", 1, 2)
     amended = broker.amend_order(amend_req(placed.id))
+    assert amended.client_key == "walk-amend"
     assert amended.id == "mkt:102" and server.live(102)["price"] == 995
-    broker.cancel_order(CancelRequest(order_id=amended.id, symbol="005930", quantity=2, client_key="walk-cancel"))
+    cancelled = broker.cancel_order(CancelRequest(order_id=amended.id, symbol="005930", quantity=2, client_key="walk-cancel"))
+    assert cancelled.client_key == "walk-cancel"
     [final] = broker.list_orders()
     assert (final.filled, final.remaining, server.live(102)["cancelled"]) == (1, 0, 2)
     assert final.status == "unknown"  # a cancel is never promoted to a confirmed state by the SDK
@@ -191,3 +195,24 @@ def test_amend_without_caller_ledger_assertion_and_unsupported_venue_send_nothin
     with pytest.raises(NotSupportedError):
         unt.amend_order(amend_req(placed.id))
     assert count(server, ORDER + "modify") == 0
+
+
+@pytest.mark.parametrize("changes", [{"time_in_force": "ioc"}, {"time_in_force": "fok"},
+                                      {"session": "single_price"}])
+def test_amend_conditions_not_declared_by_adapter_are_rejected_before_http(world, changes):
+    server, broker = world
+    with pytest.raises(NotSupportedError):
+        broker.amend_order(amend_req("mkt:101", **changes))
+    assert server.calls == []
+
+
+def test_401_without_code_after_acceptance_is_unknown_discards_token_and_keeps_key(world):
+    server, broker = world
+    server.status_next_write = 401
+    request = req()
+    with pytest.raises(TransportError):
+        broker.place_order(request)
+    assert broker._token is None
+    with pytest.raises(DuplicateOrderError):
+        broker.place_order(request)
+    assert server.writes == 1 and len(server.placed) == 1

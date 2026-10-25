@@ -54,8 +54,10 @@ def world(monkeypatch, live_safety):
     return server, build()
 
 
-KIND_CODE = {"limit": "00", "market": "03", "conditional_limit": "05", "best": "06", "priority": "07",
-             "midpoint": "12", "pre_close": "61", "after_close": "81", "after_single": "82"}
+KIND_CODE = {("regular", "limit"): "00", ("regular", "market"): "03",
+             ("regular", "conditional_limit"): "05", ("regular", "best"): "06",
+             ("regular", "priority"): "07", ("regular", "midpoint"): "12",
+             ("pre", "market"): "61", ("after", "market"): "81", ("single_price", "limit"): "82"}
 
 
 def test_kind_table_covers_every_code_in_the_official_guide():
@@ -63,18 +65,18 @@ def test_kind_table_covers_every_code_in_the_official_guide():
 
     official = enum_codes("CSPAT00601", "CSPAT00601InBlock1", "OrdprcPtnCode")
     assert set(KIND_CODE.values()) == official
-    assert set(LS_KR_EXTRA_ORDER_TYPES) | {"limit", "market"} == set(KIND_CODE)
+    assert set(LS_KR_EXTRA_ORDER_TYPES) | {"limit", "market"} == {kind for session, kind in KIND_CODE}
 
 
 @pytest.mark.parametrize("venue", ["KRX", "NXT"])
-@pytest.mark.parametrize("kind", list(KIND_CODE))
-def test_every_order_kind_and_venue_goes_out_with_its_documented_code(world, kind, venue):
+@pytest.mark.parametrize("session,kind", list(KIND_CODE))
+def test_every_order_kind_and_venue_goes_out_with_its_documented_code(world, session, kind, venue):
     server, broker = world
-    priced = KIND_CODE[kind] in PRICED_PTN
-    placed = broker.place_order(order(order_type=kind, price="10000" if priced else None, venue=venue))
+    priced = KIND_CODE[session, kind] in PRICED_PTN
+    placed = broker.place_order(order(order_type=kind, session=session, price="10000" if priced else None, venue=venue))
     body = server.placed[-1]
     assert (body["OrdprcPtnCode"], body["MbrNo"], body["OrdPrc"]) == (
-        KIND_CODE[kind], venue, 10000 if priced else 0)
+        KIND_CODE[session, kind], venue, 10000 if priced else 0)
     assert placed.status == "accepted" and placed.order_type == kind
     assert broker.status(placed).status == "open"
 
@@ -101,17 +103,22 @@ def test_buy_list_partial_fill_amend_cancel_balance_walk(world):
     assert caps.supports_amend and caps.supports_nxt and caps.venues == ("KRX", "NXT")
     placed = broker.place_order(order())
     assert broker.status(placed).status == "open"
+    assert placed.client_key == "walk-place"
     server.fill(placed.id, 1)
     partial = broker.status(placed)
     assert (partial.filled, partial.remaining, partial.status) == (1, 2, "partial")
     amended = broker.amend_order(amend(placed.id))
     assert amended.id != placed.id and amended.status == "accepted" and amended.side is None
+    assert amended.client_key == "walk-amend"
     assert broker.status(amended).remaining == 2
-    broker.cancel_order(CancelRequest(order_id=amended.id, symbol="005930", quantity=2, client_key="walk-cancel"))
+    cancelled = broker.cancel_order(CancelRequest(order_id=amended.id, symbol="005930", quantity=2, client_key="walk-cancel"))
+    assert cancelled.client_key == "walk-cancel"
     assert broker.status(amended).remaining == 0
     assert broker.status(placed).filled == 1
     balance = broker.get_balance()
-    assert (balance.cash_available, balance.position_value) == (Decimal(900000), Decimal(30000))
+    assert (balance.cash_available, balance.position_value) == (Decimal(900000 - 9950), Decimal(40000))
+    [position] = broker.get_positions()
+    assert (position.quantity, position.sellable, position.average_price) == (4, 4, Decimal("9912.5"))
     assert count(server, "CSPAT00601") == 1 and count(server, "CSPAT00701") == 1
     assert count(server, "CSPAT00801") == 1
 
@@ -203,3 +210,36 @@ def test_market_amend_and_locked_amend_are_refused_before_any_write(world, monke
     assert locked.capabilities().supports_amend is False
     with pytest.raises(SpecUnverifiedError):
         locked.amend_order(amend("101"))
+
+
+@pytest.mark.parametrize("changes", [{"time_in_force": "ioc"}, {"time_in_force": "fok"},
+                                      {"session": "single_price"}])
+def test_amend_conditions_not_declared_by_adapter_are_rejected_before_http(world, changes):
+    server, broker = world
+    before = len(server.calls)
+    with pytest.raises(NotSupportedError):
+        broker.amend_order(amend("101", **changes))
+    assert len(server.calls) == before
+
+
+def test_fills_update_cash_holdings_and_cost_through_amend_and_sell(world):
+    server, broker = world
+    initial = broker.get_balance()
+    [initial_position] = broker.get_positions()
+    placed = broker.place_order(order())
+    assert placed.client_key == "walk-place"
+    server.fill(placed.id, 1, 9960)
+    amended = broker.amend_order(amend(placed.id))
+    server.fill(amended.id, 2, 9900)
+    after_buy = broker.get_balance()
+    [held] = broker.get_positions()
+    cost = Decimal(9960 + 2 * 9900)
+    assert after_buy.cash_available == initial.cash_available - cost
+    assert (held.quantity, held.sellable) == (initial_position.quantity + 3, initial_position.sellable + 3)
+    assert held.average_price == (Decimal(29700) + cost) / 6
+    sell = broker.place_order(order(side="sell", quantity=2, price="10100", client_key="sell"))
+    server.fill(sell.id, 2, 10100)
+    assert broker.get_balance().cash_available == initial.cash_available - cost + 20200
+    [sold] = broker.get_positions()
+    assert (sold.quantity, sold.sellable) == (held.quantity - 2, held.sellable - 2)
+    assert sold.average_price == held.average_price

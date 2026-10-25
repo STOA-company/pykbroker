@@ -59,10 +59,10 @@ def test_every_order_kind_and_venue_goes_out_with_its_documented_code(world, kin
 
 def test_kinds_the_api_lists_only_in_its_output_enum_are_not_sent(world):
     server, broker = world
-    for kind in ("conditional_limit", "pre_close", "after_close", "after_single"):
+    for changes in ({"order_type": "conditional_limit"}, {"session": "pre"},
+                    {"session": "after"}, {"session": "single_price"}):
         with pytest.raises(NotSupportedError):
-            broker.place_order(order(order_type=kind, price=Decimal("1000") if kind in
-                                     {"conditional_limit", "after_single"} else None))
+            broker.place_order(order(**changes))
     with pytest.raises(NotSupportedError):
         broker.place_order(order(time_in_force="ioc"))
     assert server.placed == []
@@ -77,8 +77,10 @@ def test_buy_list_partial_fill_amend_cancel_walk(world):
     [partial] = broker.list_orders()
     assert (partial.filled, partial.remaining, partial.status) == (1, 1, "partial")
     amended = broker.amend_order(amend(placed.id))
+    assert amended.client_key == "walk-amend"
     assert amended.status == "accepted" and amended.side is None and amended.id != placed.id
-    assert broker.cancel_order(cancel(order_id=amended.id)).status == "unknown"
+    cancelled = broker.cancel_order(cancel(order_id=amended.id))
+    assert cancelled.status == "unknown" and cancelled.client_key == "fixture-cancel"
     rows = {row.id: row for row in broker.list_orders()}
     assert rows[amended.id].remaining == 0 and rows[placed.id].filled == 1
     assert [count(server, name) for name in ("ssam1802", "ssam1805", "ssam1806")] == [1, 1, 1]
@@ -149,3 +151,23 @@ def test_us_has_no_amend_here_and_refuses_before_any_call():
     with pytest.raises(NotSupportedError):
         us.amend_order(amend("9000000001", symbol="TSLA", venue="NASDAQ", market="US"))
     assert server.calls == []
+
+
+@pytest.mark.parametrize("action,tr", [("place", "ssam1802"), ("amend", "ssam1805"), ("cancel", "ssam1806")])
+def test_token_expired_response_discards_stored_token_and_next_read_sends_nothing(world, action, tr):
+    from pykbroker.exceptions import ConfigurationError
+    server, broker = world
+    placed = broker.place_order(order(quantity=2, price=Decimal("1000")))
+    server.error_for["/api/v1/" + tr] = "T043"
+    calls = {
+        "place": lambda: broker.place_order(order(price=Decimal("1000"), client_key="expired")),
+        "amend": lambda: broker.amend_order(amend(placed.id)),
+        "cancel": lambda: broker.cancel_order(cancel(order_id=placed.id)),
+    }
+    with pytest.raises(BrokerRejectedError) as raised:
+        calls[action]()
+    assert raised.value.kind == "token_expired" and broker._token is None
+    before = len(server.calls)
+    with pytest.raises(ConfigurationError):
+        broker.get_balance()
+    assert len(server.calls) == before

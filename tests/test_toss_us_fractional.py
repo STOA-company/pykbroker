@@ -345,6 +345,7 @@ def test_real_sdk_amount_buy_and_decimal_sell_bodies_match_the_vendor_schema(liv
 
 
 def test_real_sdk_refuses_a_decimal_quantity_buy_before_http_and_the_server_answers_400(live_sdk_env):
+    pytest.importorskip("toss_openapi")
     from toss_openapi.errors import TossApiError, TossValidationError
 
     transport = ContractTransport(clock=lambda: IN_SESSION)

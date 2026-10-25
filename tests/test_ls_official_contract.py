@@ -105,10 +105,10 @@ def test_partial_fill_modify_cancel_and_account_queries(native):
     assert snapshot.remaining == 0 and snapshot.status == "unknown"
     assert broker.status(placed).filled == 1  # Amendment never erases the original fill.
     balance = broker.get_balance()
-    assert (balance.cash_available, balance.position_value) == (Decimal(900000), Decimal(30000))
+    assert (balance.cash_available, balance.position_value) == (Decimal(900000 - 9950), Decimal(40000))
     position, = broker.get_positions()
-    assert (position.symbol, position.quantity, position.sellable) == ("005930", 3, 2)
-    assert position.average_price == Decimal(9900)
+    assert (position.symbol, position.quantity, position.sellable) == ("005930", 4, 4)
+    assert position.average_price == Decimal("9912.5")
     for action in (lambda: broker.modify_order(placed.id, amendment), lambda: broker.cancel_order(request)):
         with pytest.raises(DuplicateOrderError):
             action()

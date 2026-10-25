@@ -68,12 +68,13 @@ _VENUES = frozenset({"KRX", "NXT", "UNT"})
 # sop_cnd_pr and a trigger order kind this SDK does not model (docs/nh-spec.md); 09/10/11 자기주식 and 91/92
 # 대량 are institutional kinds and are not offered.
 NH_KR_PRICE_TYPE = {"limit": "01", "market": "05", "conditional_limit": "06", "best": "12", "priority": "13",
-                    "midpoint": "17", "pre_close": "61", "after_close": "71"}
+                    "midpoint": "17"}
+NH_KR_SESSION_PRICE_TYPE = {("pre", "market"): "61", ("after", "market"): "71"}
 # dailyOrderExecution nmn_pr_tp_cd_nm: the official code table's own names (the ledger's name column has no
 # separate enum), read back into the same order kinds; an unlisted name stays None (unknown), never guessed.
 NH_KR_PRICE_TYPE_NAME = {"보통가": "limit", "지정가": "limit", "시장가": "market", "조건부지정가": "conditional_limit",
                          "최유리지정가": "best", "최우선지정가": "priority", "중간가": "midpoint",
-                         "장전시간외": "pre_close", "장후시간외": "after_close"}
+                         "장전시간외": "market", "장후시간외": "market"}
 NH_PRICED_KR = frozenset({"limit", "conditional_limit"})
 # orr_cnd_dit_cd (주문조건구분코드): 00 없음, 01 IOC, 02 FOK (05 GTP is not offered).
 NH_KR_TIF = {"day": "00", "ioc": "01", "fok": "02"}
@@ -447,8 +448,10 @@ class NH(BaseBroker):
         return Capabilities(
             supports_spot=True,
             supports_amend=self.market == "KR" and self.venue in {"KRX", "NXT"},
-            order_types=tuple(k for k in NH_KR_PRICE_TYPE if k not in {"limit", "market"})
+            order_kinds=tuple(NH_KR_PRICE_TYPE)
             if self.market == "KR" and self.venue in {"KRX", "NXT"} else (),
+            sessions=("regular", "pre", "after")
+            if self.market == "KR" and self.venue in {"KRX", "NXT"} else ("regular",),
             time_in_force=tuple(NH_KR_TIF) if self.market == "KR" and self.venue in {"KRX", "NXT"} else ("day",),
             supports_limit_order=self.venue in {"KRX", "NXT", "US"},
             supports_market_order=self.market == "KR" and self.venue in {"KRX", "NXT"},
@@ -708,6 +711,9 @@ class NH(BaseBroker):
 
     def _validate_order(self, request: OrderRequest | CancelRequest) -> None:
         super()._validate_order(request)
+        if (isinstance(request, OrderRequest) and request.session != "regular"
+                and (request.session, request.order_type) not in NH_KR_SESSION_PRICE_TYPE):
+            raise NotSupportedError("This off-session order kind is not supported")
         if not self.virtual and self._allow_live_orders is not True:
             raise SafetyError("NH live orders are locked until order-to-ledger reconciliation is verified")
         if request.venue is not None and request.venue != self.venue:
@@ -744,7 +750,9 @@ class NH(BaseBroker):
         listed = rejection_for_code(self.broker_code, _response_code(body)) if status == 200 else None
         if status == 401 or (listed is not None and listed.kind == TOKEN_EXPIRED):
             self._discard_token()
-            raise listed or BrokerRejectedError("NH order authorization rejected; no order replay occurred")
+            if listed is None:
+                raise TransportError("NH order authorization outcome is unknown; reconcile before retrying")
+            raise listed
         if listed is not None:
             # A table row with a source proves the gateway refused before an order existed; never re-sent.
             raise listed
@@ -779,7 +787,8 @@ class NH(BaseBroker):
             "act_no": self._account,
             "iem_cd": code,
             "orr_qty": request.quantity,
-            "nmn_pr_tp_cd": NH_KR_PRICE_TYPE[request.order_type],
+            "nmn_pr_tp_cd": NH_KR_SESSION_PRICE_TYPE.get(
+                (request.session, request.order_type), NH_KR_PRICE_TYPE[request.order_type]),
             "orr_cnd_dit_cd": NH_KR_TIF[request.time_in_force],
             "ssl_nmn_pr_dit_cd": "00",
             "rmt_mkt_cd": self.venue,

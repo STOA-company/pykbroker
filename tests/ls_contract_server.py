@@ -9,6 +9,7 @@ import json
 from collections import defaultdict
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 from urllib.error import HTTPError
@@ -59,6 +60,11 @@ class ContractServer:
         self.calls = []
         self.tokens = {}
         self.orders = {}
+        self.cash = Decimal(900000)
+        self.quantity = 3
+        self.sellable = 3
+        self.position_cost = Decimal(29700)
+        self.last_price = Decimal(10000)
         self.next_order = 100
         self.token_ttl = 120
         self.ttl_field = "expire_in"
@@ -136,12 +142,15 @@ class ContractServer:
             window.append(self.now)
         if tr == "CSPAQ12200":
             return Reply({"rsp_cd": "00000", "CSPAQ12200OutBlock1": {"AcntNo": "fixture-account"},
-                          "CSPAQ12200OutBlock2": {"MnyOrdAbleAmt": 900000, "BalEvalAmt": 30000}})
+                          "CSPAQ12200OutBlock2": {"MnyOrdAbleAmt": str(self.cash),
+                                                 "BalEvalAmt": str(self.quantity * self.last_price)}})
         if tr == "t0424":
             return Reply({"rsp_cd": "00000", "t0424OutBlock": {"cts_expcode": ""},
                           "t0424OutBlock1": [{"expcode": "005930", "hname": "fabricated-stock",
-                                              "janqty": 3, "mdposqt": 2, "pamt": 9900,
-                                              "price": 10000, "appamt": 30000}]})
+                                              "janqty": self.quantity, "mdposqt": self.sellable,
+                                              "pamt": str(self.position_cost / self.quantity) if self.quantity else "0",
+                                              "price": str(self.last_price),
+                                              "appamt": str(self.quantity * self.last_price)}]})
         if tr == "t0425":
             return Reply({"rsp_cd": "00000", "t0425OutBlock": {"cts_ordno": ""},
                           "t0425OutBlock1": list(deepcopy(self.orders).values())})
@@ -158,7 +167,7 @@ class ContractServer:
             assert (row["OrdPrc"] != 0) == (row["OrdprcPtnCode"] in PRICED_PTN)
             self.orders[str(number)] = {"ordno": number, "expcode": "005930", "qty": row["OrdQty"],
                                         "price": row["OrdPrc"], "cheqty": 0, "cheprice": 0,
-                                        "ordrem": row["OrdQty"]}
+                                        "ordrem": row["OrdQty"], "side": row["BnsTpCode"]}
             self.placed.append(dict(row))
         else:
             original = self.orders[str(row["OrgOrdNo"])]
@@ -169,7 +178,7 @@ class ContractServer:
                 assert row["OrdCndiTpCode"] in enum_codes("CSPAT00701", "CSPAT00701InBlock1", "OrdCndiTpCode")
                 self.orders[str(number)] = {"ordno": number, "expcode": "005930", "qty": row["OrdQty"],
                                             "price": row["OrdPrc"], "cheqty": 0, "cheprice": 0,
-                                            "ordrem": row["OrdQty"]}
+                                            "ordrem": row["OrdQty"], "side": original["side"]}
             else:
                 assert tr == "CSPAT00801"
         if self.after_write_failure:
@@ -186,9 +195,21 @@ class ContractServer:
         else:
             raise AssertionError("Unsupported contract field")
 
-    def fill(self, order_id, quantity):
+    def fill(self, order_id, quantity, price=9950):
         row = self.orders[order_id]
         assert 0 < quantity <= row["ordrem"]
         row["cheqty"] += quantity
         row["ordrem"] -= quantity
-        row["cheprice"] = 9950
+        row["cheprice"] = price
+        amount = Decimal(price) * quantity
+        if row["side"] == "2":
+            self.cash -= amount
+            self.position_cost += amount
+            self.quantity += quantity
+            self.sellable += quantity
+        else:
+            assert quantity <= self.sellable
+            self.position_cost -= self.position_cost / self.quantity * quantity
+            self.cash += amount
+            self.quantity -= quantity
+            self.sellable -= quantity

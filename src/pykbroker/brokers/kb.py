@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 
 from pykbroker._http import urlopen
 from pykbroker.exceptions import (
+    BrokerRejectedError,
     ConfigurationError,
     InvalidResponseError,
     NotSupportedError,
@@ -211,11 +212,12 @@ class KB(BaseBroker):
             supports_order_history=True, realtime_open_orders=False,
             supports_amend=self.market == "KR",
             supports_nxt=self.market == "KR",
-            order_types=tuple(k for k in KB_KR_ORDER_CCD if k not in {"limit", "market"})
-            if self.market == "KR" else (),
+            order_kinds=tuple(KB_KR_ORDER_CCD) if self.market == "KR" else ("limit",),
         )
 
     def _response(self, tr: str, body: dict) -> Mapping:
+        if not self._token:
+            raise ConfigurationError("The stored KB token was discarded; issue a new one")
         self._verify_host()
         if tr in _ORDER_LENGTHS:
             _check_lengths(body, _ORDER_LENGTHS[tr])
@@ -226,7 +228,12 @@ class KB(BaseBroker):
                      "Authorization": "bearer " + self._token},
             body={"dataHeader": {"ipAddr": "", "macAddr": ""}, "dataBody": body},
         )
-        return _response_body(result)
+        try:
+            return _response_body(result)
+        except BrokerRejectedError as exc:
+            if exc.kind == "token_expired":
+                self._token = None
+            raise
 
     def get_quote(self, symbol: str, *, market: str = "KR") -> Quote:
         symbol = self._symbol(symbol, market)

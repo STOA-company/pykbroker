@@ -141,7 +141,7 @@ def test_named_nxt_request_matches_capability_and_wire_venue(live_safety):
 @pytest.mark.parametrize(
     "response,error",
     [
-        ((401, {}, {}), BrokerRejectedError),
+        ((401, {}, {}), TransportError),
         (reply(code="IGW40043"), BrokerRejectedError),
         (reply(code=" IGW40043 "), BrokerRejectedError),
         (TimeoutError("secret-token"), TransportError),
@@ -313,10 +313,12 @@ def test_us_limit_cancel_status_and_fill_share_documented_order_number(live_safe
     )
     placed = broker.place_order(request)
     assert (placed.id, placed.market, placed.status) == ("us:123", "US", "accepted")
+    assert placed.client_key == "us-buy"
     broker.place_order(request.model_copy(update={"side": "sell", "client_key": "us-sell"}))
-    broker.cancel_order(
+    cancelled = broker.cancel_order(
         CancelRequest(order_id=placed.id, symbol="AAPL", market="US", quantity=1, client_key="us-cancel")
     )
+    assert cancelled.client_key == "us-cancel"
     assert calls[0][3]["Input_0"] == {
         "act_no": "12345678901",
         "fc_sec_trd_nat_cd": "200",

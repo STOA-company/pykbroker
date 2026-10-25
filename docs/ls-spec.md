@@ -29,8 +29,8 @@
 | 시장가 03 | 지원 | 구현 `market` (OrdPrc=0) | 걸음 | 시장가로의 정정: API 는 받지만 통합 정정 모양은 «지정가 가격 변경»만 → `NotSupportedError`, 전송 0(취소→확정→새 주문은 호출자) |
 | 조건부지정가 05 | 지원 | 구현 `conditional_limit` | 걸음 | 정정 대상은 지정가만 |
 | 최유리 06 · 최우선 07 · 중간가 12 | 지원 | 구현 `best`·`priority`·`midpoint` | 걸음 | 해당 없음 |
-| 장개시전시간외종가 61 · 시간외종가 81 | 지원 | 구현 `pre_close`·`after_close` | 걸음 | 해당 없음 |
-| 시간외단일가 82 | 지원 | 구현 `after_single` (가격 필수) | 걸음 | 해당 없음 |
+| 장개시전시간외종가 61 · 시간외종가 81 | 지원 | 구현 `order_type=market` + `session=pre/after` | 걸음 | 해당 없음 |
+| 시간외단일가 82 | 지원 | 구현 `order_type=limit` + `session=single_price` (가격 필수) | 걸음 | 해당 없음 |
 | IOC 1 · FOK 2 | 지원 | 구현 `time_in_force` | 걸음 | 해당 없음 |
 | NXT | 지원 (`MbrNo=NXT`) | 구현 `venue="NXT"` (`supports_nxt`, venues `KRX·NXT`) | 걸음 (모든 종류 × KRX·NXT) | 정정 TR 에는 시장 칸이 없음(원주문 시장 유지) |
 | SOR | 가이드에 값 없음(그 외 입력 = KRX 처리) | 미제공(조용히 KRX 로 가는 값을 열지 않는다) | 안 걸음 | — |
@@ -47,3 +47,9 @@
 
 ## 미확인
 성공/오류 코드표 · 모의 호스트 · 시간외 종류별 가격·시간대 규칙 · 토큰 실제 수명(07시 만료 여부) · 서버 멱등 키 없음 · t0425 상태 문자열 열거. 모의 왕복: 키 필요 — 이 머신에 없음(REPORT 참조).
+
+## 2026-10-25 검수 후속
+- 공용 모델은 #54와 동일: `order_kinds`, `time_in_force`, `sessions`, `supports_amend`; `priority`/`midpoint` 명칭.
+- 정정은 `AmendRequest` 하나이며 `amend_time_in_force=(day,)`, `amend_sessions=(regular,)`; IOC/FOK·시간외 정정은 HTTP 0.
+- 공용 반환 경계에서 신규·취소·정정의 요청 `client_key`를 그대로 복사(KR/US).
+- LS 모의는 체결 수량·실제 체결 가격으로 현금, 보유 수량, 매도 가능 수량, 평균 매입가를 갱신; 정정·취소는 체결 금액을 중복 반영하지 않음.

@@ -93,8 +93,9 @@ LS_CODES = {
 }
 # MbrNo (회원사번호): KRX / NXT; any other input is processed as KRX by LS, so only these two are offered.
 LS_KR_VENUES = ("KRX", "NXT")
-LS_KR_EXTRA_ORDER_TYPES = ("conditional_limit", "best", "priority", "midpoint",
-                           "pre_close", "after_close", "after_single")
+LS_KR_EXTRA_ORDER_TYPES = ("conditional_limit", "best", "priority", "midpoint")
+LS_SESSION_ORDER_KEYS = {("pre", "market"): "pre_close", ("after", "market"): "after_close",
+                         ("single_price", "limit"): "after_single"}
 LS_US_VENUES = {"NYSE": "81", "NASDAQ": "82"}
 # Holdings continuation (tr_cont/tr_cont_key headers, t0424 cts_expcode): a list that does not
 # end within this many pages is refused, never cut short.
@@ -303,7 +304,10 @@ class LS(RestBroker):
             supports_single_order_cancel=verified,
             supports_amend=verified and self.market == "KR",
             supports_nxt=verified and self.market == "KR",
-            order_types=LS_KR_EXTRA_ORDER_TYPES if verified and self.market == "KR" else (),
+            order_kinds=("limit", "market") + LS_KR_EXTRA_ORDER_TYPES
+            if verified and self.market == "KR" else (("limit",) if verified else ()),
+            sessions=("regular", "pre", "after", "single_price")
+            if verified and self.market == "KR" else ("regular",),
             time_in_force=("day", "ioc", "fok") if verified and self.market == "KR" else ("day",),
             # UNVERIFIED: t0425 is not yet proof of real-time/history coverage.
             supports_order_history=False,
@@ -315,6 +319,9 @@ class LS(RestBroker):
 
     def _validate_order(self, request: OrderRequest | CancelRequest) -> None:
         super()._validate_order(request)
+        if (isinstance(request, OrderRequest) and request.session != "regular"
+                and (request.session, request.order_type) not in LS_SESSION_ORDER_KEYS):
+            raise NotSupportedError("This off-session order kind is not supported")
         if isinstance(request, OrderRequest) and request.order_type == "close":
             raise NotSupportedError("LS close orders have not been verified")
         if isinstance(request, CancelRequest):
@@ -327,6 +334,8 @@ class LS(RestBroker):
             raise SpecUnverifiedError("LS writes require the explicit real-account opt-in or verified mock")
         if request.market == "US" and type(self._order_date) is not date:
             raise ConfigurationError("LS US submission requires an explicit broker order_date for reconciliation")
+        request = OrderRequest.model_validate(request.model_dump())
+        self._validate_order(request)
         self._verify_mode(self._client)
         self._call(self._verify_account)
         return super().place_order(request)
@@ -348,8 +357,6 @@ class LS(RestBroker):
             raise SpecUnverifiedError("LS writes require the explicit real-account opt-in or verified mock")
         if self.market != "KR":
             raise NotSupportedError("LS amendment currently supports KR cash orders only")
-        self._verify_mode(self._client)
-        self._call(self._verify_account)
         return super().amend_order(request, order_id=order_id)
 
     def modify_order(self, order_id: str, request: OrderRequest) -> Order:
@@ -359,6 +366,8 @@ class LS(RestBroker):
     def _prepare_amend(self, request: AmendRequest) -> None:
         super()._prepare_amend(request)
         self._order_id(request.order_id, request=True)
+        self._verify_mode(self._client)
+        self._call(self._verify_account)
 
     def _amend_order(self, request: AmendRequest, prepared: Any = None) -> Order:
         body = {"OrgOrdNo": int(self._order_id(request.order_id, request=True)),
@@ -700,7 +709,8 @@ class LS(RestBroker):
             "OrdQty": request.quantity,
             "OrdPrc": int(request.price or 0),
             "BnsTpCode": self._code(request.side),
-            "OrdprcPtnCode": self._code(request.order_type),
+            "OrdprcPtnCode": self._code(LS_SESSION_ORDER_KEYS.get(
+                (request.session, request.order_type), request.order_type)),
             "MgntrnCode": self._code("cash"),
             "LoanDt": "",
             "OrdCndiTpCode": self._code("condition" if request.time_in_force == "day"
