@@ -579,6 +579,7 @@ def test_contract_limit_partial_amend_cancel_and_ledger(side, live_safety):
     assert partial.fill_price == Decimal('1000')
     amended = b.amend_order(order(side=side, price=Decimal('1100'), client_key='amend'), order_id=placed.id)
     assert amended.id != placed.id and amended.status == 'accepted' and amended.filled is None
+    assert amended.client_key == 'amend'
     assert amended.side is None  # SSAM1805 has no side field; never echo an unverified direction.
     assert b.cancel_order(cancel(order_id=amended.id)).status == 'unknown'
     rows = {row.id: row for row in b.list_orders()}

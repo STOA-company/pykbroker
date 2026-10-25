@@ -846,7 +846,7 @@ class NH(BaseBroker):
 
         return self.safety.execute(
             self.broker_code, self._account, request, lambda: self._call(submit)
-        )
+        ).model_copy(update={"client_key": request.client_key})
 
     def _cancel_order(self, request: CancelRequest) -> Order:
         if self.market == "US":
@@ -974,7 +974,7 @@ class NH(BaseBroker):
             matches = [item for item in self.list_orders(code) if item.id == order.id]
             if len(matches) != 1:
                 return order.model_copy(update={"status": "unknown"})
-            return matches[0]
+            return matches[0].model_copy(update={"client_key": order.client_key})
 
         return self._call(read)
 

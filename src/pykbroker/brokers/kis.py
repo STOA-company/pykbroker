@@ -142,6 +142,7 @@ def _kis_more(flag: Any) -> bool:
 class KIS(BaseBroker):
     broker_code = "kis"
     supports_virtual = True
+    us_class_separator = "/"  # KIS master spells class shares BRK/B
 
     def __init__(
         self,
@@ -213,6 +214,8 @@ class KIS(BaseBroker):
             supports_spot=True,
             # KIS overseas has no market order; the executor must plan a limit price itself.
             supports_market_order=self.market == "KR",
+            # 장후 시간외 (`close`) is the KR dvsn; US is limit only.
+            order_kinds=("limit", "market", "close") if self.market == "KR" else ("limit",),
             supports_single_order_cancel=not (self.market == "US" and self.virtual),
             supports_virtual_account=True,
             virtual=self.virtual,
@@ -311,7 +314,7 @@ class KIS(BaseBroker):
                 price = check_response(api.get_price_domestic(kis_account=scope, stock_code=symbol), "kis")["output"]
                 book = check_response(api.get_quote_domestic(kis_account=scope, stock_code=symbol), "kis")["output1"]
                 return Quote(
-                    symbol=symbol,
+                    symbol=self.canonical_symbol(symbol),
                     last=decimal(price["stck_prpr"]),
                     bid=optional_price(book["bidp1"]),
                     ask=optional_price(book["askp1"]),
@@ -321,7 +324,7 @@ class KIS(BaseBroker):
             price = check_response(api.get_price_overseas_detail(**kwargs), "kis")["output"]
             book = check_response(api.get_quote_overseas(**kwargs), "kis")["output2"]
             quote = Quote(
-                symbol=symbol,
+                symbol=self.canonical_symbol(symbol),
                 market="US",
                 last=decimal(price["last"]),
                 bid=optional_price(book["pbid1"]),
@@ -437,7 +440,7 @@ class KIS(BaseBroker):
                 rows = self._us_holding_rows(scope, api)
                 return [
                     Position(
-                        symbol=row["pdno"],
+                        symbol=self.canonical_symbol(row["pdno"]),
                         name=row["prdt_name"],
                         market="US",
                         quantity=whole(row["ccld_qty_smtl1"]),
@@ -477,7 +480,7 @@ class KIS(BaseBroker):
                 response = api.get_open_orders_overseas_all(kis_account=scope, market=VENUES[self.venue][1])
                 rows = check_response(response, "kis")["output"]
                 return [
-                    Order(id=str(row["odno"]), symbol=row["pdno"], market="US", status="unknown", virtual=self.virtual)
+                    Order(id=str(row["odno"]), symbol=self.canonical_symbol(row["pdno"]), market="US", status="unknown", virtual=self.virtual)
                     for row in rows
                     if symbol is None or row["pdno"] == symbol
                 ]
@@ -609,7 +612,7 @@ class KIS(BaseBroker):
         if cancel_id is None or not str(cancel_id).strip():
             raise InvalidResponseError("KIS cancellation response lacks an order identifier")
         # Accepted cancellation is not proof the original order has been cancelled.
-        return Order(id=request.order_id, symbol=symbol, market=request.market,
+        return Order(id=request.order_id, symbol=self.canonical_symbol(symbol), market=request.market,
                      quantity=request.quantity, status="accepted", virtual=self.virtual)
 
     @contextmanager
@@ -662,7 +665,7 @@ class KIS(BaseBroker):
             raise InvalidResponseError("KIS response lacks an order identifier; reconcile before retrying")
         return Order(
             id=str(order_id),
-            symbol=symbol,
+            symbol=self.canonical_symbol(symbol),
             side=request.side,
             order_type=request.order_type,
             quantity=request.quantity,

@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from pykbroker.exceptions import BrokerError, CircuitOpenError, DuplicateOrderError, RiskCapError, SafetyError
 from pykbroker.models import AmendRequest, CancelRequest, OrderRequest
+from pykbroker.models.order import PRICED_TYPES
 
 from .dry_run import DryRun, mask_account
 from .idempotency import IdempotencyStore, scope_key
@@ -64,10 +65,10 @@ class OrderSafety:
             else "place"
         )
         if isinstance(request, OrderRequest):
-            if request.order_type == "market":
+            if request.order_type in ("market", "close", "best", "priority", "midpoint") or request.session != "regular":
                 if self.market_order_allowed is None or self.market_order_allowed(request) is not True:
                     raise RiskCapError("risk_caps: market-order session authorization required")
-            if request.market == "KR" and request.order_type == "limit":
+            if request.market == "KR" and request.price is not None and request.order_type in PRICED_TYPES:
                 amount = request.price * request.quantity
             elif self.valuation is None:
                 raise RiskCapError("risk_caps: a conservative KRW valuation is required")

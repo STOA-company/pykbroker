@@ -18,7 +18,7 @@ from pykbroker.exceptions import (
     TransportError,
 )
 from pykbroker.reject_codes import definitive_rejection
-from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
+from pykbroker.models import AmendRequest, Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
 from pykbroker.rules.kr import LOT, equity_rules, normalize_symbol
 from pykbroker.safety.gate import OrderSafety
 
@@ -116,6 +116,9 @@ class BaseBroker:
     # list has nothing to name. Declaring the requirement with an empty list is a contradiction:
     # every order and every cancellation is refused whether or not the caller names a venue.
     us_venues: tuple[str, ...] = ()
+    # Internal class-share form is ROOT.CLASS (SEAM §5); a broker whose API spells it otherwise overrides this data
+    # cell only (KIS «/»). `canonical_symbol` is the inverse for responses.
+    us_class_separator: str = "."
 
     def __init__(
         self,
@@ -174,7 +177,11 @@ class BaseBroker:
     def _symbol(self, symbol: str, market: str) -> str:
         if market != self.market:
             raise NotSupportedError("Request market must match this broker instance")
-        return normalize_symbol(symbol) if market == "KR" else symbol
+        return normalize_symbol(symbol) if market == "KR" else symbol.replace(".", self.us_class_separator)
+
+    def canonical_symbol(self, native: str) -> str:
+        """Broker-native US symbol back to the internal ROOT.CLASS form; KR codes are unchanged."""
+        return native if self.market == "KR" else native.replace(self.us_class_separator, ".")
 
     def capabilities(self) -> Capabilities:
         if self.market == "US" and not self.us_venues:
@@ -222,7 +229,7 @@ class BaseBroker:
         """Shares the venue will let the next order sell. Not held means nothing to sell."""
         code = self._symbol(symbol, self.market)
         for position in self.get_positions():
-            if position.symbol == code:
+            if position.symbol == self.canonical_symbol(code):
                 return position.sellable
         return 0
 
@@ -246,6 +253,19 @@ class BaseBroker:
         if isinstance(request, OrderRequest) and request.price is not None:
             if self.market == "KR" and request.price != request.price.to_integral_value():
                 raise ConfigurationError("KR prices must be whole won; round explicitly before submission")
+        if isinstance(request, AmendRequest):
+            if request.time_in_force not in capabilities.amend_time_in_force:
+                raise NotSupportedError("This amendment time in force is not supported")
+            if request.session not in capabilities.amend_sessions:
+                raise NotSupportedError("This amendment session is not supported")
+        if isinstance(request, OrderRequest):
+            # A fractional request gets its own explicit refusal below (FractionalNotSupportedError).
+            if not request.fractional and request.order_type not in capabilities.order_kinds:
+                raise NotSupportedError("This order type is not supported")
+            if request.time_in_force not in capabilities.time_in_force:
+                raise NotSupportedError("This time in force is not supported")
+            if request.session not in capabilities.sessions:
+                raise NotSupportedError("This order session is not supported")
         if isinstance(request, OrderRequest) and request.fractional:
             # Fractional shares are refused here, before any vendor call, unless the
             # capability table says this broker/market has the API for it. No rounding.
@@ -253,7 +273,7 @@ class BaseBroker:
                 raise FractionalNotSupportedError("amount-based buy")
             if request.amount is None and not capabilities.supports_fractional_market_sell:
                 raise FractionalNotSupportedError("fractional quantity sell")
-        elif isinstance(request, OrderRequest) and request.order_type == "market":
+        if isinstance(request, OrderRequest) and not request.fractional and request.order_type == "market":
             if not capabilities.supports_market_order:
                 raise NotSupportedError("Market orders are not supported")
         if isinstance(request, OrderRequest) and request.order_type == "limit":
@@ -266,14 +286,60 @@ class BaseBroker:
         self._validate_order(request)
         return self.safety.execute(
             self.broker_code, self._account, request, lambda: self._call(lambda: self._place_order(request))
-        )
+        ).model_copy(update={"client_key": request.client_key})
 
     def cancel_order(self, request: CancelRequest) -> Order:
         request = CancelRequest.model_validate(request.model_dump())
         self._validate_order(request)
         return self.safety.execute(
             self.broker_code, self._account, request, lambda: self._call(lambda: self._cancel_order(request))
-        )
+        ).model_copy(update={"client_key": request.client_key})
+
+    def amend_order(
+        self, request: AmendRequest, *, order_id: str | None = None, broker_ref: Mapping[str, str] | None = None
+    ) -> Order:
+        """Amend an open remainder's price in place: the one amend shape for every adapter.
+
+        ``order_id`` (keyword) is only for the pre-unification call shape ``amend_order(OrderRequest,
+        order_id=...)``; a plain OrderRequest is lifted into an AmendRequest. A broker without a native
+        amend TR reports ``supports_amend=False`` and refuses here before any HTTP: the caller then cancels,
+        waits for a confirmed cancel, and places anew (never two live orders at once).
+
+        The guarded mutation shares the *place* idempotency namespace on purpose: a client key used for a
+        placement cannot also send an amendment, and a lost amend answer keeps its claim so a retry with
+        the same key is blocked until the caller reconciles. Never retried automatically.
+        """
+        if not isinstance(request, AmendRequest):
+            if order_id is None:
+                raise ConfigurationError("amend_order needs an AmendRequest (or order_id=)")
+            if request.order_type != "limit":
+                raise NotSupportedError("Only a limit order can be amended in place")
+            if not isinstance(order_id, str) or not order_id:
+                raise ConfigurationError("Invalid original order number")
+            request = AmendRequest(**{**request.model_dump(exclude={"order_type"}), "order_id": order_id,
+                                      "broker_ref": dict(broker_ref or {})})
+        elif order_id is not None and order_id != request.order_id:
+            raise ConfigurationError("order_id conflicts with the AmendRequest")
+        elif broker_ref is not None:
+            request = request.model_copy(update={"broker_ref": dict(broker_ref)})
+        request = AmendRequest.model_validate(request.model_dump())
+        if not self.capabilities().supports_amend:
+            raise NotSupportedError("Amend is not supported; cancel, confirm, then place anew")
+        self._validate_order(request)
+        prepared = self._prepare_amend(request)
+        guarded = OrderRequest.model_validate(request.model_dump(exclude={"order_id", "broker_ref"}))
+        return self.safety.execute(
+            self.broker_code, self._account, guarded, lambda: self._call(lambda: self._amend_order(request, prepared))
+        ).model_copy(update={"client_key": request.client_key})
+
+    def _prepare_amend(self, request: AmendRequest) -> Any:
+        """Read-only checks before the guarded write; the returned context goes to ``_amend_order``."""
+        if request.broker_ref:
+            raise ConfigurationError("Unknown broker_ref key for this broker")
+        return None
+
+    def _amend_order(self, request: AmendRequest, prepared: Any = None) -> Order:
+        raise NotSupportedError("Amend is not implemented")
 
     def _place_order(self, request: OrderRequest) -> Order:
         raise NotSupportedError("Order submission is not implemented")
@@ -296,7 +362,7 @@ class BaseBroker:
     def status(self, order: Order) -> Order:
         for candidate in self.list_orders(order.symbol):
             if candidate.id == order.id:
-                return candidate
+                return candidate.model_copy(update={"client_key": order.client_key})
         # Missing from an open-order list never proves a fill or cancellation.
         return order.model_copy(update={"status": "unknown"})
 

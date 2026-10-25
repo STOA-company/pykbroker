@@ -6,7 +6,12 @@ from pydantic import Field, model_validator
 from ._base import FractionalQuantity, Model, Money, PositiveMoney, PositiveQuantity, Quantity
 
 Side = Literal["buy", "sell"]
-OrderType = Literal["limit", "market", "close"]
+# limit/market/close are the shared kinds (close = after-hours close session: KIS 장후 시간외, DB "81", Toss CLS).
+# The rest are priced-by-venue kinds an adapter must declare in Capabilities.order_kinds before any HTTP.
+OrderType = Literal["limit", "market", "close", "conditional_limit", "best", "priority", "midpoint", "stop_limit"]
+TimeInForce = Literal["day", "ioc", "fok"]
+OrderSession = Literal["regular", "pre", "after", "single_price"]
+PRICED_TYPES = ("limit", "conditional_limit", "stop_limit")
 OrderStatus = Literal["accepted", "open", "partial", "filled", "cancelled", "rejected", "unknown"]
 
 
@@ -22,6 +27,11 @@ class OrderRequest(Model):
     price: PositiveMoney | None = None
     market: Literal["KR", "US"] = "KR"
     venue: str | None = None
+    # Defaults are the plain day order in the regular session; anything else must be declared by the adapter.
+    time_in_force: TimeInForce = "day"
+    session: OrderSession = "regular"
+    # Trigger price of a stop_limit order only.
+    stop_price: PositiveMoney | None = None
     client_key: str = Field(min_length=1, max_length=128, pattern=r"\S", repr=False)
 
     @property
@@ -53,10 +63,16 @@ class OrderRequest(Model):
 
     @model_validator(mode="after")
     def valid_price(self) -> Self:
-        if self.order_type == "limit" and self.price is None:
+        if self.order_type in PRICED_TYPES and self.price is None:
             raise ValueError("A limit order requires a positive price")
-        if self.order_type == "market" and self.price is not None:
-            raise ValueError("A market order cannot carry a limit price")
+        if self.order_type in ("market", "best", "priority", "midpoint") and self.price is not None:
+            raise ValueError("A market-style order cannot carry a limit price")
+        if (self.order_type == "stop_limit") != (self.stop_price is not None):
+            raise ValueError("stop_price is required for, and only for, a stop_limit order")
+        if self.order_type == "close" and (self.time_in_force != "day" or self.session != "regular"):
+            raise ValueError("A close-session order is a plain day order")
+        if self.session != "regular" and self.time_in_force != "day":
+            raise ValueError("An off-session order is a day order")
         if not self.client_key.strip():
             raise ValueError("client_key cannot be blank")
         return self
@@ -80,6 +96,10 @@ class Order(Model):
     remaining: Quantity | None = None
     status: OrderStatus = "unknown"
     market: str = "KR"
+    # Execution venue the broker reported or the request named (KRX/NXT/SOR); None when not stated.
+    venue: str | None = None
+    # Echo of the caller's idempotency key (copied from the request) so an unknown outcome can be reconciled by key.
+    client_key: str | None = Field(default=None, max_length=128, repr=False)
     # True only when the submission went to a broker mock (virtual) account.
     virtual: bool = False
 
@@ -93,6 +113,8 @@ class AmendRequest(OrderRequest):
 
     order_id: str = Field(min_length=1)
     order_type: Literal["limit"] = "limit"
+    # Original-order references required by an adapter; unknown keys must be rejected.
+    broker_ref: dict[str, str] = Field(default_factory=dict, repr=False)
 
 
 class CancelRequest(Model):

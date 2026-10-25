@@ -402,6 +402,7 @@ def test_order_request_reuses_legacy_tr_and_injected_enum_values(unlocked, live_
         id="42",
         symbol="005930",
         side=side,
+        client_key="buy-1",
         quantity=1,
         order_type="limit",
         price=Decimal(70000),
@@ -431,7 +432,7 @@ def test_unverified_string_orgordno_exact_single_cancel_never_expands_other_orde
     """UNVERIFIED: OrgOrdNo is sent as a string; official type confirmation is pending."""
     broker, client, limiter = make_mock({"CSPAT00801": [page("CSPAT00801")]}, safety=live_safety)
     result = broker.cancel_order(cancel(symbol="A005930", quantity=2))
-    assert result == Order(id="42", symbol="005930", status="accepted", virtual=True)
+    assert result == Order(id="42", symbol="005930", status="accepted", virtual=True, client_key="cancel-1")
     path, headers, body = client.calls[0]
     assert path == "/stock/order" and headers["tr_cd"] == "CSPAT00801"
     assert body == {"CSPAT00801InBlock1": {"OrgOrdNo": "42", "IsuNo": "A005930", "OrdQty": 2}}

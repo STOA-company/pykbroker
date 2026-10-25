@@ -35,6 +35,7 @@ def test_kis_exact_submission(kis, request_order, side):
     broker, _, api, scope = kis
     request = request_order.model_copy(update={"side": side})
     order = broker.place_order(request)
+    assert order.client_key == request.client_key
     assert order.id == "43" and order.status == "accepted" and order.filled is None
     api.post_order_domestic.assert_called_once_with(
         kis_account=scope, stock_code="005930", order_type=side, order_qty=1, order_price=70000, dvsn="지정가"

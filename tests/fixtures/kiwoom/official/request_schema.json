@@ -1,0 +1,946 @@
+{
+ "au10001": {
+  "method": "POST",
+  "name": "접근토큰 발급",
+  "request": {
+   "appkey": {
+    "description": "",
+    "length": "",
+    "required": true
+   },
+   "grant_type": {
+    "description": "client_credentials 입력",
+    "length": "",
+    "required": true
+   },
+   "secretkey": {
+    "description": "",
+    "length": "",
+    "required": true
+   }
+  },
+  "response": [
+   "expires_dt",
+   "token_type",
+   "token"
+  ],
+  "url": "/oauth2/token"
+ },
+ "au10002": {
+  "method": "POST",
+  "name": "접근토큰폐기",
+  "request": {
+   "appkey": {
+    "description": "",
+    "length": "",
+    "required": true
+   },
+   "secretkey": {
+    "description": "",
+    "length": "",
+    "required": true
+   },
+   "token": {
+    "description": "",
+    "length": "",
+    "required": true
+   }
+  },
+  "response": [],
+  "url": "/oauth2/revoke"
+ },
+ "ka10001": {
+  "method": "POST",
+  "name": "주식기본정보요청",
+  "request": {
+   "stk_cd": {
+    "description": "거래소별 종목코드\n(KRX:039490,NXT:039490_NX,SOR:039490_AL)",
+    "length": "20",
+    "required": true
+   }
+  },
+  "response": [
+   "stk_cd",
+   "stk_nm",
+   "setl_mm",
+   "fav",
+   "cap",
+   "flo_stk",
+   "crd_rt",
+   "oyr_hgst",
+   "oyr_lwst",
+   "mac",
+   "mac_wght",
+   "for_exh_rt",
+   "repl_pric",
+   "per",
+   "eps",
+   "roe",
+   "pbr",
+   "ev",
+   "bps",
+   "sale_amt",
+   "bus_pro",
+   "cup_nga",
+   "250hgst",
+   "250lwst",
+   "high_pric",
+   "open_pric",
+   "low_pric",
+   "upl_pric",
+   "lst_pric",
+   "base_pric",
+   "exp_cntr_pric",
+   "exp_cntr_qty",
+   "250hgst_pric_dt",
+   "250hgst_pric_pre_rt",
+   "250lwst_pric_dt",
+   "250lwst_pric_pre_rt",
+   "cur_prc",
+   "pre_sig",
+   "pred_pre",
+   "flu_rt",
+   "trde_qty",
+   "trde_pre",
+   "fav_unit",
+   "dstr_stk",
+   "dstr_rt"
+  ],
+  "url": "/api/dostk/stkinfo"
+ },
+ "ka10004": {
+  "method": "POST",
+  "name": "주식호가요청",
+  "request": {
+   "stk_cd": {
+    "description": "거래소별 종목코드\n(KRX:039490,NXT:039490_NX,SOR:039490_AL)",
+    "length": "20",
+    "required": true
+   }
+  },
+  "response": [
+   "bid_req_base_tm",
+   "sel_10th_pre_req_pre",
+   "sel_10th_pre_req",
+   "sel_10th_pre_bid",
+   "sel_9th_pre_req_pre",
+   "sel_9th_pre_req",
+   "sel_9th_pre_bid",
+   "sel_8th_pre_req_pre",
+   "sel_8th_pre_req",
+   "sel_8th_pre_bid",
+   "sel_7th_pre_req_pre",
+   "sel_7th_pre_req",
+   "sel_7th_pre_bid",
+   "sel_6th_pre_req_pre",
+   "sel_6th_pre_req",
+   "sel_6th_pre_bid",
+   "sel_5th_pre_req_pre",
+   "sel_5th_pre_req",
+   "sel_5th_pre_bid",
+   "sel_4th_pre_req_pre",
+   "sel_4th_pre_req",
+   "sel_4th_pre_bid",
+   "sel_3th_pre_req_pre",
+   "sel_3th_pre_req",
+   "sel_3th_pre_bid",
+   "sel_2th_pre_req_pre",
+   "sel_2th_pre_req",
+   "sel_2th_pre_bid",
+   "sel_1th_pre_req_pre",
+   "sel_fpr_req",
+   "sel_fpr_bid",
+   "buy_fpr_bid",
+   "buy_fpr_req",
+   "buy_1th_pre_req_pre",
+   "buy_2th_pre_bid",
+   "buy_2th_pre_req",
+   "buy_2th_pre_req_pre",
+   "buy_3th_pre_bid",
+   "buy_3th_pre_req",
+   "buy_3th_pre_req_pre",
+   "buy_4th_pre_bid",
+   "buy_4th_pre_req",
+   "buy_4th_pre_req_pre",
+   "buy_5th_pre_bid",
+   "buy_5th_pre_req",
+   "buy_5th_pre_req_pre",
+   "buy_6th_pre_bid",
+   "buy_6th_pre_req",
+   "buy_6th_pre_req_pre",
+   "buy_7th_pre_bid",
+   "buy_7th_pre_req",
+   "buy_7th_pre_req_pre",
+   "buy_8th_pre_bid",
+   "buy_8th_pre_req",
+   "buy_8th_pre_req_pre",
+   "buy_9th_pre_bid",
+   "buy_9th_pre_req",
+   "buy_9th_pre_req_pre",
+   "buy_10th_pre_bid",
+   "buy_10th_pre_req",
+   "buy_10th_pre_req_pre",
+   "tot_sel_req_jub_pre",
+   "tot_sel_req",
+   "tot_buy_req",
+   "tot_buy_req_jub_pre",
+   "ovt_sel_req_pre",
+   "ovt_sel_req",
+   "ovt_buy_req",
+   "ovt_buy_req_pre"
+  ],
+  "url": "/api/dostk/mrkcond"
+ },
+ "ka10075": {
+  "method": "POST",
+  "name": "미체결요청",
+  "request": {
+   "all_stk_tp": {
+    "description": "0:전체, 1:종목",
+    "length": "1",
+    "required": true
+   },
+   "stex_tp": {
+    "description": "0 : 통합, 1 : KRX, 2 : NXT",
+    "length": "1",
+    "required": true
+   },
+   "stk_cd": {
+    "description": "종목코드 6자리",
+    "length": "6",
+    "required": false
+   },
+   "trde_tp": {
+    "description": "0:전체, 1:매도, 2:매수",
+    "length": "1",
+    "required": true
+   }
+  },
+  "response": [
+   "oso"
+  ],
+  "url": "/api/dostk/acnt"
+ },
+ "kt00001": {
+  "method": "POST",
+  "name": "예수금상세현황요청",
+  "request": {
+   "qry_tp": {
+    "description": "3:추정조회, 2:일반조회",
+    "length": "1",
+    "required": true
+   }
+  },
+  "response": [
+   "entr",
+   "profa_ch",
+   "bncr_profa_ch",
+   "nxdy_bncr_sell_exct",
+   "fc_stk_krw_repl_set_amt",
+   "crd_grnta_ch",
+   "crd_grnt_ch",
+   "add_grnt_ch",
+   "etc_profa",
+   "uncl_stk_amt",
+   "shrts_prica",
+   "crd_set_grnta",
+   "chck_ina_amt",
+   "etc_chck_ina_amt",
+   "crd_grnt_ruse",
+   "knx_asset_evltv",
+   "elwdpst_evlta",
+   "crd_ls_rght_frcs_amt",
+   "lvlh_join_amt",
+   "lvlh_trns_alowa",
+   "repl_amt",
+   "remn_repl_evlta",
+   "trst_remn_repl_evlta",
+   "bncr_remn_repl_evlta",
+   "profa_repl",
+   "crd_grnta_repl",
+   "crd_grnt_repl",
+   "add_grnt_repl",
+   "rght_repl_amt",
+   "pymn_alow_amt",
+   "wrap_pymn_alow_amt",
+   "ord_alow_amt",
+   "bncr_buy_alowa",
+   "20stk_ord_alow_amt",
+   "30stk_ord_alow_amt",
+   "40stk_ord_alow_amt",
+   "100stk_ord_alow_amt",
+   "ch_uncla",
+   "ch_uncla_dlfe",
+   "ch_uncla_tot",
+   "crd_int_npay",
+   "int_npay_amt_dlfe",
+   "int_npay_amt_tot",
+   "etc_loana",
+   "etc_loana_dlfe",
+   "etc_loan_tot",
+   "nrpy_loan",
+   "loan_sum",
+   "ls_sum",
+   "crd_grnt_rt",
+   "mdstrm_usfe",
+   "min_ord_alow_yn",
+   "loan_remn_evlt_amt",
+   "dpst_grntl_remn",
+   "sell_grntl_remn",
+   "d1_entra",
+   "d1_slby_exct_amt",
+   "d1_buy_exct_amt",
+   "d1_out_rep_mor",
+   "d1_sel_exct_amt",
+   "d1_pymn_alow_amt",
+   "d2_entra",
+   "d2_slby_exct_amt",
+   "d2_buy_exct_amt",
+   "d2_out_rep_mor",
+   "d2_sel_exct_amt",
+   "d2_pymn_alow_amt",
+   "50stk_ord_alow_amt",
+   "60stk_ord_alow_amt",
+   "stk_entr_prst"
+  ],
+  "url": "/api/dostk/acnt"
+ },
+ "kt00007": {
+  "method": "POST",
+  "name": "계좌별주문체결내역상세요청",
+  "request": {
+   "dmst_stex_tp": {
+    "description": "%:(전체),KRX:한국거래소,NXT:넥스트트레이드,SOR:최선주문집행",
+    "length": "6",
+    "required": true
+   },
+   "fr_ord_no": {
+    "description": "시작주문번호 입력 시 이전 주문은 조회되지 않음, 전체 조회는 빈값('')으로 설정",
+    "length": "7",
+    "required": false
+   },
+   "ord_dt": {
+    "description": "YYYYMMDD",
+    "length": "8",
+    "required": false
+   },
+   "qry_tp": {
+    "description": "1:주문순, 2:역순, 3:미체결, 4:체결내역만",
+    "length": "1",
+    "required": true
+   },
+   "sell_tp": {
+    "description": "0:전체, 1:매도, 2:매수",
+    "length": "1",
+    "required": true
+   },
+   "stk_bond_tp": {
+    "description": "0:전체, 1:주식, 2:채권",
+    "length": "1",
+    "required": true
+   },
+   "stk_cd": {
+    "description": "전체 종목 조회는 빈값('')으로 설정",
+    "length": "12",
+    "required": false
+   }
+  },
+  "response": [
+   "acnt_ord_cntr_prps_dtl"
+  ],
+  "url": "/api/dostk/acnt"
+ },
+ "kt00011": {
+  "method": "POST",
+  "name": "증거금율별주문가능수량조회요청",
+  "request": {
+   "stk_cd": {
+    "description": "종목 코드 입력",
+    "length": "12",
+    "required": true
+   },
+   "uv": {
+    "description": "단위: 원",
+    "length": "10",
+    "required": false
+   }
+  },
+  "response": [
+   "stk_profa_rt",
+   "profa_rt",
+   "aplc_rt",
+   "profa_20ord_alow_amt",
+   "profa_20ord_alowq",
+   "profa_20pred_reu_amt",
+   "profa_20tdy_reu_amt",
+   "profa_30ord_alow_amt",
+   "profa_30ord_alowq",
+   "profa_30pred_reu_amt",
+   "profa_30tdy_reu_amt",
+   "profa_40ord_alow_amt",
+   "profa_40ord_alowq",
+   "profa_40pred_reu_amt",
+   "profa_40tdy_reu_amt",
+   "profa_50ord_alow_amt",
+   "profa_50ord_alowq",
+   "profa_50pred_reu_amt",
+   "profa_50tdy_reu_amt",
+   "profa_60ord_alow_amt",
+   "profa_60ord_alowq",
+   "profa_60pred_reu_amt",
+   "profa_60tdy_reu_amt",
+   "profa_100ord_alow_amt",
+   "profa_100ord_alowq",
+   "profa_100pred_reu_amt",
+   "profa_100tdy_reu_amt",
+   "min_ord_alow_amt",
+   "min_ord_alowq",
+   "min_pred_reu_amt",
+   "min_tdy_reu_amt",
+   "entr",
+   "repl_amt",
+   "uncla",
+   "ord_pos_repl",
+   "ord_alowa"
+  ],
+  "url": "/api/dostk/acnt"
+ },
+ "kt00018": {
+  "method": "POST",
+  "name": "계좌평가잔고내역요청",
+  "request": {
+   "dmst_stex_tp": {
+    "description": "KRX:한국거래소,NXT:넥스트트레이드",
+    "length": "6",
+    "required": true
+   },
+   "qry_tp": {
+    "description": "1:합산, 2:개별",
+    "length": "1",
+    "required": true
+   }
+  },
+  "response": [
+   "tot_pur_amt",
+   "tot_evlt_amt",
+   "tot_evlt_pl",
+   "tot_prft_rt",
+   "prsm_dpst_aset_amt",
+   "tot_loan_amt",
+   "tot_crd_loan_amt",
+   "tot_crd_ls_amt",
+   "acnt_evlt_remn_indv_tot"
+  ],
+  "url": "/api/dostk/acnt"
+ },
+ "kt10000": {
+  "method": "POST",
+  "name": "주식 매수주문",
+  "request": {
+   "cond_uv": {
+    "description": "단위: 원",
+    "length": "12",
+    "required": false
+   },
+   "dmst_stex_tp": {
+    "description": "KRX,NXT,SOR",
+    "length": "3",
+    "required": true
+   },
+   "ord_qty": {
+    "description": "단위: 1주",
+    "length": "12",
+    "required": true
+   },
+   "ord_uv": {
+    "description": "단위: 원",
+    "length": "12",
+    "required": false
+   },
+   "stk_cd": {
+    "description": "",
+    "length": "12",
+    "required": true
+   },
+   "trde_tp": {
+    "description": "0:보통 , 3:시장가 , 5:조건부지정가 , 81:장마감후시간외 , 61:장시작전시간외, 62:시간외단일가 , 6:최유리지정가 , 7:최우선지정가 , 10:보통(IOC) , 13:시장가(IOC) , 16:최유리(IOC) , 20:보통(FOK) , 23:시장가(FOK) , 26:최유리(FOK) , 28:스톱지정가,29:중간가,30:중간가(IOC),31:중간가(FOK)",
+    "length": "2",
+    "required": true
+   }
+  },
+  "response": [
+   "ord_no",
+   "dmst_stex_tp"
+  ],
+  "url": "/api/dostk/ordr"
+ },
+ "kt10001": {
+  "method": "POST",
+  "name": "주식 매도주문",
+  "request": {
+   "cond_uv": {
+    "description": "단위: 원",
+    "length": "12",
+    "required": false
+   },
+   "dmst_stex_tp": {
+    "description": "KRX,NXT,SOR",
+    "length": "3",
+    "required": true
+   },
+   "ord_qty": {
+    "description": "단위: 1주",
+    "length": "12",
+    "required": true
+   },
+   "ord_uv": {
+    "description": "단위: 원",
+    "length": "12",
+    "required": false
+   },
+   "stk_cd": {
+    "description": "",
+    "length": "12",
+    "required": true
+   },
+   "trde_tp": {
+    "description": "0:보통 , 3:시장가 , 5:조건부지정가 , 81:장마감후시간외 , 61:장시작전시간외, 62:시간외단일가 , 6:최유리지정가 , 7:최우선지정가 , 10:보통(IOC) , 13:시장가(IOC) , 16:최유리(IOC) , 20:보통(FOK) , 23:시장가(FOK) , 26:최유리(FOK) , 28:스톱지정가,29:중간가,30:중간가(IOC),31:중간가(FOK)",
+    "length": "2",
+    "required": true
+   }
+  },
+  "response": [
+   "ord_no",
+   "dmst_stex_tp"
+  ],
+  "url": "/api/dostk/ordr"
+ },
+ "kt10002": {
+  "method": "POST",
+  "name": "주식 정정주문",
+  "request": {
+   "dmst_stex_tp": {
+    "description": "KRX,NXT,SOR",
+    "length": "3",
+    "required": true
+   },
+   "mdfy_cond_uv": {
+    "description": "단위: 원",
+    "length": "12",
+    "required": false
+   },
+   "mdfy_qty": {
+    "description": "단위: 1주, '0' 입력 시 잔량 전부 정정",
+    "length": "12",
+    "required": true
+   },
+   "mdfy_uv": {
+    "description": "단위: 원",
+    "length": "12",
+    "required": true
+   },
+   "orig_ord_no": {
+    "description": "매수/매도 주문 요청 응답 결과로 받은 7자리 주문번호",
+    "length": "7",
+    "required": true
+   },
+   "stk_cd": {
+    "description": "",
+    "length": "12",
+    "required": true
+   }
+  },
+  "response": [
+   "ord_no",
+   "base_orig_ord_no",
+   "mdfy_qty",
+   "dmst_stex_tp"
+  ],
+  "url": "/api/dostk/ordr"
+ },
+ "kt10003": {
+  "method": "POST",
+  "name": "주식 취소주문",
+  "request": {
+   "cncl_qty": {
+    "description": "단위: 1주, '0' 입력시 잔량 전부 취소",
+    "length": "12",
+    "required": true
+   },
+   "dmst_stex_tp": {
+    "description": "KRX,NXT,SOR",
+    "length": "3",
+    "required": true
+   },
+   "orig_ord_no": {
+    "description": "매수/매도 주문 요청 응답 결과로 받은 7자리 주문번호",
+    "length": "7",
+    "required": true
+   },
+   "stk_cd": {
+    "description": "",
+    "length": "12",
+    "required": true
+   }
+  },
+  "response": [
+   "ord_no",
+   "base_orig_ord_no",
+   "cncl_qty"
+  ],
+  "url": "/api/dostk/ordr"
+ },
+ "usa20100": {
+  "method": "POST",
+  "name": "미국주식 현재가 종목정보",
+  "request": {
+   "stex_tp": {
+    "description": "NA: AMEX, ND: NASDAQ, NY: NYSE",
+    "length": "",
+    "required": true
+   },
+   "stk_cd": {
+    "description": "",
+    "length": "",
+    "required": true
+   }
+  },
+  "response": [
+   "stex_tp",
+   "stk_cd",
+   "stk_nm",
+   "stk_enm",
+   "52wk_hgst_pric",
+   "52wk_hgst_pric_pre_rt",
+   "52wk_hgst_pric_dt",
+   "52wk_lwst_pric",
+   "52wk_lwst_pric_pre_rt",
+   "52wk_lwst_pric_dt",
+   "stk_cnt",
+   "mac",
+   "setl_mm",
+   "lg_inds_cd",
+   "sm_inds_cd",
+   "cur_prc",
+   "pred_pre_sig",
+   "pred_pre",
+   "flu_rt",
+   "acc_trde_qty",
+   "oyr_hgst",
+   "oyr_hgst_dt",
+   "oyr_hgst_pre_rt",
+   "oyr_lwst",
+   "oyr_lwst_dt",
+   "oyr_lwst_pre_rt",
+   "pre_open_pric",
+   "pre_high_pric",
+   "pre_low_pric",
+   "base_close_pric",
+   "upl_pric",
+   "lst_pric",
+   "trde_qty_unit",
+   "uncert_lv",
+   "comp_adv_tp",
+   "curr_unit",
+   "open_pric",
+   "high_pric",
+   "low_pric",
+   "trd_susp_tp",
+   "base_exrt"
+  ],
+  "url": "/api/us/mrkcond"
+ },
+ "usa20101": {
+  "method": "POST",
+  "name": "미국주식 현재가 10호가",
+  "request": {
+   "stex_tp": {
+    "description": "NA: AMEX, ND: NASDAQ, NY: NYSE",
+    "length": "",
+    "required": true
+   },
+   "stk_cd": {
+    "description": "",
+    "length": "",
+    "required": true
+   }
+  },
+  "response": [
+   "stex_tp",
+   "stk_cd",
+   "stk_nm",
+   "stk_enm",
+   "cur_prc",
+   "pred_pre",
+   "flu_rt",
+   "trde_qty",
+   "trde_prica",
+   "open_pric",
+   "high_pric",
+   "low_pric",
+   "bid_tm",
+   "dt",
+   "pred_pre_sig",
+   "fpr_sel_bid",
+   "fpr_buy_bid",
+   "pre_trde_rt",
+   "trde_tern_rt",
+   "sel_1bid",
+   "sel_2bid",
+   "sel_3bid",
+   "sel_4bid",
+   "sel_5bid",
+   "sel_6bid",
+   "sel_7bid",
+   "sel_8bid",
+   "sel_9bid",
+   "sel_10bid",
+   "buy_1bid",
+   "buy_2bid",
+   "buy_3bid",
+   "buy_4bid",
+   "buy_5bid",
+   "buy_6bid",
+   "buy_7bid",
+   "buy_8bid",
+   "buy_9bid",
+   "buy_10bid",
+   "sel_1bid_req",
+   "sel_2bid_req",
+   "sel_3bid_req",
+   "sel_4bid_req",
+   "sel_5bid_req",
+   "sel_6bid_req",
+   "sel_7bid_req",
+   "sel_8bid_req",
+   "sel_9bid_req",
+   "sel_10bid_req",
+   "buy_1bid_req",
+   "buy_2bid_req",
+   "buy_3bid_req",
+   "buy_4bid_req",
+   "buy_5bid_req",
+   "buy_6bid_req",
+   "buy_7bid_req",
+   "buy_8bid_req",
+   "buy_9bid_req",
+   "buy_10bid_req",
+   "sel_1bid_jub_pre",
+   "sel_2bid_jub_pre",
+   "sel_3bid_jub_pre",
+   "sel_4bid_jub_pre",
+   "sel_5bid_jub_pre",
+   "sel_6bid_jub_pre",
+   "sel_7bid_jub_pre",
+   "sel_8bid_jub_pre",
+   "sel_9bid_jub_pre",
+   "sel_10bid_jub_pre",
+   "buy_1th_pre_req_pre",
+   "buy_1bid_jub_pre",
+   "buy_2bid_jub_pre",
+   "buy_3bid_jub_pre",
+   "buy_4bid_jub_pre",
+   "buy_5bid_jub_pre",
+   "buy_6bid_jub_pre",
+   "buy_7bid_jub_pre",
+   "buy_8bid_jub_pre",
+   "buy_9bid_jub_pre",
+   "buy_10bid_jub_pre",
+   "tot_sel_req",
+   "sel_bid_tot_req_jub_pre",
+   "tot_buy_req",
+   "buy_bid_tot_req_jub_pre",
+   "netprps_req",
+   "netslmt_req",
+   "upl_pric",
+   "base_pric"
+  ],
+  "url": "/api/us/mrkcond"
+ },
+ "ust20000": {
+  "method": "POST",
+  "name": "미국주식 매수 주문",
+  "request": {
+   "ord_qty": {
+    "description": "",
+    "length": "12",
+    "required": true
+   },
+   "ord_uv": {
+    "description": "trde_tp가 00(지정가),30(LOC)...인 경우 필수 입력, 그 외 시장가 거래유형 설정 시 입력 값은 빈 값 처리",
+    "length": "12",
+    "required": false
+   },
+   "stex_tp": {
+    "description": "NA: AMEX, ND: NASDAQ, NY: NYSE",
+    "length": "",
+    "required": true
+   },
+   "stk_cd": {
+    "description": "",
+    "length": "12",
+    "required": true
+   },
+   "trde_tp": {
+    "description": "00:지정가 03시장가 26:VWAP지정가 27:TWAP지정가 30:LOC 36:VWAP시장가 37:TWAP시장가",
+    "length": "2",
+    "required": true
+   }
+  },
+  "response": [
+   "stk_nm",
+   "ord_no",
+   "fc_entra",
+   "tdy_rebuy_useda",
+   "pred_rebuy_useda",
+   "trst_prof_ch"
+  ],
+  "url": "/api/us/ordr"
+ },
+ "ust20001": {
+  "method": "POST",
+  "name": "미국주식 매도 주문",
+  "request": {
+   "ord_qty": {
+    "description": "",
+    "length": "12",
+    "required": true
+   },
+   "ord_uv": {
+    "description": "trde_tp가 00(지정가),30(LOC)...인 경우 필수 입력, 그 외 시장가 거래유형 설정 시 입력 값은 빈 값 처리",
+    "length": "12",
+    "required": false
+   },
+   "stex_tp": {
+    "description": "NA: AMEX, ND: NASDAQ, NY: NYSE",
+    "length": "",
+    "required": true
+   },
+   "stk_cd": {
+    "description": "",
+    "length": "12",
+    "required": true
+   },
+   "stop_pric": {
+    "description": "trde_tp가 34(STOP LIMIT) 또는 35(STOP)인 경우 필수 입력, 그 외 거래유형(지정가,시장가 등) 설정 시 입력 값은 무시되거나 빈 값처리.",
+    "length": "12",
+    "required": false
+   },
+   "trde_tp": {
+    "description": "00:지정가 03시장가 26:VWAP지정가 27:TWAP지정가 30:LOC 33:MOC 36:VWAP시장가 37:TWAP시장가 35:STOP 34:STOP LIMIT",
+    "length": "2",
+    "required": true
+   }
+  },
+  "response": [
+   "stk_nm",
+   "ord_no",
+   "poss_qty",
+   "tdy_resel_usedq",
+   "pred_resel_usedq"
+  ],
+  "url": "/api/us/ordr"
+ },
+ "ust20003": {
+  "method": "POST",
+  "name": "미국주식 취소 주문",
+  "request": {
+   "orig_ord_no": {
+    "description": "주문 요청 응답 결과로 받은 ord_no를 설정",
+    "length": "9",
+    "required": true
+   },
+   "stex_tp": {
+    "description": "NA: AMEX, ND: NASDAQ, NY: NYSE",
+    "length": "",
+    "required": true
+   },
+   "stk_cd": {
+    "description": "",
+    "length": "12",
+    "required": true
+   }
+  },
+  "response": [
+   "stk_nm",
+   "ord_no",
+   "cncl_ord_qty"
+  ],
+  "url": "/api/us/ordr"
+ },
+ "ust21050": {
+  "method": "POST",
+  "name": "미국주식 원장 미체결",
+  "request": {
+   "ord_dt": {
+    "description": "미입력시 오늘 날짜로 조회",
+    "length": "8",
+    "required": false
+   },
+   "slby_tp": {
+    "description": "0:전체(기본값),1:매도,2:매수",
+    "length": "1",
+    "required": false
+   },
+   "stex_tp": {
+    "description": "미입력시 전체, ND:NASDAQ,NY:NYSE,NA:AMEX",
+    "length": "2",
+    "required": false
+   },
+   "stk_cd": {
+    "description": "미입력시 전체",
+    "length": "12",
+    "required": false
+   }
+  },
+  "response": [
+   "result_list"
+  ],
+  "url": "/api/us/acnt"
+ },
+ "ust21070": {
+  "method": "POST",
+  "name": "미국주식 원장잔고확인",
+  "request": {
+   "stex_tp": {
+    "description": "ND:NASDAQ,NY:NYSE,NA:AMEX",
+    "length": "2",
+    "required": false
+   },
+   "stk_cd": {
+    "description": "미입력시 전체",
+    "length": "12",
+    "required": false
+   }
+  },
+  "response": [
+   "crnc_code",
+   "tot_evlt_amt",
+   "tot_prch_amt",
+   "tot_pl_amt",
+   "tot_pl_rt",
+   "tdy_book_amt",
+   "tdy_pl_amt",
+   "tdy_pl_rt",
+   "tot_evlt_amt_krw",
+   "tot_prch_amt_krw",
+   "tot_pl_amt_krw",
+   "tdy_book_amt_krw",
+   "tdy_pl_amt_krw",
+   "result_list"
+  ],
+  "url": "/api/us/acnt"
+ },
+ "ust21110": {
+  "method": "POST",
+  "name": "해외주식 예수금",
+  "request": {},
+  "response": [
+   "krw_entra",
+   "ch_uncla",
+   "etc_loana",
+   "result_list"
+  ],
+  "url": "/api/us/acnt"
+ }
+}

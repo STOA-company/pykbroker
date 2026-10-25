@@ -117,7 +117,8 @@ def test_buy_request_and_the_official_sample(live_safety):
         "trde_tp": "0",
     }
     assert order == Order(
-        id="00024", symbol="005930", side="buy", order_type="limit", quantity=1, price=Decimal(70000), status="accepted"
+        id="00024", symbol="005930", side="buy", order_type="limit", quantity=1, price=Decimal(70000),
+        status="accepted", client_key="k1",
     )
 
 
@@ -130,13 +131,15 @@ def test_sell_goes_to_kt10001_and_a_virtual_account_to_the_mock_host(live_safety
     assert (order.id, order.side, order.status, order.virtual) == ("0000138", "sell", "accepted", True)
 
 
-def test_orders_other_than_kr_market_limit_krx_are_refused_before_any_request(live_safety):
-    broker, client = make({}, safety=live_safety)
+def test_orders_the_account_mode_or_market_cannot_take_are_refused_before_any_request(live_safety):
+    # a mock (virtual) account trades KRX only (official mock info); NXT/SOR on the real host are covered in
+    # test_kiwoom_order_kinds.py. US takes plain day limit orders only.
+    broker, client = make({}, safety=live_safety, virtual=True)
     for request in (
-        buy(order_type="close"),
         buy(venue="NXT"),
         buy(venue="SOR"),
         buy(market="US"),
+        buy(time_in_force="ioc", venue="KRX", order_type="limit", market="US"),
     ):
         with pytest.raises(NotSupportedError):
             broker.place_order(request)
@@ -164,8 +167,8 @@ def test_a_failed_or_unreadable_send_is_unknown_and_the_post_goes_out_once(live_
     assert "fixture-token" not in str(raised.value) and not isinstance(raised.value, BrokerRejectedError)
 
 
-@pytest.mark.parametrize("code", [1, 8005, 1700, -1, 1998, 2000])
-def test_an_integer_return_code_but_zero_and_1999_is_a_refusal(live_safety, code):
+@pytest.mark.parametrize("code", [8005, 1700, 1511])
+def test_only_documented_return_codes_are_definite_refusals(live_safety, code):
     body = {**OFFICIAL["kt10000"], "return_code": code, "return_msg": "secret detail"}
     broker, client = make({"kt10000": [body]}, safety=live_safety)
     with pytest.raises(BrokerRejectedError) as raised:
@@ -272,7 +275,7 @@ def test_cancel_request_and_the_official_sample(live_safety):
     assert call["path"] == ORDERS and call["headers"]["api-id"] == "kt10003"
     assert call["json"] == {"dmst_stex_tp": "KRX", "orig_ord_no": "0000140", "stk_cd": "005930", "cncl_qty": "1"}
     # the order stays the one that was cancelled; the cancel's own number (0000141) is not its identity
-    assert result == Order(id="0000140", symbol="005930", status="accepted")
+    assert result == Order(id="0000140", symbol="005930", status="accepted", venue=None, client_key="c1")
 
 
 def test_cancel_quantity_is_explicit_never_the_remainder_shorthand(live_safety):
@@ -311,7 +314,7 @@ def test_a_cancel_answer_that_cannot_be_read_is_unknown(live_safety, body):
 
 def test_cancel_refusal_and_transport_failure_are_classified_once(live_safety):
     broker, client = make(
-        {"kt10003": [{**OFFICIAL["kt10003"], "return_code": 1, "return_msg": "secret detail"}]}, safety=live_safety
+        {"kt10003": [{**OFFICIAL["kt10003"], "return_code": 1511, "return_msg": "secret detail"}]}, safety=live_safety
     )
     with pytest.raises(BrokerRejectedError) as raised:
         broker.cancel_order(cancel())
@@ -346,7 +349,7 @@ def test_open_orders_request_and_the_official_sample():
     orders = broker.list_orders()
     (call,) = client.calls
     assert call["path"] == "/api/dostk/acnt" and call["headers"]["api-id"] == "ka10075"
-    assert call["json"] == {"all_stk_tp": "0", "trde_tp": "0", "stex_tp": "1"}  # 전체·전체·KRX
+    assert call["json"] == {"all_stk_tp": "0", "trde_tp": "0", "stex_tp": "0"}  # 전체·전체·통합 (mock: KRX only)
     # +매수 (the sign only colours the label), 시장가 has no price, nothing is filled yet
     assert orders == [
         Order(
@@ -359,6 +362,7 @@ def test_open_orders_request_and_the_official_sample():
             filled=0,
             remaining=1,
             status="open",
+            venue="KRX",
         )
     ]
 
@@ -368,7 +372,7 @@ def test_open_orders_for_one_symbol_name_it_and_filter_on_it():
     page = {**OFFICIAL["ka10075"], "oso": [OFFICIAL["ka10075"]["oso"][0], other]}
     broker, client = make({"ka10075": [page]})
     assert [o.id for o in broker.list_orders("A005930")] == ["0000069"]
-    assert client.calls[0]["json"] == {"all_stk_tp": "1", "trde_tp": "0", "stex_tp": "1", "stk_cd": "005930"}
+    assert client.calls[0]["json"] == {"all_stk_tp": "1", "trde_tp": "0", "stex_tp": "0", "stk_cd": "005930"}
 
 
 @pytest.mark.parametrize(
@@ -564,6 +568,7 @@ def test_us_limit_order_uses_official_tr_and_decimal_price_once(live_safety, sid
         "trde_tp": "00",
     }
     assert (order.id, order.status, order.market, order.side) == ("000000282", "accepted", "US", side)
+    assert order.client_key == buy().client_key
 
 
 @pytest.mark.parametrize("failure", [TimeoutError("uncertain"), {"return_code": 1999}, {"return_code": "0"}])
@@ -594,6 +599,7 @@ def test_us_full_cancel_verifies_remainder_and_never_names_a_cancel_ack_as_final
     assert client.base_url == KIWOOM_MOCK_BASE_URL
     assert client.calls[-1]["json"] == {"stex_tp": "ND", "stk_cd": "NVDA", "orig_ord_no": "000000282"}
     assert (order.id, order.status, order.market) == ("000000282", "accepted", "US")
+    assert order.client_key == cancel().client_key
 
 
 @pytest.mark.parametrize(
@@ -608,7 +614,8 @@ def test_us_full_cancel_verifies_remainder_and_never_names_a_cancel_ack_as_final
 def test_us_ledger_quantities_determine_status_without_fabricated_average(changes, status):
     row = {**US_ROW, **changes, "cntr_uv": "199.7700"}
     broker, _ = us_make({"ust21150": [{"return_code": 0, "result_list": [row]}]})
-    order = broker.status(Order(id="000000282", symbol="NVDA", market="US"))
+    order = broker.status(Order(id="000000282", symbol="NVDA", market="US", client_key="us-status-key"))
+    assert order.client_key == "us-status-key"
     assert order.status == status
     assert order.fill_price is None
 

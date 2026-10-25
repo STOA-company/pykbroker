@@ -337,7 +337,8 @@ class LS(RestBroker):
                          order_type=request.order_type, quantity=request.quantity,
                          price=request.price, status="accepted", virtual=self._bound_virtual)
 
-        return self.safety.execute(self.broker_code, self._account, request, lambda: self._call(submit))
+        return self.safety.execute(self.broker_code, self._account, request, lambda: self._call(submit)).model_copy(
+            update={"client_key": request.client_key})
 
     def _verify_account(self):
         if self._bound_virtual:

@@ -7,7 +7,18 @@ class Capabilities(Model):
     supports_spot: bool = False
     supports_market_order: bool = False
     supports_single_order_cancel: bool = False
+    # Native in-place price/quantity amendment via amend_order(AmendRequest) (SEAM §3).
+    supports_amend: bool = False
     supports_nxt: bool = False
+    # Support lists as data (SEAM): what the adapter will put on the wire. A request outside a list is refused before
+    # any HTTP. Left empty they derive from the flags below: limit/market kinds, "day", "regular". An adapter that
+    # accepts more (close, IOC/FOK, off-session, conditional kinds) lists it explicitly.
+    order_kinds: tuple[str, ...] = ()
+    time_in_force: tuple[str, ...] = ()
+    sessions: tuple[str, ...] = ()
+    # Amend transports may preserve fewer conditions than new-order transports.
+    amend_time_in_force: tuple[str, ...] = ("day",)
+    amend_sessions: tuple[str, ...] = ("regular",)
     supports_order_history: bool = False
     # True only where the venue answers an unfilled-order snapshot in real time.
     # A daily ledger read back for today (the KIS mock domain) is not one: it lags.
@@ -25,6 +36,19 @@ class Capabilities(Model):
     supports_virtual_account: bool = False
     virtual: bool = False
     markets: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _derive_support_lists(self) -> "Capabilities":
+        if not self.order_kinds:
+            kinds = (("limit",) if self.supports_limit_order else ()) + (
+                ("market",) if self.supports_market_order else ()
+            )
+            object.__setattr__(self, "order_kinds", kinds)
+        if not self.time_in_force:
+            object.__setattr__(self, "time_in_force", ("day",))
+        if not self.sessions:
+            object.__setattr__(self, "sessions", ("regular",))
+        return self
 
     @model_validator(mode="after")
     def _venue_requirement_names_its_venues(self) -> "Capabilities":

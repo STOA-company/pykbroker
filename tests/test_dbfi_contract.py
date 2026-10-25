@@ -24,6 +24,7 @@ def test_dbfi_recorded_contract(dbfi):
 def test_dbfi_exact_order_mapping(dbfi, request_order, side, venue):
     broker, client, _ = dbfi
     order = broker.place_order(request_order.model_copy(update={"side": side, "venue": venue}))
+    assert order.client_key == request_order.client_key
     assert order.id == "43"
     getattr(client, side).assert_called_once_with(
         region="domestic", stock_code="005930", quantity=1, price=70000, price_type="00", use_nxt=venue == "NXT"

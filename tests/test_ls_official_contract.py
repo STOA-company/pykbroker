@@ -92,6 +92,7 @@ def test_partial_fill_modify_cancel_and_account_queries(native):
     assert (partial.filled, partial.remaining, partial.status) == (1, 2, "partial")
     amendment = order(quantity=2, price="9900", client_key="fixture-modify")
     amended = broker.modify_order(placed.id, amendment)
+    assert amended.client_key == amendment.client_key
     assert amended.id != placed.id and amended.status == "accepted"
     body = next(call[3]["CSPAT00701InBlock1"] for call in server.calls if call[1] == "CSPAT00701")
     assert body == {"OrgOrdNo": int(placed.id), "IsuNo": "005930", "OrdQty": 2,

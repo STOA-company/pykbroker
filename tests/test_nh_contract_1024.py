@@ -62,6 +62,7 @@ def test_official_cash_order_shape_and_duplicate_key(side, kind, live_safety):
     live_safety.valuation = lambda _: Decimal(1000)
     req = request(side, kind)
     placed = broker.place_order(req)
+    assert placed.client_key == req.client_key
     assert (placed.id, placed.order_type, placed.side) == ("mkt:101", kind, side)
     with pytest.raises(DuplicateOrderError):
         broker.place_order(req)
@@ -91,6 +92,7 @@ def test_partial_then_modify_and_cancel_requested_remainder(venue, live_safety):
     # The original market number is caller-supplied, never inferred from itg:999.
     req = request(key="modify", quantity=2)
     modified = broker.modify_order("mkt:101", req, stop_condition_price=Decimal(0), original_ledger_id="itg:999")
+    assert modified.client_key == req.client_key
     assert modified.id == "mkt:102" and modified.status == "accepted"
     with pytest.raises(DuplicateOrderError):
         broker.modify_order("mkt:101", req, stop_condition_price=Decimal(0), original_ledger_id="itg:999")

@@ -21,7 +21,7 @@
 - 정정 응답 dmst_stex_tp 생략은 매수/매도와 같은 KRX 기본값; 명시 NXT/SOR 등은 unknown 유지.
 - AmendRequest는 OrderRequest를 확장하며 공통 broker protocol에는 정정 메서드 추가 없음.
 - 기존 safety를 통과해 full amended notional 예약·dry-run·중복·중지 검사.
-- idempotency action은 place/amend/cancel 타입으로 구분; 실패한 key도 보존.
+- idempotency action은 place/amend가 place 공간 공유, cancel만 분리; 실패한 key도 보존.
 - 정정 응답은 새 id·수량·가격·accepted; side/type 미확정 유지.
 - 모주문 번호는 형식만 검사; 연쇄 정정의 즉전 id와 같다고 가정하지 않음.
 - 정정 포함 원장의 기존 원주문 unknown 판정 유지; 완전체결 판정 유지.
@@ -40,3 +40,24 @@
 ## 남은 것 (안 걸어 봄)
 - 공식 모의투자·시험 계좌·큐 고객 화면·실체결·수수료·실제 정정 원장 전이 검증.
 - expires_dt 시간대·재발급 영향·오류 HTTP 위치·윈도 경계·서버 idempotency는 미확인; 계약 표 참조.
+
+## 2026-10-25 검수 #54 후속 — 공용 계약 정본
+- SEAM S-추가: 주문 종류 priority/midpoint, 세션 regular/pre/after/single_price, 능력 order_kinds 한 꼴.
+- 이전 top→priority, mid→midpoint, single→single_price; #55 pre_close→market+pre, after_close→market+after, after_single→limit+single_price.
+- stop_limit/stop_price와 AmendRequest.broker_ref는 두 PR 합집합으로 보존; 키움의 알 수 없는 broker_ref는 전송 전 거절.
+- amend_time_in_force/amend_sessions는 신규 주문과 별도로 선언; 기본 day/regular 밖 정정은 HTTP 0.
+- 공식 표 밖 정수·손상 코드·합성 code20은 unknown; 접수 후 표 밖 응답에서도 같은 키 재전송 0.
+- 8005 토큰 만료 응답은 저장 인증값을 버림; 다음 요청은 명시 재발급 전 HTTP 0.
+- 토스 KR order_kinds는 최종 플래그와 같이 구성; 시장가가 실제 SDK 제출 경계까지 감.
+- KIS 클래스주는 잔고/보유·미체결·주문·취소·시세 응답에서 정본으로 역변환; available_qty도 정본으로 비교.
+- 공용 place/cancel과 독립 NH/LS/KB/키움 정정 반환에 client_key 복사, KR/US 공통.
+- 검증: tests/test_review_54_regressions.py 및 관련 지정 계약 시험; 실키·실주문·배포 0.
+- 독립 후속 I2: NH status(KR itg/US us)와 키움 US 원장 조회도 입력 Order.client_key 보존; 두 override의 새 모델 반환 누락을 함께 수정.
+
+## 2026-10-25 재검수 fix2 — 세션 승인·정정 키
+- 공용 gate의 시장가류에 close 포함; 키움/KIS/DB 모두 승인 없으면 전송 0.
+- #55의 BaseBroker.amend_order를 #54로 이동; 키움도 공용 인자·place 키 공간 사용.
+- 키움 _prepare_amend는 입력만 검사, 원주문 지정가 조회는 _amend_order에서 safety 뒤 유지.
+- 키움 시간외단일가 62는 가격 규칙 확인 전 limit만 허용; market은 HTTP 전 거절.
+- DB BaseBroker.status의 조회 일치·미일치 둘 다 입력 client_key 보존 회귀 단언.
+- tests/test_review_54_regressions.py 및 키움 계약 시험, 되돌림 변이로 보호 확인; 실키·실주문 0.

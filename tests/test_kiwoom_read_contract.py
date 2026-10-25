@@ -500,9 +500,10 @@ def test_positions_without_the_holdings_list_or_with_oversold_row_are_invalid():
 
 
 @pytest.mark.parametrize("code", [1, 8005, 1700, "8005", "-1", "0", True, None])
-def test_any_body_code_but_integer_zero_is_a_rejection(code):
+def test_only_listed_integer_read_codes_are_definite_rejections(code):
     body = {**BASIC, "return_code": code, "return_msg": "secret detail"}
-    with pytest.raises(BrokerRejectedError) as raised:
+    expected = BrokerRejectedError if type(code) is int and code in (8005, 1700) else InvalidResponseError
+    with pytest.raises(expected) as raised:
         make({**RESPONSES, "ka10001": body})[0].get_quote("005930")
     assert "secret detail" not in str(raised.value)
 
@@ -583,10 +584,11 @@ def test_limiter_is_awaited_before_each_post():
 # --- boundaries ---
 
 
-def test_after_hours_orders_are_refused_before_any_request():
+def test_unlisted_kinds_are_refused_before_any_request():
+    # trde_tp 28 (스톱지정가) is in the spec list but its cond_uv meaning is not stated: never built.
     broker, made = make()
-    for order_type in ("close",):
-        request = OrderRequest(symbol="005930", side="buy", quantity=1, order_type=order_type, client_key="k")
+    for changes in ({"time_in_force": "ioc", "order_type": "priority"}, {"session": "single_price", "order_type": "priority"}):
+        request = OrderRequest(symbol="005930", side="buy", quantity=1, client_key="k", **changes)
         with pytest.raises(NotSupportedError):
             broker.place_order(request)
     assert made[0].calls == []
@@ -594,10 +596,13 @@ def test_after_hours_orders_are_refused_before_any_request():
 
 def test_capabilities_admit_kr_market_limit_orders_and_single_cancel():
     caps = make()[0].capabilities()
-    assert caps.venues == ("KRX",) and caps.markets == ("KR",) and caps.supports_virtual_account is True
+    assert caps.venues == ("KRX", "NXT", "SOR") and caps.markets == ("KR",) and caps.supports_virtual_account is True
     assert caps.supports_limit_order and caps.supports_single_order_cancel and caps.supports_order_history
     assert caps.supports_market_order
-    assert not (caps.supports_nxt or caps.realtime_open_orders)
+    assert caps.supports_nxt and caps.supports_amend and not caps.realtime_open_orders
+    # mock (virtual) trades KRX only
+    mock = make(virtual=True)[0].capabilities()
+    assert mock.venues == ("KRX",) and not mock.supports_nxt
 
 
 def test_us_requires_a_venue_and_wrong_market_quote_is_refused():
