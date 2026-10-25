@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from pykbroker.exceptions import InvalidResponseError, NotSupportedError, TransportError
+from pykbroker.exceptions import DuplicateOrderError, InvalidResponseError, NotSupportedError, TransportError
 from pykbroker.models import AmendRequest, CancelRequest, OrderRequest
 
 from .kiwoom_contract_server import SCHEMA, TRDE
@@ -76,11 +76,13 @@ def test_market_buy_nxt_amend_then_cancel_walk_with_partial_fill():
     # turn 2: amend the remaining 6 to a new price; answer carries a NEW number, the old one keeps its fills
     amended = broker.amend_order(AmendRequest(order_id=order.id, symbol="005930", side="buy", quantity=6,
                                               price="60500", venue="NXT", client_key="a1"))
+    assert amended.status == "accepted"
     assert amended.id != order.id and amended.venue == "NXT" and amended.client_key == "a1"
     open_rows = {o.id: o for o in broker.list_orders("005930")}
     assert list(open_rows) == [amended.id] and open_rows[amended.id].remaining == 6
     amend_call = next(b for path, b in server.calls if "mdfy_qty" in b)
     assert amend_call["dmst_stex_tp"] == "NXT" and amend_call["mdfy_qty"] == "6"
+    assert amend_call["mdfy_uv"] == "60500"
     # the original's ledger line is unknown after an amendment (adapter keeps its conservative rule)
     assert broker.status(order.model_copy(update={"venue": "NXT"})).status == "unknown"
     # turn 3: 2 more fill on the new order, cancel the last 4 on NXT
@@ -240,3 +242,39 @@ def test_stop_limit_request_shape_is_validated():
         req("a", order_type="stop_limit", price="59000")  # no stop_price
     with pytest.raises(ValueError):
         req("b", order_type="limit", price="59000", stop_price="59500")  # stop_price on another kind
+
+
+def test_us_amend_is_refused_before_any_http():
+    world = World()
+    broker = world.broker(virtual=False, market="US", venue="NASDAQ")
+    before = list(world.server.calls)
+    request = AmendRequest(order_id="1234567", symbol="AAPL", market="US", venue="NASDAQ",
+                           side="buy", quantity=1, price="200", client_key="us-amend")
+    with pytest.raises(NotSupportedError, match="Amend is not supported"):
+        broker.amend_order(request)
+    assert world.server.calls == before
+
+
+def test_amend_same_order_number_is_unknown_and_cannot_be_resent(monkeypatch):
+    world, broker = live_world()
+    order = broker.place_order(req("original", quantity=1, order_type="limit", price="60000"))
+    real_amend = world.server._kt10002
+
+    def same_number(body, headers):
+        response, response_headers = real_amend(body, headers)
+        response["ord_no"] = body["orig_ord_no"]
+        return response, response_headers
+
+    monkeypatch.setattr(world.server, "_kt10002", same_number)
+    request = AmendRequest(order_id=order.id, symbol="005930", side="buy", quantity=1,
+                           price="60500", client_key="same-number")
+    # InvalidResponseError means an unknown write outcome, never a confirmed refusal.
+    with pytest.raises(InvalidResponseError, match="acknowledgement differs"):
+        broker.amend_order(request)
+    before_retry = list(world.server.calls)
+    with pytest.raises(DuplicateOrderError):
+        broker.amend_order(request)
+    assert world.server.calls == before_retry
+    assert len([body for _, body in world.server.calls if "mdfy_qty" in body]) == 1
+    [replacement] = broker.list_orders("005930")
+    assert replacement.id != order.id and replacement.remaining == 1
