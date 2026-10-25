@@ -68,7 +68,9 @@ def test_kind_and_tif_tables_cover_the_official_codes_the_adapter_offers():
     [("regular", kind, code) for kind, code in NH_KR_PRICE_TYPE.items()] +
     [("pre", "market", "61"), ("after", "market", "71")])
 @pytest.mark.parametrize("side,endpoint", [("buy", "cashBuy"), ("sell", "cashSell")])
-def test_every_order_kind_and_venue_goes_out_with_its_documented_code(live_safety, session, kind, code, venue, side, endpoint):
+def test_every_order_kind_and_venue_goes_out_with_its_documented_code(
+    live_safety, session, kind, code, venue, side, endpoint
+):
     live_safety.market_order_allowed = lambda request: True
     live_safety.valuation = lambda request: Decimal(3000)
     server = NHContractServer()
@@ -94,8 +96,17 @@ def test_unoffered_kinds_never_reach_the_server(world):
         broker.place_order(OrderRequest(symbol="005930", side="buy", quantity=1, order_type="close",
                                         client_key="c"))
     with pytest.raises(NotSupportedError):
-        broker.place_order(OrderRequest(symbol="005930", side="buy", quantity=1, order_type="limit", session="single_price",
-                                        price=Decimal(1000), client_key="s"))
+        broker.place_order(
+            OrderRequest(
+                symbol="005930",
+                side="buy",
+                quantity=1,
+                order_type="limit",
+                session="single_price",
+                price=Decimal(1000),
+                client_key="s",
+            )
+        )
     assert server.placed == []
 
 
@@ -112,7 +123,9 @@ def test_buy_partial_fill_amend_cancel_balance_walk(world):
     amended = broker.amend_order(amend_req(placed.id))
     assert amended.client_key == "walk-amend"
     assert amended.id == "mkt:102" and server.live(102)["price"] == 995
-    cancelled = broker.cancel_order(CancelRequest(order_id=amended.id, symbol="005930", quantity=2, client_key="walk-cancel"))
+    cancelled = broker.cancel_order(
+        CancelRequest(order_id=amended.id, symbol="005930", quantity=2, client_key="walk-cancel")
+    )
     assert cancelled.client_key == "walk-cancel"
     [final] = broker.list_orders()
     assert (final.filled, final.remaining, server.live(102)["cancelled"]) == (1, 0, 2)

@@ -11,7 +11,13 @@ from types import SimpleNamespace
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from pykbroker.exceptions import ConfigurationError, FractionalNotSupportedError, InvalidResponseError, MissingDependencyError, NotSupportedError
+from pykbroker.exceptions import (
+    ConfigurationError,
+    FractionalNotSupportedError,
+    InvalidResponseError,
+    MissingDependencyError,
+    NotSupportedError,
+)
 from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
 from pykbroker.rules.kr import equity_rules
 from pykbroker.safety.gate import OrderSafety
@@ -480,7 +486,13 @@ class KIS(BaseBroker):
                 response = api.get_open_orders_overseas_all(kis_account=scope, market=VENUES[self.venue][1])
                 rows = check_response(response, "kis")["output"]
                 return [
-                    Order(id=str(row["odno"]), symbol=self.canonical_symbol(row["pdno"]), market="US", status="unknown", virtual=self.virtual)
+                    Order(
+                        id=str(row["odno"]),
+                        symbol=self.canonical_symbol(row["pdno"]),
+                        market="US",
+                        status="unknown",
+                        virtual=self.virtual,
+                    )
                     for row in rows
                     if symbol is None or row["pdno"] == symbol
                 ]

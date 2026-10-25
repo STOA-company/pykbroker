@@ -174,16 +174,26 @@ def _toss(SDK, live_safety, market="US"):
                 sdk_dry_run=False, **kwargs)
 
 
-# 10-18 검수 527c P2-T: 한 응답에 같은 토스 종목이 두 줄이면 줄마다 종목 전체의 매도 가능 수량이 붙어 2주가 4주로 읽혔다.
+# 10-18 검수 527c P2-T: 한 응답에 같은 토스 종목이 두 줄이면 줄마다 종목 전체의
+# 매도 가능 수량이 붙어 2주가 4주로 읽혔다.
 # 토스 문서상 행 식별은 (symbol, marketCountry, currency)이고 매도 가능 수량은 심볼 하나로 읽는다(벤더 답이 기준).
-@pytest.mark.parametrize("market,rows,answer,symbol,expected", [
-    ("US", [_row("AAPL", "2"), _row("AAPL", "2")], "2", "AAPL", Decimal("2")),             # 같은 줄 반복 → 한 번
-    ("US", [_row("AAPL", "2.57"), _row("AAPL", "2.57")], "2.57", "AAPL", Decimal("2.57")),  # 소수 반복
-    ("KR", [_row("005930", "2", country="KR"), _row("005930", "2", country="KR")], "2", "005930", Decimal("2")),
-    ("US", [_row("AAPL", "2"), _row("AAPL", "2", currency="KRW")], "2", "AAPL", Decimal("2")),  # 다른 통화 줄: 벤더 답 한 번
-    ("US", [_row("AAPL", "2"), _row("MSFT", "4"), _row("005930", "7", country="KR")], "2", "AAPL", Decimal("2")),
-    ("US", [_row("MSFT", "4")], "0", "AAPL", Decimal("0")),                                 # 미보유 → 0
-])
+@pytest.mark.parametrize(
+    "market,rows,answer,symbol,expected",
+    [
+        ("US", [_row("AAPL", "2"), _row("AAPL", "2")], "2", "AAPL", Decimal("2")),  # 같은 줄 반복 → 한 번
+        ("US", [_row("AAPL", "2.57"), _row("AAPL", "2.57")], "2.57", "AAPL", Decimal("2.57")),  # 소수 반복
+        ("KR", [_row("005930", "2", country="KR"), _row("005930", "2", country="KR")], "2", "005930", Decimal("2")),
+        (
+            "US",
+            [_row("AAPL", "2"), _row("AAPL", "2", currency="KRW")],
+            "2",
+            "AAPL",
+            Decimal("2"),
+        ),  # 다른 통화 줄: 벤더 답 한 번
+        ("US", [_row("AAPL", "2"), _row("MSFT", "4"), _row("005930", "7", country="KR")], "2", "AAPL", Decimal("2")),
+        ("US", [_row("MSFT", "4")], "0", "AAPL", Decimal("0")),  # 미보유 → 0
+    ],
+)
 def test_toss_sellable_quantity_reads_the_vendor_answer_once(live_safety, market, rows, answer, symbol, expected):
     SDK = _rows_sdk(rows, {symbol: answer})
     with _toss(SDK, live_safety, market) as broker:

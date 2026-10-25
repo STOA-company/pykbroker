@@ -65,7 +65,10 @@ class OrderSafety:
             else "place"
         )
         if isinstance(request, OrderRequest):
-            if request.order_type in ("market", "close", "best", "priority", "midpoint") or request.session != "regular":
+            if (
+                request.order_type in ("market", "close", "best", "priority", "midpoint")
+                or request.session != "regular"
+            ):
                 if self.market_order_allowed is None or self.market_order_allowed(request) is not True:
                     raise RiskCapError("risk_caps: market-order session authorization required")
             if request.market == "KR" and request.price is not None and request.order_type in PRICED_TYPES:

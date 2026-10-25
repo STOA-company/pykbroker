@@ -140,7 +140,9 @@ class ContractMockTossSdk:
         if payload["orderType"] == "LIMIT" and "price" not in payload:
             self._reject(400, "invalid-request", "limitPriceRequired")
         if _scale(payload["quantity"]) > 0:
-            if not (payload["orderType"] == "MARKET" and payload["side"] == "SELL" and _is_us_symbol(payload["symbol"])):
+            if not (
+                payload["orderType"] == "MARKET" and payload["side"] == "SELL" and _is_us_symbol(payload["symbol"])
+            ):
                 self._reject(400, "invalid-request", "fractionalQuantityUsSellOnly")
             if _scale(payload["quantity"]) > 6:
                 self._reject(400, "invalid-request", "fractionalQuantityScaleExceeded")

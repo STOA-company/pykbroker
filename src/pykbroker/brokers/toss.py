@@ -487,7 +487,9 @@ class Toss(BaseBroker):
             raise InvalidResponseError("Toss holdings list one symbol in two markets")
         return groups
 
-    def _sellable_rows(self, symbol: str, rows: list[Mapping[str, Any]]) -> list[tuple[Mapping[str, Any], Decimal, Decimal]]:
+    def _sellable_rows(
+        self, symbol: str, rows: list[Mapping[str, Any]]
+    ) -> list[tuple[Mapping[str, Any], Decimal, Decimal]]:
         """[(row, exact quantity, exact sellable)] — the symbol's sellable answer is read once and spread over
         its distinct rows in order (each row at most its own quantity), so the rows sum to the vendor answer."""
         answer = self._run("get_sellable_quantity", symbol)["sellableQuantity"]
@@ -529,7 +531,8 @@ class Toss(BaseBroker):
             for symbol, rows in self._holding_groups(self._run("get_positions")["items"]).items():
                 for row, exact_qty, exact_sellable in self._sellable_rows(symbol, rows):
                     # 토스 미국 소수점 주식(예: "0.3"): 정확한 수량은 *_exact 에 두고 quantity/sellable 은
-                    # 내림한 정수 주식으로 보고한다(벤더는 소수 매도를 MARKET 만 받고, 정수 주문 경로는 잔량을 팔지 않는다).
+                    # 내림한 정수 주식으로 보고한다. 벤더는 소수 매도를 MARKET 만 받고,
+                    # 정수 주문 경로는 잔량을 팔지 않는다.
                     whole_qty = int(exact_qty.to_integral_value(rounding=ROUND_FLOOR))
                     whole_sellable = int(exact_sellable.to_integral_value(rounding=ROUND_FLOOR))
                     us = self.market == "US"

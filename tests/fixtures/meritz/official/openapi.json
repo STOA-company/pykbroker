@@ -1,0 +1,4533 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "메리츠증권 Open API",
+    "version": "2026-10-22",
+    "description": "포털 등록 명세에서 생성했습니다. 정본은 개발자 포털입니다."
+  },
+  "servers": [
+    {
+      "url": "https://openapi.imeritz.com:9443",
+      "description": "운영"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "POST /oauth2/token 으로 받은 접근토큰"
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "paths": {
+    "/oauth2/token": {
+      "post": {
+        "operationId": "oauth2_token",
+        "summary": "접근토큰 발급",
+        "tags": [
+          "oauth2"
+        ],
+        "description": "본인을 인증하는 확인 절차로, 접근토큰을 부여받아 오픈 API 활용이 가능합니다.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "access_token": {
+                      "type": "string",
+                      "title": "접근토큰",
+                      "description": "발급된 접근토큰입니다. 이후 API 호출의 authorization 헤더에 \"Bearer {access_token}\" 형식으로 넣습니다.",
+                      "maxLength": 1000
+                    },
+                    "expires_in": {
+                      "type": "string",
+                      "title": "접근토큰 유효기간",
+                      "description": "유효기간 (초)",
+                      "maxLength": 10
+                    },
+                    "scope": {
+                      "type": "string",
+                      "title": "scope",
+                      "description": "\"login\" 고정",
+                      "maxLength": 256
+                    },
+                    "token_type": {
+                      "type": "string",
+                      "title": "토큰 유형",
+                      "description": "Bearer",
+                      "maxLength": 256
+                    }
+                  }
+                },
+                "example": {
+                  "access_token": "{access_token}",
+                  "scope": "login",
+                  "token_type": "Bearer",
+                  "expires_in": 604800
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "grant_type",
+                  "client_id",
+                  "client_secret",
+                  "scope"
+                ],
+                "properties": {
+                  "grant_type": {
+                    "type": "string",
+                    "title": "권한부여 Type",
+                    "description": "\"client_credentials\" 고정",
+                    "maxLength": 100
+                  },
+                  "client_id": {
+                    "type": "string",
+                    "title": "고객 앱 Key",
+                    "description": "포탈에서 발급된 고객의 앱 Key",
+                    "maxLength": 36
+                  },
+                  "client_secret": {
+                    "type": "string",
+                    "title": "고객 앱 비밀 Key",
+                    "description": "포탈에서 발급된 고객의 앱 비밀 Key",
+                    "maxLength": 36
+                  },
+                  "scope": {
+                    "type": "string",
+                    "title": "scope",
+                    "description": "\"login\" 고정",
+                    "maxLength": 256
+                  }
+                }
+              },
+              "example": {
+                "grant_type": "client_credentials",
+                "client_id": "{app_key}",
+                "client_secret": "{app_secret}",
+                "scope": "login"
+              }
+            }
+          }
+        },
+        "x-tr-id": "token",
+        "x-tps": "-"
+      }
+    },
+    "/accounts/v1/me/deposit": {
+      "get": {
+        "operationId": "deposit",
+        "summary": "내 계좌 예수금 상세 조회",
+        "tags": [
+          "account"
+        ],
+        "description": "접근토큰에 매핑된 계좌의 예수금·출금가능금액·주문가능금액과 대출·미수 현황을 한 번에 조회합니다.",
+        "parameters": [
+          {
+            "name": "mac_address",
+            "in": "header",
+            "required": true,
+            "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+            "schema": {
+              "type": "string",
+              "title": "사용자 MAC_ADDRESS",
+              "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+              "maxLength": 12
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "rsp_cd": {
+                      "type": "string",
+                      "title": "응답코드",
+                      "description": "이 API 의 성공 응답 코드입니다.\n\"5766\": 조회 완료",
+                      "maxLength": 8
+                    },
+                    "rsp_msg": {
+                      "type": "string",
+                      "title": "응답메시지",
+                      "description": "응답 메시지입니다. 오류일 때 원인이 이 값에 담깁니다.",
+                      "maxLength": 200
+                    },
+                    "rsp_sub_msg": {
+                      "type": "string",
+                      "title": "응답 상세 메시지",
+                      "description": "응답에 덧붙는 상세 사유입니다. 값이 없으면 응답에서 이 항목 자체가 빠집니다.",
+                      "maxLength": 200
+                    },
+                    "tr_cont": {
+                      "type": "string",
+                      "title": "연속조회 여부",
+                      "description": "항상 \"0\"으로 내려옵니다. 이 API는 연속조회를 지원하지 않습니다.",
+                      "maxLength": 1
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "tfam": {
+                          "type": "number",
+                          "title": "예수금",
+                          "description": "계좌의 원화 현금 잔액입니다. 원 단위 정수로 내려옵니다.\n\n출금 가능 금액은 출금 가능 금액(drng_able_amt), 현금 주문 가능 금액은 주문 가능 현금 금액(oder_able_cash_amt)으로 따로 내려옵니다."
+                        },
+                        "d1_aft_tfam": {
+                          "type": "number",
+                          "title": "1일 후 예수금",
+                          "description": "1일 후(D+1) 예수금입니다."
+                        },
+                        "d2_aft_tfam": {
+                          "type": "number",
+                          "title": "2일 후 예수금",
+                          "description": "2일 후(D+2) 예수금입니다."
+                        },
+                        "drng_able_amt": {
+                          "type": "number",
+                          "title": "출금 가능 금액",
+                          "description": "출금 가능 금액입니다. 원 단위 정수입니다."
+                        },
+                        "prdy_seln_byov_excl_amt": {
+                          "type": "number",
+                          "title": "전일매도매수정산금액",
+                          "description": "전일 매도매수 정산금액입니다."
+                        },
+                        "tday_seln_byov_excl_amt": {
+                          "type": "number",
+                          "title": "당일매도매수정산금액",
+                          "description": "당일 매도매수 정산금액입니다."
+                        },
+                        "check_amt": {
+                          "type": "number",
+                          "title": "수표 금액",
+                          "description": "수표 금액입니다."
+                        },
+                        "oder_able_cash_amt": {
+                          "type": "number",
+                          "title": "주문 가능 현금 금액",
+                          "description": "주문 가능 현금 금액입니다. 현금만을 기준으로 하는 주문 가능 금액입니다. 대용을 포함한 금액은 주문 가능 대용 금액(oder_able_sbsn_amt)으로 따로 내려옵니다."
+                        },
+                        "oder_able_sbsn_amt": {
+                          "type": "number",
+                          "title": "주문 가능 대용 금액",
+                          "description": "주문 가능 대용 금액입니다. 주문 가능 현금 금액(oder_able_cash_amt)과는 별개 항목입니다."
+                        },
+                        "oder_able_intg_amt": {
+                          "type": "number",
+                          "title": "주문가능통합금액",
+                          "description": "통합증거금 기준 주문 가능 금액입니다."
+                        },
+                        "dmst_othr_crnc_marg": {
+                          "type": "number",
+                          "title": "국내타통화증거금",
+                          "description": "국내 주문에 잡힌 타통화 증거금입니다."
+                        },
+                        "ovrs_othr_crnc_marg": {
+                          "type": "number",
+                          "title": "해외타통화증거금",
+                          "description": "해외 주문에 잡힌 타통화 증거금입니다."
+                        },
+                        "crdt_loan_amt": {
+                          "type": "number",
+                          "title": "신용대출금액",
+                          "description": "신용대출금액입니다."
+                        },
+                        "crdt_stln_amt": {
+                          "type": "number",
+                          "title": "신용 대주 금액",
+                          "description": "신용 대주 금액입니다."
+                        },
+                        "deps_ascr_amt": {
+                          "type": "number",
+                          "title": "예탁 담보대출 금액",
+                          "description": "예탁 담보대출 금액입니다."
+                        },
+                        "seln_ascr_amt": {
+                          "type": "number",
+                          "title": "매도 담보대출 금액",
+                          "description": "매도 담보대출 금액입니다."
+                        },
+                        "cash_unam": {
+                          "type": "number",
+                          "title": "현금 미수금",
+                          "description": "현금 미수금입니다."
+                        },
+                        "cash_unam_ovfe": {
+                          "type": "number",
+                          "title": "현금 미수금 연체료",
+                          "description": "현금 미수금 연체료입니다."
+                        },
+                        "loan_int_ntpd_amt": {
+                          "type": "number",
+                          "title": "대출 이자 미납 금액",
+                          "description": "대출 이자 미납 금액입니다."
+                        },
+                        "uncl_crdt_int_ovfe": {
+                          "type": "number",
+                          "title": "미수 신용 이자 연체료",
+                          "description": "미수 신용 이자 연체료입니다."
+                        },
+                        "etc_lndn_amt": {
+                          "type": "number",
+                          "title": "기타 대여 금액",
+                          "description": "기타 대여 금액입니다."
+                        },
+                        "etc_lndn_amt_ovfe": {
+                          "type": "number",
+                          "title": "기타 대여 금액 연체료",
+                          "description": "기타 대여 금액 연체료입니다."
+                        },
+                        "etc_unam": {
+                          "type": "number",
+                          "title": "기타 미수금",
+                          "description": "기타 미수금입니다."
+                        },
+                        "etc_uncl_amt_ovfe": {
+                          "type": "number",
+                          "title": "기타 미수 금액 연체료",
+                          "description": "기타 미수 금액 연체료입니다."
+                        },
+                        "uncl_scrt_rsrv_amt": {
+                          "type": "number",
+                          "title": "미수 증권 확보 금액",
+                          "description": "미수 증권 확보 금액입니다."
+                        },
+                        "fee_unam": {
+                          "type": "number",
+                          "title": "수수료미수금",
+                          "description": "수수료미수금입니다."
+                        },
+                        "nnrd_loan_amt": {
+                          "type": "number",
+                          "title": "미상환대출금액",
+                          "description": "미상환대출금액입니다."
+                        },
+                        "cntg_rflc_morg_dfcn_amt": {
+                          "type": "number",
+                          "title": "체결 반영 담보 부족 금액",
+                          "description": "당일 체결 반영 기준으로 부족한 담보 금액입니다."
+                        },
+                        "cntg_rflc_morg_rate": {
+                          "type": "string",
+                          "title": "체결반영담보비율",
+                          "description": "체결 반영 담보비율. 소수 5자리 문자열"
+                        },
+                        "smam_loan_amt": {
+                          "type": "number",
+                          "title": "소액대출금액",
+                          "description": "소액대출금액입니다."
+                        }
+                      },
+                      "title": "DATA"
+                    }
+                  }
+                },
+                "example": {
+                  "data": {
+                    "tfam": 100000000,
+                    "d1_aft_tfam": 100000000,
+                    "d2_aft_tfam": 100000000,
+                    "drng_able_amt": 100000000,
+                    "prdy_seln_byov_excl_amt": 0,
+                    "tday_seln_byov_excl_amt": 0,
+                    "check_amt": 0,
+                    "oder_able_cash_amt": 100000000,
+                    "oder_able_sbsn_amt": 100000000,
+                    "oder_able_intg_amt": 0,
+                    "dmst_othr_crnc_marg": 0,
+                    "ovrs_othr_crnc_marg": 0,
+                    "crdt_loan_amt": 0,
+                    "crdt_stln_amt": 0,
+                    "deps_ascr_amt": 0,
+                    "seln_ascr_amt": 0,
+                    "cash_unam": 0,
+                    "cash_unam_ovfe": 0,
+                    "loan_int_ntpd_amt": 0,
+                    "uncl_crdt_int_ovfe": 0,
+                    "etc_lndn_amt": 0,
+                    "etc_lndn_amt_ovfe": 0,
+                    "etc_unam": 0,
+                    "etc_uncl_amt_ovfe": 0,
+                    "uncl_scrt_rsrv_amt": 0,
+                    "fee_unam": 0,
+                    "nnrd_loan_amt": 0,
+                    "cntg_rflc_morg_dfcn_amt": 0,
+                    "cntg_rflc_morg_rate": "0.00000",
+                    "smam_loan_amt": 0
+                  },
+                  "rsp_cd": "5766",
+                  "rsp_msg": "조회가 완료되었습니다.",
+                  "tr_cont": "0"
+                }
+              }
+            }
+          }
+        },
+        "x-tr-id": "obacb_balc_024r",
+        "x-tps": "10"
+      }
+    },
+    "/accounts/v1/me/holdings": {
+      "get": {
+        "operationId": "holdings",
+        "summary": "내 계좌 종목별 평가 조회",
+        "tags": [
+          "account"
+        ],
+        "description": "내 계좌 종목별 평가 조회",
+        "parameters": [
+          {
+            "name": "mac_address",
+            "in": "header",
+            "required": true,
+            "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+            "schema": {
+              "type": "string",
+              "title": "사용자 MAC_ADDRESS",
+              "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+              "maxLength": 12
+            }
+          },
+          {
+            "name": "nthn_rmnd_incu_yn",
+            "in": "query",
+            "required": false,
+            "description": "무잔고포함여부입니다. \"Y\" 또는 \"N\" 을 넣습니다. (query string)",
+            "schema": {
+              "type": "string",
+              "title": "무잔고포함여부",
+              "description": "무잔고포함여부입니다. \"Y\" 또는 \"N\" 을 넣습니다. (query string)",
+              "maxLength": 1
+            },
+            "example": "N"
+          },
+          {
+            "name": "tr_cont",
+            "in": "query",
+            "required": false,
+            "description": "다음 페이지를 요청할 때 정확히 \"1\" 을 넣습니다. 첫 조회에는 넣지 않습니다. 연속조회 키(tr_cont_key)와 반드시 함께 보내십시오. (query string)",
+            "schema": {
+              "type": "string",
+              "title": "연속조회 여부",
+              "description": "다음 페이지를 요청할 때 정확히 \"1\" 을 넣습니다. 첫 조회에는 넣지 않습니다. 연속조회 키(tr_cont_key)와 반드시 함께 보내십시오. (query string)",
+              "maxLength": 1
+            }
+          },
+          {
+            "name": "tr_cont_key",
+            "in": "query",
+            "required": false,
+            "description": "직전 응답의 tr_cont_key 를 한 글자도 바꾸지 말고 그대로 URL 인코딩하여 넣습니다. 첫 조회에는 넣지 않습니다. tr_cont 에 \"1\" 을 함께 보내십시오. 키를 바꾸면 오류 없이 첫 페이지가 다시 내려옵니다. (query string)",
+            "schema": {
+              "type": "string",
+              "title": "연속조회 키",
+              "description": "직전 응답의 tr_cont_key 를 한 글자도 바꾸지 말고 그대로 URL 인코딩하여 넣습니다. 첫 조회에는 넣지 않습니다. tr_cont 에 \"1\" 을 함께 보내십시오. 키를 바꾸면 오류 없이 첫 페이지가 다시 내려옵니다. (query string)",
+              "maxLength": 200
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "rsp_cd": {
+                      "type": "string",
+                      "title": "응답코드",
+                      "description": "이 API 의 응답 코드입니다.\n\"5766\": 조회 완료\n오류 응답 본문에는 data 와 tr_cont 가 없으므로 rsp_cd 를 먼저 확인한 뒤 data 를 읽으십시오.",
+                      "maxLength": 8
+                    },
+                    "rsp_msg": {
+                      "type": "string",
+                      "title": "응답메시지",
+                      "description": "응답 메시지입니다. 오류일 때 원인이 이 값에 담깁니다.",
+                      "maxLength": 200
+                    },
+                    "rsp_sub_msg": {
+                      "type": "string",
+                      "title": "응답 상세 메시지",
+                      "description": "응답에 덧붙는 상세 사유입니다. 값이 없으면 응답에서 이 항목 자체가 빠집니다.",
+                      "maxLength": 200
+                    },
+                    "tr_cont": {
+                      "type": "string",
+                      "title": "연속조회 여부",
+                      "description": "다음 페이지가 남아 있으면 \"1\", 마지막이면 \"0\" 입니다.\n한 번에 30건씩 내려오며, 다음 페이지는 tr_cont 와 tr_cont_key 를 요청에 함께 보내 이어서 받으십시오. 키는 쿼리스트링으로 보냅니다.",
+                      "maxLength": 1
+                    },
+                    "tr_cont_key": {
+                      "type": "string",
+                      "title": "연속조회 키",
+                      "description": "tr_cont 가 \"1\" 일 때만 응답에 담깁니다. 마지막 페이지(tr_cont \"0\")와 오류 응답에는 이 항목이 없습니다. 값 안에 공백이 길게 이어지므로 잘라내거나 줄이지 말고 URL 인코딩하여 쿼리스트링으로 보내십시오.",
+                      "maxLength": 200
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "iscd": {
+                            "type": "string",
+                            "title": "종목 코드",
+                            "description": "보유 종목의 종목 코드입니다.\n국내주식 행: \"A\" + 단축코드 6자리 (예: \"A005930\")\n해외주식 행: 심볼 + \".\" + 거래소 코드 (예: \"AAPL.OQ\")\n어느 쪽인지는 유가증권구분명(mksc_cls_name)으로 판단하십시오. 해외 행의 순수 심볼은 해외주식 잔고 조회의 ovrs_stck_symb_iscd 를 쓰십시오.",
+                            "maxLength": 100
+                          },
+                          "isnm": {
+                            "type": "string",
+                            "title": "종목명",
+                            "description": "종목명입니다. (예: \"삼성전자\")",
+                            "maxLength": 100
+                          },
+                          "rmnd_srno": {
+                            "type": "string",
+                            "title": "잔고일련번호",
+                            "description": "잔고일련번호. 현재 빈 값",
+                            "maxLength": 100
+                          },
+                          "pros_trgt_cls_code": {
+                            "type": "string",
+                            "title": "처리대상구분코드",
+                            "description": "보유 종목이 어느 자산에 속하는지 구분합니다. \"1\": 국내주식 \"J\": 해외주식 국내주식과 해외주식이 한 목록에 섞여 내려오며, 국내분만 쓰시려면 이 값으로 거르십시오. 해외 종목은 iscd 가 \"MU.OQ\" 처럼 심볼에 거래소 접미사가 붙은 형태입니다.",
+                            "maxLength": 2
+                          },
+                          "mksc_cls_name": {
+                            "type": "string",
+                            "title": "유가증권구분명",
+                            "description": "잔고 유형입니다. \"주식일반\" · \"신용\" · \"해외주식\" · \"해외주식(소수점)\" 이 내려옵니다.\n해외주식 행도 이 목록에 함께 내려옵니다. \"해외주식\" 행의 단가(byng_unpr·psnt_prc)는 그 종목의 거래 통화이고, 금액 항목은 원화 환산입니다.",
+                            "maxLength": 40
+                          },
+                          "mksc_cls_code": {
+                            "type": "string",
+                            "title": "유가증권구분코드",
+                            "description": "유가증권 구분 코드 자리이며 빈 값으로 내려오므로 이 항목으로 분기하지 마십시오. 잔고 유형은 유가증권구분명(mksc_cls_name)으로 판단하십시오.",
+                            "maxLength": 2
+                          },
+                          "rmnd_qty": {
+                            "type": "number",
+                            "title": "잔고수량",
+                            "description": "현재 보유한 정수 수량입니다. 소수점 해외주식 행은 0 이 내려오며, 이때 실제 수량은 hldn_issu_rmnd_qty 에 담깁니다."
+                          },
+                          "byng_unpr": {
+                            "type": "string",
+                            "title": "매입단가",
+                            "description": "매입 평균 단가입니다. 잔고 유형(mksc_cls_name)이 \"주식일반\"·\"신용\" 인 행은 원화, \"해외주식\" 인 행은 그 종목의 거래 통화입니다. \"해외주식(소수점)\" 행의 통화는 이 항목으로 단정하지 마십시오.",
+                            "maxLength": 100
+                          },
+                          "psnt_prc": {
+                            "type": "string",
+                            "title": "현재가격",
+                            "description": "현재 평가에 쓰인 시세입니다. 잔고 유형(mksc_cls_name)이 \"주식일반\"·\"신용\" 인 행은 원화, \"해외주식\" 인 행은 그 종목의 거래 통화입니다. \"해외주식(소수점)\" 행의 통화는 이 항목으로 단정하지 마십시오.",
+                            "maxLength": 19
+                          },
+                          "prdy_last_prc": {
+                            "type": "string",
+                            "title": "전일최종가격",
+                            "description": "전일 최종가. 소수 8자리 문자열",
+                            "maxLength": 19
+                          },
+                          "prdy_clpr_vrss": {
+                            "type": "string",
+                            "title": "전일종가대비",
+                            "description": "전일 종가 대비. 부호 포함 문자열",
+                            "maxLength": 100
+                          },
+                          "vltn_amt": {
+                            "type": "number",
+                            "title": "평가금액",
+                            "description": "평가금액입니다. 국내주식 행은 같은 응답의 현재가격(psnt_prc)에 잔고수량을 곱한 값입니다."
+                          },
+                          "vltn_prls_amt": {
+                            "type": "number",
+                            "title": "평가손익금액",
+                            "description": "평가손익 금액입니다. 평가금액(vltn_amt)에서 매입금액(byng_amt)을 뺀 값이며, 손실이면 음수로 내려옵니다."
+                          },
+                          "ert": {
+                            "type": "string",
+                            "title": "수익률",
+                            "description": "수익률(%)입니다. 소수 5자리 문자열입니다.",
+                            "maxLength": 100
+                          },
+                          "byov_date": {
+                            "type": "string",
+                            "title": "매수일자",
+                            "description": "매수일자. 현재 빈 값",
+                            "maxLength": 8
+                          },
+                          "loan_amt": {
+                            "type": "number",
+                            "title": "대출금액",
+                            "description": "그 행의 보유분에 걸려 있는 대출 금액입니다."
+                          },
+                          "loan_date": {
+                            "type": "string",
+                            "title": "대출일자",
+                            "description": "대출일자 YYYYMMDD. 신용 잔고만 채워진다",
+                            "maxLength": 8
+                          },
+                          "loan_mtrt_date": {
+                            "type": "string",
+                            "title": "대출만기일자",
+                            "description": "대출만기일자 YYYYMMDD. 신용 잔고만 채워진다",
+                            "maxLength": 8
+                          },
+                          "byng_amt": {
+                            "type": "number",
+                            "title": "매입금액",
+                            "description": "보유분의 매입금액 합계입니다."
+                          },
+                          "pstn_cls_code": {
+                            "type": "string",
+                            "title": "포지션구분코드",
+                            "description": "포지션 구분입니다. 주식은 빈 값입니다.",
+                            "maxLength": 2
+                          },
+                          "ftop_type_code": {
+                            "type": "string",
+                            "title": "장내파생유형코드",
+                            "description": "장내파생 유형입니다. 주식 잔고에서는 빈 값입니다.",
+                            "maxLength": 2
+                          },
+                          "tr_mltl": {
+                            "type": "string",
+                            "title": "거래승수",
+                            "description": "거래승수입니다.",
+                            "maxLength": 100
+                          },
+                          "loan_dtl_type_code": {
+                            "type": "string",
+                            "title": "대출상세유형코드",
+                            "description": "대출 상세 유형입니다. 신용 잔고에만 채워집니다.\n\"0101\": 자기융자\n\"0102\": 유통융자\n\"0201\": 예탁주식(대출)",
+                            "maxLength": 4
+                          },
+                          "txat_vltn_amt": {
+                            "type": "number",
+                            "title": "세후평가금액",
+                            "description": "세후 평가금액입니다. 주식은 0 입니다."
+                          },
+                          "rltm_prdy_vrss_sign": {
+                            "type": "string",
+                            "title": "실시간전일대비부호",
+                            "description": "전일 종가 대비 방향 코드입니다. 값에 대응하는 이름은 응답에 함께 오지 않습니다.",
+                            "maxLength": 100
+                          },
+                          "pris_cpld_cfcn": {
+                            "type": "string",
+                            "title": "물가연동계수",
+                            "description": "물가연동계수입니다.",
+                            "maxLength": 100
+                          },
+                          "byov_ert": {
+                            "type": "string",
+                            "title": "매수수익률",
+                            "description": "매수수익률. 현재 0",
+                            "maxLength": 100
+                          },
+                          "tax_paym_cls_code": {
+                            "type": "string",
+                            "title": "세금납입구분코드",
+                            "description": "세금 납입 구분입니다. 주식은 빈 값입니다.",
+                            "maxLength": 2
+                          },
+                          "if_tr_amt": {
+                            "type": "string",
+                            "title": "IF거래금액",
+                            "description": "이름과 달리 금액이 아니라 수량 계열 값입니다. 일반·신용·해외주식 행은 잔고수량(rmnd_qty)과 같은 값이, 소수점 해외주식 행은 소수 문자열이 내려옵니다. 계산에는 쓰지 마십시오. 수량은 rmnd_qty·hldn_issu_rmnd_qty 를, 금액은 매입금액(byng_amt)·평가금액(vltn_amt)을 쓰십시오.",
+                            "maxLength": 19
+                          },
+                          "hldn_issu_rmnd_qty": {
+                            "type": "string",
+                            "title": "보유종목잔고수량",
+                            "description": "문자열로 내려옵니다. 소수점 해외주식 행은 잔고수량(rmnd_qty)이 0 이고 실제 보유 수량이 이 항목에 담깁니다. 그 밖의 행의 수량은 rmnd_qty 를 쓰십시오.",
+                            "maxLength": 19
+                          },
+                          "mtrt_date": {
+                            "type": "string",
+                            "title": "만기일자",
+                            "description": "만기일자입니다. 주식은 빈 값입니다.",
+                            "maxLength": 8
+                          },
+                          "rmnd_dqty": {
+                            "type": "string",
+                            "title": "잔고소수점수량",
+                            "description": "소수 10자리 문자열입니다. (예: \"0.0000000000\") 소수점 해외주식 행의 실제 보유 수량은 hldn_issu_rmnd_qty 를 쓰십시오.",
+                            "maxLength": 19
+                          }
+                        }
+                      },
+                      "title": "보유종목 목록"
+                    }
+                  }
+                },
+                "example": {
+                  "data": [
+                    {
+                      "iscd": "A005930",
+                      "isnm": "삼성전자",
+                      "rmnd_srno": "",
+                      "pros_trgt_cls_code": "1",
+                      "mksc_cls_name": "주식일반",
+                      "mksc_cls_code": "",
+                      "rmnd_qty": 10,
+                      "byng_unpr": "10000.00",
+                      "psnt_prc": "1000.000000",
+                      "prdy_last_prc": "1000.00000000",
+                      "prdy_clpr_vrss": "1000.00",
+                      "vltn_amt": 100000,
+                      "vltn_prls_amt": -100000,
+                      "ert": "-10.00000",
+                      "byov_date": "",
+                      "loan_amt": 0,
+                      "loan_date": "",
+                      "loan_mtrt_date": "",
+                      "byng_amt": 100000,
+                      "pstn_cls_code": "",
+                      "ftop_type_code": "",
+                      "tr_mltl": "0.00000000",
+                      "loan_dtl_type_code": "",
+                      "txat_vltn_amt": 0,
+                      "rltm_prdy_vrss_sign": "2",
+                      "pris_cpld_cfcn": "0.00000",
+                      "byov_ert": "0.0000",
+                      "tax_paym_cls_code": "",
+                      "if_tr_amt": "22",
+                      "hldn_issu_rmnd_qty": "0.00000",
+                      "mtrt_date": "",
+                      "rmnd_dqty": "0.0000000000"
+                    },
+                    {
+                      "iscd": "A005930",
+                      "isnm": "삼성전자",
+                      "rmnd_srno": "",
+                      "pros_trgt_cls_code": "1",
+                      "mksc_cls_name": "주식일반",
+                      "mksc_cls_code": "",
+                      "rmnd_qty": 100,
+                      "byng_unpr": "10000.00",
+                      "psnt_prc": "10000.000000",
+                      "prdy_last_prc": "10000.00000000",
+                      "prdy_clpr_vrss": "10000.00",
+                      "vltn_amt": 1000000,
+                      "vltn_prls_amt": -10000,
+                      "ert": "-0.00000",
+                      "byov_date": "",
+                      "loan_amt": 0,
+                      "loan_date": "",
+                      "loan_mtrt_date": "",
+                      "byng_amt": 1000000,
+                      "pstn_cls_code": "",
+                      "ftop_type_code": "",
+                      "tr_mltl": "0.00000000",
+                      "loan_dtl_type_code": "",
+                      "txat_vltn_amt": 0,
+                      "rltm_prdy_vrss_sign": "2",
+                      "pris_cpld_cfcn": "0.00000",
+                      "byov_ert": "0.0000",
+                      "tax_paym_cls_code": "",
+                      "if_tr_amt": "102",
+                      "hldn_issu_rmnd_qty": "0.00000",
+                      "mtrt_date": "",
+                      "rmnd_dqty": "0.0000000000"
+                    }
+                  ],
+                  "rsp_cd": "5766",
+                  "rsp_msg": "조회가 완료되었습니다.",
+                  "tr_cont": "0"
+                }
+              }
+            }
+          }
+        },
+        "x-tr-id": "obacb_balc_114r",
+        "x-tps": "10"
+      }
+    },
+    "/trading/v1/orders/buy": {
+      "post": {
+        "operationId": "orders_buy",
+        "summary": "일반주문 매수",
+        "tags": [
+          "trading"
+        ],
+        "description": "국내주식 일반 주문 매수",
+        "parameters": [
+          {
+            "name": "mac_address",
+            "in": "header",
+            "required": true,
+            "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+            "schema": {
+              "type": "string",
+              "title": "사용자 MAC_ADDRESS",
+              "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+              "maxLength": 12
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "rsp_cd": {
+                      "type": "string",
+                      "title": "응답코드",
+                      "description": "응답 코드\n\"0001\": 주문 접수 성공\n오류는 종류와 무관하게 HTTP 500 으로 반환되며 사유는 rsp_msg 에 담깁니다.",
+                      "maxLength": 8
+                    },
+                    "rsp_msg": {
+                      "type": "string",
+                      "title": "응답메시지",
+                      "description": "응답 메시지입니다. 오류일 때 원인이 이 값에 담깁니다.",
+                      "maxLength": 200
+                    },
+                    "tr_cont": {
+                      "type": "string",
+                      "title": "연속조회 여부",
+                      "description": "항상 \"0\"으로 내려옵니다. 이 API는 연속조회를 지원하지 않습니다.",
+                      "maxLength": 1
+                    },
+                    "rsp_sub_msg": {
+                      "type": "string",
+                      "title": "응답 상세 메시지",
+                      "description": "오류일 때만 내려오며 조치 정보가 담깁니다.\n정상 응답에는 포함되지 않습니다.",
+                      "maxLength": 200
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "oder_no": {
+                          "type": "number",
+                          "title": "주문번호",
+                          "description": "이번 요청으로 채번된 주문 번호입니다. 주식 주문 정정(/trading/v1/orders/modify)·취소(/trading/v1/orders/cancel) 시 orgl_oder_no 에 이 값을 넣습니다."
+                        },
+                        "warn_cls_code": {
+                          "type": "string",
+                          "title": "경고구분코드",
+                          "description": "경고 구분 코드\n\"0\": 정상 접수\n\n경고 ― \"1\" \"3\" \"4\" \"6\" \"7\" \"9\" \"a\" \"c\" \"d\" \"f\" \"g\"\nwarn_msg 내용을 확인한 뒤 같은 요청을 warn_cnfr_yn 으로 재전송합니다.\n\n보류 ― \"2\" \"5\" \"8\" \"b\" \"e\" \"h\"\n\n경고 값은 \"1\" 하나가 아니므로 위 집합으로 판정하십시오.",
+                          "maxLength": 1
+                        },
+                        "warn_msg": {
+                          "type": "string",
+                          "title": "메시지내용",
+                          "description": "경고 또는 안내 문구입니다.",
+                          "maxLength": 100
+                        }
+                      },
+                      "title": "DATA"
+                    }
+                  }
+                },
+                "example": {
+                  "data": {
+                    "oder_no": 100,
+                    "warn_cls_code": "0",
+                    "warn_msg": ""
+                  },
+                  "rsp_cd": "0001",
+                  "rsp_msg": "주문이 완료되었습니다.",
+                  "tr_cont": "0"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "iscd",
+                  "oder_unpr",
+                  "odqt",
+                  "oder_cls_code",
+                  "oder_cond_cls_code",
+                  "exch_kind_code"
+                ],
+                "properties": {
+                  "iscd": {
+                    "type": "string",
+                    "title": "종목 코드",
+                    "description": "종목 코드\n주식은 \"A\" + 6자리 숫자입니다. (예: A005930)",
+                    "maxLength": 12
+                  },
+                  "oder_unpr": {
+                    "type": "number",
+                    "title": "주문단가",
+                    "description": "주문 단가\n시장가 주문(oder_cls_code \"05\")은 0을 입력합니다."
+                  },
+                  "odqt": {
+                    "type": "number",
+                    "title": "주문수량",
+                    "description": "주문 수량입니다."
+                  },
+                  "oder_cls_code": {
+                    "type": "string",
+                    "title": "주문구분코드",
+                    "description": "주문 구분 코드\n\"01\": 보통(지정가)\n\"05\": 시장가\n\"06\": 조건부지정가\n\"12\": 최유리지정가\n\"13\": 최우선지정가\n\"61\": 장전시간외\n\"71\": 장후시간외\n\"83\": 스톱지정가\n\"84\": 중간가",
+                    "maxLength": 2
+                  },
+                  "oder_cond_cls_code": {
+                    "type": "string",
+                    "title": "주문조건구분코드",
+                    "description": "주문 조건 구분 코드\n\"0\": 일반\n\"3\": IOC\n\"4\": FOK",
+                    "maxLength": 1
+                  },
+                  "orgl_oder_no": {
+                    "type": "number",
+                    "title": "원주문번호",
+                    "description": "신규 주문에는 원주문이 없으므로 0을 넣습니다."
+                  },
+                  "whol_rctf_cncl_yn": {
+                    "type": "string",
+                    "title": "전체정정취소여부",
+                    "description": "신규 주문에는 해당하지 않으므로 \"N\"을 넣습니다.",
+                    "maxLength": 1
+                  },
+                  "warn_cnfr_yn": {
+                    "type": "string",
+                    "title": "경고확인여부",
+                    "description": "경고 확인 여부\n\"N\": 미확인\n\"Y\": 확인\n최초 요청은 \"N\"으로 보내거나 넣지 않습니다. 응답의 warn_cls_code가 경고 값(\"1\" \"3\" \"4\" \"6\" \"7\" \"9\" \"a\" \"c\" \"d\" \"f\" \"g\")이면 warn_msg 내용을 확인한 뒤 같은 요청에 이 항목을 \"Y\"로 바꿔 재전송합니다.",
+                    "maxLength": 1
+                  },
+                  "exch_kind_code": {
+                    "type": "string",
+                    "title": "거래소종류코드",
+                    "description": "거래소 종류 코드\n\"01\": KRX\n\"02\": NXT\n\"03\": SOR",
+                    "maxLength": 2
+                  },
+                  "aspr_cond_prc": {
+                    "type": "number",
+                    "title": "호가조건가격",
+                    "description": "스톱지정가 주문(oder_cls_code \"83\")에서 감시할 가격을 입력합니다."
+                  }
+                }
+              },
+              "example": {
+                "iscd": "A005930",
+                "oder_unpr": 273000,
+                "odqt": 5,
+                "oder_cls_code": "01",
+                "oder_cond_cls_code": "0",
+                "orgl_oder_no": 0,
+                "whol_rctf_cncl_yn": "N",
+                "warn_cnfr_yn": "N",
+                "exch_kind_code": "01"
+              }
+            }
+          }
+        },
+        "x-tr-id": "obtrs_oder_101a",
+        "x-tps": "10"
+      }
+    },
+    "/trading/v1/orders/sell": {
+      "post": {
+        "operationId": "orders_sell",
+        "summary": "일반주문 매도",
+        "tags": [
+          "trading"
+        ],
+        "description": "국내주식 일반 주문 매도",
+        "parameters": [
+          {
+            "name": "mac_address",
+            "in": "header",
+            "required": true,
+            "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+            "schema": {
+              "type": "string",
+              "title": "사용자 MAC_ADDRESS",
+              "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+              "maxLength": 12
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "rsp_cd": {
+                      "type": "string",
+                      "title": "응답코드",
+                      "description": "응답 코드\n\"0001\": 주문 접수 성공\n오류는 종류와 무관하게 HTTP 500 으로 반환되며 사유는 rsp_msg 에 담깁니다.",
+                      "maxLength": 8
+                    },
+                    "rsp_msg": {
+                      "type": "string",
+                      "title": "응답메시지",
+                      "description": "응답 메시지입니다. 오류일 때 원인이 이 값에 담깁니다.",
+                      "maxLength": 200
+                    },
+                    "tr_cont": {
+                      "type": "string",
+                      "title": "연속조회 여부",
+                      "description": "항상 \"0\"으로 내려옵니다. 이 API는 연속조회를 지원하지 않습니다.",
+                      "maxLength": 1
+                    },
+                    "rsp_sub_msg": {
+                      "type": "string",
+                      "title": "응답 상세 메시지",
+                      "description": "오류일 때만 내려오며 조치 정보가 담깁니다.\n정상 응답에는 포함되지 않습니다.",
+                      "maxLength": 200
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "oder_no": {
+                          "type": "number",
+                          "title": "주문번호",
+                          "description": "이번 요청으로 채번된 주문 번호입니다. 주식 주문 정정(/trading/v1/orders/modify)·취소(/trading/v1/orders/cancel) 시 orgl_oder_no 에 이 값을 넣습니다."
+                        },
+                        "warn_cls_code": {
+                          "type": "string",
+                          "title": "경고구분코드",
+                          "description": "경고 구분 코드\n\"0\": 정상 접수\n\n경고 ― \"1\" \"3\" \"4\" \"6\" \"7\" \"9\" \"a\" \"c\" \"d\" \"f\" \"g\"\nwarn_msg 내용을 확인한 뒤 같은 요청을 warn_cnfr_yn 으로 재전송합니다.\n\n보류 ― \"2\" \"5\" \"8\" \"b\" \"e\" \"h\"\n\n경고 값은 \"1\" 하나가 아니므로 위 집합으로 판정하십시오.",
+                          "maxLength": 1
+                        },
+                        "warn_msg": {
+                          "type": "string",
+                          "title": "메시지내용",
+                          "description": "경고 또는 안내 문구입니다.",
+                          "maxLength": 100
+                        }
+                      },
+                      "title": "DATA"
+                    }
+                  }
+                },
+                "example": {
+                  "data": {
+                    "oder_no": 100,
+                    "warn_cls_code": "0",
+                    "warn_msg": ""
+                  },
+                  "rsp_cd": "0001",
+                  "rsp_msg": "주문이 완료되었습니다.",
+                  "tr_cont": "0"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "iscd",
+                  "oder_unpr",
+                  "odqt",
+                  "oder_cls_code",
+                  "oder_cond_cls_code",
+                  "exch_kind_code"
+                ],
+                "properties": {
+                  "iscd": {
+                    "type": "string",
+                    "title": "종목 코드",
+                    "description": "종목 코드\n주식은 \"A\" + 6자리 숫자입니다. (예: A005930)",
+                    "maxLength": 12
+                  },
+                  "oder_unpr": {
+                    "type": "number",
+                    "title": "주문단가",
+                    "description": "주문 단가\n시장가 주문(oder_cls_code \"05\")은 0을 입력합니다."
+                  },
+                  "odqt": {
+                    "type": "number",
+                    "title": "주문수량",
+                    "description": "주문 수량입니다."
+                  },
+                  "oder_cls_code": {
+                    "type": "string",
+                    "title": "주문구분코드",
+                    "description": "주문 구분 코드\n\"01\": 보통(지정가)\n\"05\": 시장가\n\"06\": 조건부지정가\n\"12\": 최유리지정가\n\"13\": 최우선지정가\n\"61\": 장전시간외\n\"71\": 장후시간외\n\"83\": 스톱지정가\n\"84\": 중간가",
+                    "maxLength": 2
+                  },
+                  "oder_cond_cls_code": {
+                    "type": "string",
+                    "title": "주문조건구분코드",
+                    "description": "주문 조건 구분 코드\n\"0\": 일반\n\"3\": IOC\n\"4\": FOK",
+                    "maxLength": 1
+                  },
+                  "orgl_oder_no": {
+                    "type": "number",
+                    "title": "원주문번호",
+                    "description": "신규 주문에는 원주문이 없으므로 0을 넣습니다."
+                  },
+                  "whol_rctf_cncl_yn": {
+                    "type": "string",
+                    "title": "전체정정취소여부",
+                    "description": "신규 주문에는 해당하지 않으므로 \"N\"을 넣습니다.",
+                    "maxLength": 1
+                  },
+                  "warn_cnfr_yn": {
+                    "type": "string",
+                    "title": "경고확인여부",
+                    "description": "경고 확인 여부\n\"N\": 미확인\n\"Y\": 확인\n최초 요청은 \"N\"으로 보내거나 넣지 않습니다. 응답의 warn_cls_code가 경고 값(\"1\" \"3\" \"4\" \"6\" \"7\" \"9\" \"a\" \"c\" \"d\" \"f\" \"g\")이면 warn_msg 내용을 확인한 뒤 같은 요청을 \"Y\"로 재전송합니다.",
+                    "maxLength": 1
+                  },
+                  "exch_kind_code": {
+                    "type": "string",
+                    "title": "거래소종류코드",
+                    "description": "거래소 종류 코드\n\"01\": KRX\n\"02\": NXT\n\"03\": SOR",
+                    "maxLength": 2
+                  },
+                  "aspr_cond_prc": {
+                    "type": "number",
+                    "title": "호가조건가격",
+                    "description": "스톱지정가 주문(oder_cls_code \"83\")에서 감시할 가격을 입력합니다."
+                  }
+                }
+              },
+              "example": {
+                "iscd": "A005930",
+                "oder_unpr": 273000,
+                "odqt": 5,
+                "oder_cls_code": "01",
+                "oder_cond_cls_code": "0",
+                "orgl_oder_no": 0,
+                "whol_rctf_cncl_yn": "N",
+                "warn_cnfr_yn": "N",
+                "exch_kind_code": "01"
+              }
+            }
+          }
+        },
+        "x-tr-id": "obtrs_oder_101a",
+        "x-tps": "10"
+      }
+    },
+    "/trading/v1/orders/modify": {
+      "post": {
+        "operationId": "orders_modify",
+        "summary": "국내주식 주문 정정",
+        "tags": [
+          "trading"
+        ],
+        "description": "국내주식 주문 정정",
+        "parameters": [
+          {
+            "name": "mac_address",
+            "in": "header",
+            "required": true,
+            "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+            "schema": {
+              "type": "string",
+              "title": "사용자 MAC_ADDRESS",
+              "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+              "maxLength": 12
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "rsp_cd": {
+                      "type": "string",
+                      "title": "응답코드",
+                      "description": "응답 코드\n\"0001\": 주문 접수 성공\n오류는 종류와 무관하게 HTTP 500 으로 반환되며 사유는 rsp_msg 에 담깁니다.",
+                      "maxLength": 8
+                    },
+                    "rsp_msg": {
+                      "type": "string",
+                      "title": "응답메시지",
+                      "description": "응답 메시지입니다. 오류일 때 원인이 이 값에 담깁니다.",
+                      "maxLength": 200
+                    },
+                    "tr_cont": {
+                      "type": "string",
+                      "title": "연속조회 여부",
+                      "description": "항상 \"0\"으로 내려옵니다. 이 API는 연속조회를 지원하지 않습니다.",
+                      "maxLength": 1
+                    },
+                    "rsp_sub_msg": {
+                      "type": "string",
+                      "title": "응답 상세 메시지",
+                      "description": "오류일 때만 내려오며 조치 정보가 담깁니다.\n정상 응답에는 포함되지 않습니다.",
+                      "maxLength": 200
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "oder_no": {
+                          "type": "number",
+                          "title": "주문번호",
+                          "description": "이번 요청으로 채번된 주문 번호입니다. 주식 주문 정정(/trading/v1/orders/modify)·취소(/trading/v1/orders/cancel) 시 orgl_oder_no 에 이 값을 넣습니다."
+                        },
+                        "warn_cls_code": {
+                          "type": "string",
+                          "title": "경고구분코드",
+                          "description": "경고 구분 코드\n\"0\": 정상 접수\n\n경고 ― \"1\" \"3\" \"4\" \"6\" \"7\" \"9\" \"a\" \"c\" \"d\" \"f\" \"g\"\nwarn_msg 내용을 확인한 뒤 같은 요청을 warn_cnfr_yn 으로 재전송합니다.\n\n보류 ― \"2\" \"5\" \"8\" \"b\" \"e\" \"h\"\n\n경고 값은 \"1\" 하나가 아니므로 위 집합으로 판정하십시오.",
+                          "maxLength": 1
+                        },
+                        "warn_msg": {
+                          "type": "string",
+                          "title": "메시지내용",
+                          "description": "경고 또는 안내 문구입니다.",
+                          "maxLength": 100
+                        }
+                      },
+                      "title": "DATA"
+                    }
+                  }
+                },
+                "example": {
+                  "data": {
+                    "oder_no": 100,
+                    "warn_cls_code": "0",
+                    "warn_msg": ""
+                  },
+                  "rsp_cd": "0001",
+                  "rsp_msg": "주문이 완료되었습니다.",
+                  "tr_cont": "0"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "iscd",
+                  "oder_unpr",
+                  "odqt",
+                  "oder_cls_code",
+                  "oder_cond_cls_code",
+                  "orgl_oder_no",
+                  "whol_rctf_cncl_yn",
+                  "exch_kind_code"
+                ],
+                "properties": {
+                  "iscd": {
+                    "type": "string",
+                    "title": "종목 코드",
+                    "description": "종목 코드\n주식은 \"A\" + 6자리 숫자입니다. (예: A005930)",
+                    "maxLength": 12
+                  },
+                  "oder_unpr": {
+                    "type": "number",
+                    "title": "주문단가",
+                    "description": "정정 후 단가를 입력합니다."
+                  },
+                  "odqt": {
+                    "type": "number",
+                    "title": "주문수량",
+                    "description": "정정할 수량을 입력합니다."
+                  },
+                  "oder_cls_code": {
+                    "type": "string",
+                    "title": "주문구분코드",
+                    "description": "주문 구분 코드\n\"01\": 보통(지정가)\n\"05\": 시장가\n\"06\": 조건부지정가\n\"12\": 최유리지정가\n\"13\": 최우선지정가\n\"61\": 장전시간외\n\"71\": 장후시간외\n\"83\": 스톱지정가\n\"84\": 중간가",
+                    "maxLength": 2
+                  },
+                  "oder_cond_cls_code": {
+                    "type": "string",
+                    "title": "주문조건구분코드",
+                    "description": "주문 조건 구분 코드\n\"0\": 일반\n\"3\": IOC\n\"4\": FOK",
+                    "maxLength": 1
+                  },
+                  "orgl_oder_no": {
+                    "type": "number",
+                    "title": "원주문번호",
+                    "description": "정정할 주문의 번호를 입력합니다. 주문 접수 응답 또는 주문내역 조회의 oder_no 입니다."
+                  },
+                  "whol_rctf_cncl_yn": {
+                    "type": "string",
+                    "title": "전체정정취소여부",
+                    "description": "전체 정정 여부\n\"Y\": 전체\n\"N\": 부분",
+                    "maxLength": 1
+                  },
+                  "warn_cnfr_yn": {
+                    "type": "string",
+                    "title": "경고확인여부",
+                    "description": "경고 확인 여부\n\"N\": 미확인\n\"Y\": 확인\n최초 요청은 \"N\"으로 보내거나 넣지 않습니다. 응답의 warn_cls_code가 경고 값(\"1\" \"3\" \"4\" \"6\" \"7\" \"9\" \"a\" \"c\" \"d\" \"f\" \"g\")이면 warn_msg 내용을 확인한 뒤 같은 요청을 \"Y\"로 재전송합니다.",
+                    "maxLength": 1
+                  },
+                  "exch_kind_code": {
+                    "type": "string",
+                    "title": "거래소종류코드",
+                    "description": "거래소 종류 코드\n\"01\": KRX\n\"02\": NXT\n\"03\": SOR",
+                    "maxLength": 2
+                  },
+                  "aspr_cond_prc": {
+                    "type": "number",
+                    "title": "호가조건가격",
+                    "description": "스톱지정가 주문(oder_cls_code \"83\")에서 감시할 가격을 입력합니다."
+                  }
+                }
+              },
+              "example": {
+                "iscd": "A005930",
+                "oder_unpr": 188000,
+                "odqt": 1,
+                "oder_cls_code": "01",
+                "oder_cond_cls_code": "0",
+                "orgl_oder_no": 135,
+                "whol_rctf_cncl_yn": "Y",
+                "warn_cnfr_yn": "N",
+                "exch_kind_code": "01"
+              }
+            }
+          }
+        },
+        "x-tr-id": "obtrs_oder_101a",
+        "x-tps": "10"
+      }
+    },
+    "/trading/v1/orders/cancel": {
+      "post": {
+        "operationId": "orders_cancel",
+        "summary": "국내주식 주문 취소",
+        "tags": [
+          "trading"
+        ],
+        "description": "국내주식 주문 취소",
+        "parameters": [
+          {
+            "name": "mac_address",
+            "in": "header",
+            "required": true,
+            "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+            "schema": {
+              "type": "string",
+              "title": "사용자 MAC_ADDRESS",
+              "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+              "maxLength": 12
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "rsp_cd": {
+                      "type": "string",
+                      "title": "응답코드",
+                      "description": "응답 코드\n\"0001\": 주문 접수 성공\n오류는 종류와 무관하게 HTTP 500 으로 반환되며 사유는 rsp_msg 에 담깁니다.",
+                      "maxLength": 8
+                    },
+                    "rsp_msg": {
+                      "type": "string",
+                      "title": "응답메시지",
+                      "description": "응답 메시지입니다. 오류일 때 원인이 이 값에 담깁니다.",
+                      "maxLength": 200
+                    },
+                    "tr_cont": {
+                      "type": "string",
+                      "title": "연속조회 여부",
+                      "description": "항상 \"0\"으로 내려옵니다. 이 API는 연속조회를 지원하지 않습니다.",
+                      "maxLength": 1
+                    },
+                    "rsp_sub_msg": {
+                      "type": "string",
+                      "title": "응답 상세 메시지",
+                      "description": "오류일 때만 내려오며 조치 정보가 담깁니다.\n정상 응답에는 포함되지 않습니다.",
+                      "maxLength": 200
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "oder_no": {
+                          "type": "number",
+                          "title": "주문번호",
+                          "description": "이번 요청으로 채번된 주문 번호입니다. 주식 주문 정정(/trading/v1/orders/modify)·취소(/trading/v1/orders/cancel) 시 orgl_oder_no 에 이 값을 넣습니다."
+                        },
+                        "warn_cls_code": {
+                          "type": "string",
+                          "title": "경고구분코드",
+                          "description": "경고 구분 코드\n\"0\": 정상 접수\n\n경고 ― \"1\" \"3\" \"4\" \"6\" \"7\" \"9\" \"a\" \"c\" \"d\" \"f\" \"g\"\nwarn_msg 내용을 확인한 뒤 같은 요청을 warn_cnfr_yn 으로 재전송합니다.\n\n보류 ― \"2\" \"5\" \"8\" \"b\" \"e\" \"h\"\n\n경고 값은 \"1\" 하나가 아니므로 위 집합으로 판정하십시오.",
+                          "maxLength": 1
+                        },
+                        "warn_msg": {
+                          "type": "string",
+                          "title": "메시지내용",
+                          "description": "경고 또는 안내 문구입니다.",
+                          "maxLength": 100
+                        }
+                      },
+                      "title": "DATA"
+                    }
+                  }
+                },
+                "example": {
+                  "data": {
+                    "oder_no": 100,
+                    "warn_cls_code": "0",
+                    "warn_msg": ""
+                  },
+                  "rsp_cd": "0001",
+                  "rsp_msg": "주문이 완료되었습니다.",
+                  "tr_cont": "0"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "iscd",
+                  "orgl_oder_no",
+                  "whol_rctf_cncl_yn",
+                  "exch_kind_code"
+                ],
+                "properties": {
+                  "iscd": {
+                    "type": "string",
+                    "title": "종목 코드",
+                    "description": "종목 코드\n주식은 \"A\" + 6자리 숫자입니다. (예: A005930)",
+                    "maxLength": 12
+                  },
+                  "oder_unpr": {
+                    "type": "number",
+                    "title": "주문단가",
+                    "description": "주문 단가입니다."
+                  },
+                  "odqt": {
+                    "type": "number",
+                    "title": "주문수량",
+                    "description": "취소할 수량을 입력합니다."
+                  },
+                  "oder_cls_code": {
+                    "type": "string",
+                    "title": "주문구분코드",
+                    "description": "취소 시에는 생략할 수 있습니다. 넣을 때는 원주문의 주문구분코드를 그대로 넣으십시오.\n\"01\" 보통 · \"05\" 시장가 · \"06\" 조건부지정가 · \"12\" 최유리지정가 · \"13\" 최우선지정가 · \"61\" 장전시간외 · \"71\" 장후시간외 · \"83\" 스톱지정가 · \"84\" 중간가",
+                    "maxLength": 2
+                  },
+                  "oder_cond_cls_code": {
+                    "type": "string",
+                    "title": "주문조건구분코드",
+                    "description": "주문 조건 구분 코드\n\"0\": 일반\n\"3\": IOC\n\"4\": FOK",
+                    "maxLength": 1
+                  },
+                  "orgl_oder_no": {
+                    "type": "number",
+                    "title": "원주문번호",
+                    "description": "취소할 주문의 번호를 입력합니다. 주문 접수 응답 또는 주문내역 조회의 oder_no 입니다."
+                  },
+                  "whol_rctf_cncl_yn": {
+                    "type": "string",
+                    "title": "전체정정취소여부",
+                    "description": "전체 취소 여부\n\"Y\": 전체\n\"N\": 부분",
+                    "maxLength": 1
+                  },
+                  "warn_cnfr_yn": {
+                    "type": "string",
+                    "title": "경고확인여부",
+                    "description": "경고 확인 여부\n\"N\": 미확인\n\"Y\": 확인\n최초 요청은 \"N\"으로 보내거나 넣지 않습니다. 응답의 warn_cls_code가 경고 값(\"1\" \"3\" \"4\" \"6\" \"7\" \"9\" \"a\" \"c\" \"d\" \"f\" \"g\")이면 warn_msg 내용을 확인한 뒤 같은 요청을 \"Y\"로 재전송합니다.",
+                    "maxLength": 1
+                  },
+                  "exch_kind_code": {
+                    "type": "string",
+                    "title": "거래소종류코드",
+                    "description": "거래소 종류 코드\n\"01\": KRX\n\"02\": NXT\n\"03\": SOR",
+                    "maxLength": 2
+                  },
+                  "aspr_cond_prc": {
+                    "type": "number",
+                    "title": "호가조건가격",
+                    "description": "스톱지정가 주문(oder_cls_code \"83\")에서 감시할 가격을 입력합니다."
+                  }
+                }
+              },
+              "example": {
+                "iscd": "A005930",
+                "oder_unpr": 187000,
+                "odqt": 1,
+                "oder_cls_code": "01",
+                "oder_cond_cls_code": "0",
+                "orgl_oder_no": 135,
+                "whol_rctf_cncl_yn": "Y",
+                "warn_cnfr_yn": "N",
+                "exch_kind_code": "01"
+              }
+            }
+          }
+        },
+        "x-tr-id": "obtrs_oder_101a",
+        "x-tps": "10"
+      }
+    },
+    "/trading/v1/orders/estimate": {
+      "get": {
+        "operationId": "orders_estimate",
+        "summary": "주문가능금액·수량 조회",
+        "tags": [
+          "trading"
+        ],
+        "description": "국내주식 주문을 내기 전에 그 종목과 단가로 얼마나 주문할 수 있는지를 조회합니다.",
+        "parameters": [
+          {
+            "name": "mac_address",
+            "in": "header",
+            "required": true,
+            "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+            "schema": {
+              "type": "string",
+              "title": "사용자 MAC_ADDRESS",
+              "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+              "maxLength": 12
+            }
+          },
+          {
+            "name": "iscd",
+            "in": "query",
+            "required": true,
+            "description": "종목 코드\n주식은 \"A\" + 단축코드 6자리 입니다. (예: A005930)",
+            "schema": {
+              "type": "string",
+              "title": "종목 코드",
+              "description": "종목 코드\n주식은 \"A\" + 단축코드 6자리 입니다. (예: A005930)",
+              "maxLength": 12
+            },
+            "example": "A005930"
+          },
+          {
+            "name": "oder_unpr",
+            "in": "query",
+            "required": true,
+            "description": "주문 단가를 입력합니다. 주문구분코드에 따라 넣을 값이 정해져 있습니다.\n시장가 계열(\"05\" \"12\" \"13\" \"61\" \"71\" \"84\") ― 반드시 0 을 넣으십시오. 0 이 아니면 \"3180\" 으로 거부됩니다.\n지정가 계열(\"01\" \"81\" \"83\") ― 0 보다 큰 단가를 넣으십시오. 0 이나 음수는 \"5980\" 으로 거부됩니다.\n\"06\" 조건부지정가 ― 어느 값을 넣어도 오류가 없고 결과도 같습니다.",
+            "schema": {
+              "type": "number",
+              "title": "주문단가",
+              "description": "주문 단가를 입력합니다. 주문구분코드에 따라 넣을 값이 정해져 있습니다.\n시장가 계열(\"05\" \"12\" \"13\" \"61\" \"71\" \"84\") ― 반드시 0 을 넣으십시오. 0 이 아니면 \"3180\" 으로 거부됩니다.\n지정가 계열(\"01\" \"81\" \"83\") ― 0 보다 큰 단가를 넣으십시오. 0 이나 음수는 \"5980\" 으로 거부됩니다.\n\"06\" 조건부지정가 ― 어느 값을 넣어도 오류가 없고 결과도 같습니다."
+            },
+            "example": "259000"
+          },
+          {
+            "name": "oder_cls_code",
+            "in": "query",
+            "required": true,
+            "description": "주문 구분입니다.\n\"01\": 보통(지정가)\n\"05\": 시장가\n\"06\": 조건부지정가\n\"12\": 최유리지정가\n\"13\": 최우선지정가\n\"61\": 장전시간외\n\"71\": 장후시간외\n\"81\": 시간외단일가\n\"83\": 스톱지정가\n\"84\": 중간가\n위 목록에 없는 두 자리 값은 오류 없이 \"01\"(지정가)로 처리되므로 값을 임의로 만들어 넣지 마십시오.",
+            "schema": {
+              "type": "string",
+              "title": "주문구분코드",
+              "description": "주문 구분입니다.\n\"01\": 보통(지정가)\n\"05\": 시장가\n\"06\": 조건부지정가\n\"12\": 최유리지정가\n\"13\": 최우선지정가\n\"61\": 장전시간외\n\"71\": 장후시간외\n\"81\": 시간외단일가\n\"83\": 스톱지정가\n\"84\": 중간가\n위 목록에 없는 두 자리 값은 오류 없이 \"01\"(지정가)로 처리되므로 값을 임의로 만들어 넣지 마십시오.",
+              "maxLength": 2
+            },
+            "example": "01"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tr_cont": {
+                      "type": "string",
+                      "title": "연속조회 여부",
+                      "description": "항상 \"0\"으로 내려옵니다. 이 API는 연속조회를 지원하지 않습니다.",
+                      "maxLength": 1
+                    },
+                    "rsp_cd": {
+                      "type": "string",
+                      "title": "응답코드",
+                      "description": "이 API 의 응답 코드입니다.\n\"5766\": 조회 완료\n\"3180\": 시장가 계열에 주문단가를 0 이 아닌 값으로 넣음\n\"5980\": 지정가 계열에 주문단가를 0 이하로 넣음\n오류는 종류와 무관하게 HTTP 500 으로 반환되므로 성공·실패는 HTTP 상태가 아니라 이 값으로 판정하십시오.",
+                      "maxLength": 8
+                    },
+                    "rsp_msg": {
+                      "type": "string",
+                      "title": "응답메시지",
+                      "description": "응답 메시지입니다. 오류일 때 원인이 이 값에 담깁니다.\n오류 응답에는 data 와 tr_cont 가 없으므로, rsp_cd 를 먼저 확인한 뒤 data 를 읽으십시오.",
+                      "maxLength": 200
+                    },
+                    "rsp_sub_msg": {
+                      "type": "string",
+                      "title": "응답 상세 메시지",
+                      "description": "오류일 때만 내려오며 조치 정보가 담깁니다.\n정상 응답에는 포함되지 않습니다.",
+                      "maxLength": 200
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "cash_oder_able_qty": {
+                          "type": "number",
+                          "title": "현금주문가능수량",
+                          "description": "현금 기준 주문 가능 수량입니다.\n지정가 계열(\"01\" \"81\" \"83\")에서는 같은 응답의 cash_oder_able_amt 를 보낸 주문단가(oder_unpr)로 나눈 뒤 버림한 값과 같습니다.\n시장가 계열과 \"06\" 조건부지정가는 해당 종목의 시세 기준으로 계산된 값이 내려오므로, 보낸 단가로 다시 계산하지 말고 받은 값을 그대로 쓰십시오."
+                        },
+                        "cash_oder_able_amt": {
+                          "type": "number",
+                          "title": "현금주문가능금액",
+                          "description": "현금으로 주문 가능한 금액입니다. 원 단위 정수입니다."
+                        },
+                        "credit_oder_able_qty": {
+                          "type": "number",
+                          "title": "신용주문가능수량",
+                          "description": "신용(융자) 기준 주문 가능 수량입니다."
+                        },
+                        "credit_oder_able_amt": {
+                          "type": "number",
+                          "title": "신용주문가능금액",
+                          "description": "신용(융자)으로 주문 가능한 금액입니다."
+                        },
+                        "intg_marg_oder_able_qty": {
+                          "type": "number",
+                          "title": "통합증거금주문가능수량",
+                          "description": "통합증거금 기준 주문 가능 수량입니다."
+                        },
+                        "intg_marg_oder_able_amt": {
+                          "type": "number",
+                          "title": "통합증거금주문가능금액",
+                          "description": "통합증거금 기준 주문 가능 금액입니다."
+                        }
+                      },
+                      "title": "주문가능 정보"
+                    }
+                  }
+                },
+                "example": {
+                  "data": {
+                    "cash_oder_able_qty": 1000,
+                    "cash_oder_able_amt": 100000000,
+                    "credit_oder_able_qty": 0,
+                    "credit_oder_able_amt": 0,
+                    "intg_marg_oder_able_qty": 0,
+                    "intg_marg_oder_able_amt": 0
+                  },
+                  "rsp_cd": "5766",
+                  "rsp_msg": "조회가 완료되었습니다.",
+                  "tr_cont": "0"
+                }
+              }
+            }
+          }
+        },
+        "x-tr-id": "obtrs_comn_413r",
+        "x-tps": "10"
+      }
+    },
+    "/trading/v1/orders/history": {
+      "get": {
+        "operationId": "orders_history",
+        "summary": "주문내역 조회",
+        "tags": [
+          "trading"
+        ],
+        "description": "주문 내역을 조회합니다. 체결·미체결 여부와 정정·취소 이력을 함께 반환합니다.",
+        "parameters": [
+          {
+            "name": "mac_address",
+            "in": "header",
+            "required": true,
+            "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+            "schema": {
+              "type": "string",
+              "title": "사용자 MAC_ADDRESS",
+              "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+              "maxLength": 12
+            }
+          },
+          {
+            "name": "oder_date",
+            "in": "query",
+            "required": true,
+            "description": "조회할 주문 일자를 YYYYMMDD 8자리로 입력합니다. (예: 20260818)\n달력에 없는 날짜(예: \"20260231\")는 rsp_cd \"6102\" 오류로 거부됩니다. 휴장일은 오류가 아니라 \"5820\" 과 0건이 내려옵니다.\n하루 단위로만 조회되므로 기간으로 보려면 영업일마다 나누어 호출하십시오.",
+            "schema": {
+              "type": "string",
+              "title": "주문일자",
+              "description": "조회할 주문 일자를 YYYYMMDD 8자리로 입력합니다. (예: 20260818)\n달력에 없는 날짜(예: \"20260231\")는 rsp_cd \"6102\" 오류로 거부됩니다. 휴장일은 오류가 아니라 \"5820\" 과 0건이 내려옵니다.\n하루 단위로만 조회되므로 기간으로 보려면 영업일마다 나누어 호출하십시오.",
+              "maxLength": 8
+            },
+            "example": "20260818"
+          },
+          {
+            "name": "deal_cls_code",
+            "in": "query",
+            "required": true,
+            "description": "매매 구분입니다.\n\"0\": 전체\n\"1\": 매도\n\"2\": 매수\n위 세 값만 받으며, 그 밖의 값(예: \"3\")은 \"5018\" 오류입니다. (query string)",
+            "schema": {
+              "type": "string",
+              "title": "매매구분코드",
+              "description": "매매 구분입니다.\n\"0\": 전체\n\"1\": 매도\n\"2\": 매수\n위 세 값만 받으며, 그 밖의 값(예: \"3\")은 \"5018\" 오류입니다. (query string)",
+              "maxLength": 1
+            },
+            "example": "0"
+          },
+          {
+            "name": "cntg_cls_code",
+            "in": "query",
+            "required": true,
+            "description": "체결 여부로 걸러냅니다.\n\"0\": 전체\n\"1\": 체결된 수량이 있는 주문\n\"2\": 남은 수량이 있는 주문\n목록 밖의 값(예: \"9\")은 \"5018\" 오류입니다. (query string)",
+            "schema": {
+              "type": "string",
+              "title": "체결구분코드",
+              "description": "체결 여부로 걸러냅니다.\n\"0\": 전체\n\"1\": 체결된 수량이 있는 주문\n\"2\": 남은 수량이 있는 주문\n목록 밖의 값(예: \"9\")은 \"5018\" 오류입니다. (query string)",
+              "maxLength": 1
+            },
+            "example": "0"
+          },
+          {
+            "name": "sort_stnd_code",
+            "in": "query",
+            "required": false,
+            "description": "정렬 기준입니다.\n\"1\": 역순(최근 주문 먼저)\n\"2\": 주문순(접수 순서)\n(query string)",
+            "schema": {
+              "type": "string",
+              "title": "정렬기준코드",
+              "description": "정렬 기준입니다.\n\"1\": 역순(최근 주문 먼저)\n\"2\": 주문순(접수 순서)\n(query string)",
+              "maxLength": 1
+            }
+          },
+          {
+            "name": "iscd",
+            "in": "query",
+            "required": false,
+            "description": "특정 종목만 조회할 때 종목코드를 입력합니다. \"A005930\" 과 \"005930\" 모두 같은 결과로 조회되며 값 뒤에 공백이 붙어도 같습니다.\n접두어 \"A\" 는 대문자만 인정되며, 소문자(\"a005930\")나 없는 종목코드는 오류 없이 \"5820\"(조회 결과 없음)이 내려옵니다.\n입력하지 않으면 전체 종목을 조회합니다.",
+            "schema": {
+              "type": "string",
+              "title": "종목 코드",
+              "description": "특정 종목만 조회할 때 종목코드를 입력합니다. \"A005930\" 과 \"005930\" 모두 같은 결과로 조회되며 값 뒤에 공백이 붙어도 같습니다.\n접두어 \"A\" 는 대문자만 인정되며, 소문자(\"a005930\")나 없는 종목코드는 오류 없이 \"5820\"(조회 결과 없음)이 내려옵니다.\n입력하지 않으면 전체 종목을 조회합니다.",
+              "maxLength": 12
+            }
+          },
+          {
+            "name": "tr_cont",
+            "in": "query",
+            "required": false,
+            "description": "다음 페이지를 요청하실 때 \"1\" 을 넣습니다. 첫 조회에는 넣지 않습니다. tr_cont_key 와 함께 쿼리 스트링으로 보내십시오.",
+            "schema": {
+              "type": "string",
+              "title": "연속조회 여부",
+              "description": "다음 페이지를 요청하실 때 \"1\" 을 넣습니다. 첫 조회에는 넣지 않습니다. tr_cont_key 와 함께 쿼리 스트링으로 보내십시오.",
+              "maxLength": 1
+            }
+          },
+          {
+            "name": "tr_cont_key",
+            "in": "query",
+            "required": false,
+            "description": "직전 응답의 tr_cont_key 를 그대로 넣습니다. 첫 조회에는 넣지 않습니다. 쿼리 스트링으로 보냅니다.\n값 오른쪽에 공백이 붙어 내려오므로 잘라내지 말고 URL 인코딩하여 원본 그대로 보내십시오.",
+            "schema": {
+              "type": "string",
+              "title": "연속조회 키",
+              "description": "직전 응답의 tr_cont_key 를 그대로 넣습니다. 첫 조회에는 넣지 않습니다. 쿼리 스트링으로 보냅니다.\n값 오른쪽에 공백이 붙어 내려오므로 잘라내지 말고 URL 인코딩하여 원본 그대로 보내십시오.",
+              "maxLength": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "rsp_cd": {
+                      "type": "string",
+                      "title": "응답코드",
+                      "description": "이 API 의 응답 코드입니다.\n\"5762\": 조회 결과가 더 있음(연속조회)\n\"5766\": 조회 완료\n\"5820\": 조회할 자료 없음\n\"5018\": 입력값이 잘못됨\n\"6102\": 주문일자(oder_date)가 잘못됨(예: 달력에 없는 날짜)\n오류는 종류와 무관하게 HTTP 500 으로 반환되므로 성공·실패는 HTTP 상태가 아니라 이 값으로 판정하십시오.",
+                      "maxLength": 8
+                    },
+                    "rsp_msg": {
+                      "type": "string",
+                      "title": "응답메시지",
+                      "description": "응답 메시지입니다. 오류일 때 원인이 이 값에 담깁니다.\n오류 응답에는 data 와 tr_cont 가 없으므로, rsp_cd 를 먼저 확인한 뒤 data 를 읽으십시오.",
+                      "maxLength": 200
+                    },
+                    "tr_cont": {
+                      "type": "string",
+                      "title": "연속조회 여부",
+                      "description": "다음 페이지가 남아 있으면 \"1\", 마지막이면 \"0\"입니다.",
+                      "maxLength": 1
+                    },
+                    "tr_cont_key": {
+                      "type": "string",
+                      "title": "연속조회 키",
+                      "description": "다음 페이지가 있을 때(tr_cont \"1\")만 담깁니다. 마지막 페이지(tr_cont \"0\")와 오류 응답에는 이 항목이 없습니다.\n다음 페이지를 요청할 때는 값을 잘라내지 말고 그대로 넣으십시오(오른쪽에 공백이 붙어 내려옵니다).",
+                      "maxLength": 20
+                    },
+                    "rsp_sub_msg": {
+                      "type": "string",
+                      "title": "응답 상세 메시지",
+                      "description": "오류 응답에 담길 수 있는 보조 메시지입니다. 모든 오류에 내려오는 것은 아닙니다.\n정상 응답에는 포함되지 않습니다.",
+                      "maxLength": 200
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "oder_no": {
+                            "type": "number",
+                            "title": "주문번호",
+                            "description": "주문 번호입니다. 정정·취소 주문에도 새 번호가 부여됩니다. 정정·취소를 낼 때 이 값을 원주문번호(orgl_oder_no)에 넣으십시오.\n정정(/trading/v1/orders/modify)·취소(/trading/v1/orders/cancel)는 거래소종류코드(exch_kind_code)를 받는데 이 조회 응답에는 그 항목이 없으므로 주문 시 사용한 값을 보관해 두십시오."
+                          },
+                          "iscd": {
+                            "type": "string",
+                            "title": "종목 코드",
+                            "description": "종목 코드입니다. 주식은 \"A\" + 6자리 숫자입니다. (예: A005930)",
+                            "maxLength": 12
+                          },
+                          "kor_issu_abwr_name": {
+                            "type": "string",
+                            "title": "한글종목약어명",
+                            "description": "한글 종목명입니다. 별도 가공 없이 그대로 사용하실 수 있습니다. (예: 삼성전자)",
+                            "maxLength": 40
+                          },
+                          "deal_cls_code": {
+                            "type": "string",
+                            "title": "매매구분코드",
+                            "description": "매매 구분\n\"1\": 매도\n\"2\": 매수",
+                            "maxLength": 1
+                          },
+                          "odqt": {
+                            "type": "number",
+                            "title": "주문수량",
+                            "description": "주문 수량입니다."
+                          },
+                          "oder_unpr": {
+                            "type": "number",
+                            "title": "주문단가",
+                            "description": "주문 단가입니다."
+                          },
+                          "total_cntg_qty": {
+                            "type": "number",
+                            "title": "총체결수량",
+                            "description": "이 주문에서 체결된 수량의 합계입니다. 0이면 아직 한 건도 체결되지 않은 것입니다."
+                          },
+                          "cntg_unpr": {
+                            "type": "number",
+                            "title": "체결단가",
+                            "description": "실제 체결된 단가입니다. 체결 내역이 없으면 0입니다."
+                          },
+                          "ncnt_qty": {
+                            "type": "number",
+                            "title": "미체결수량",
+                            "description": "아직 체결되지 않고 남아 있는 수량입니다.\n미체결 주문만 보려면 요청의 cntg_cls_code 에 \"2\" 를 넣으십시오."
+                          },
+                          "oder_pros_sta_time": {
+                            "type": "string",
+                            "title": "주문처리시작시각",
+                            "description": "주문 접수 시각입니다. 14자리이며 앞 6자리가 HHMMSS입니다. (예: \"15465523153500\" → 15시 46분 55초)",
+                            "maxLength": 14
+                          },
+                          "oder_pros_stat_cls_code": {
+                            "type": "string",
+                            "title": "주문처리상태구분코드",
+                            "description": "주문의 접수 단계입니다.\n\"0\": 미접수\n\"1\": 접수\n\"2\": 확인\n\"3\": 거부",
+                            "maxLength": 1
+                          },
+                          "orgl_oder_no": {
+                            "type": "number",
+                            "title": "원주문번호",
+                            "description": "정정·취소 주문이 대상으로 삼은 주문의 번호입니다. 신규 주문은 0 입니다.\n국내 주문내역에서는 이 값이 최초 신규 주문(rctf_cncl_cls_code \"1\" 인 행)을 가리키며, 여러 번 나누어 정정·취소한 경우에도 중간 정정 행이 아닌 최초 주문을 가리킵니다. 따라서 이 값으로 묶으면 한 주문의 이력이 최초 주문 하나에 모입니다."
+                          },
+                          "chan_type_cls_code": {
+                            "type": "string",
+                            "title": "채널유형구분코드",
+                            "description": "주문이 접수된 채널입니다.\n\"120\": Open API\n\"010\", \"020\": 영업점·홈페이지\n\"060\": HTS\n\"156\", \"157\": MTS\n\"600\", \"601\": 그 밖의 접수 경로",
+                            "maxLength": 3
+                          },
+                          "rctf_cncl_cls_code": {
+                            "type": "string",
+                            "title": "정정취소구분코드",
+                            "description": "이 행이 원주문인지 정정·취소 요청인지 구분합니다.\n\"1\": 신규(원주문)\n\"2\": 정정\n\"3\": 취소\n\"2\"·\"3\" 인 행은 orgl_oder_no 로 원주문과 이어집니다.",
+                            "maxLength": 1
+                          },
+                          "oder_type_cls_code": {
+                            "type": "string",
+                            "title": "주문유형구분코드",
+                            "description": "주문이 접수된 경로를 구분하는 코드입니다. 값에 대응하는 이름은 응답에 함께 오지 않습니다.",
+                            "maxLength": 2
+                          },
+                          "rctf_qty": {
+                            "type": "number",
+                            "title": "정정수량",
+                            "description": "이 주문에 대해 정정된 수량입니다."
+                          },
+                          "cncl_qty": {
+                            "type": "number",
+                            "title": "취소수량",
+                            "description": "이 주문에 대해 취소된 수량입니다."
+                          },
+                          "cnfr_qty": {
+                            "type": "number",
+                            "title": "확인수량",
+                            "description": "취소가 확인 처리된 수량입니다. 같은 행의 cncl_qty 와 같은 값으로 내려옵니다."
+                          },
+                          "oder_able_qty": {
+                            "type": "number",
+                            "title": "주문가능수량",
+                            "description": "정정·취소하실 수 있는 잔여 수량입니다."
+                          },
+                          "loan_date": {
+                            "type": "string",
+                            "title": "대출일자",
+                            "description": "대출 일자(YYYYMMDD)입니다. 현금 주문은 \"00000000\"입니다.",
+                            "maxLength": 8
+                          },
+                          "oder_rfus_reas_code": {
+                            "type": "string",
+                            "title": "주문거부사유코드",
+                            "description": "주문이 거부된 사유 코드입니다. 정상 접수 건은 \"0000\" 입니다.\n숫자 네 자리와 영문이 섞인 네 자리가 함께 쓰이므로(예: \"S607\") 문자열로 다루십시오. 코드에 대응하는 한글 사유는 응답에 함께 오지 않습니다.\noder_pros_stat_cls_code 가 \"1\"(접수)인데도 이 값이 \"0000\" 이 아닌 건이 있습니다.",
+                            "maxLength": 4
+                          },
+                          "oder_cond_cls_code": {
+                            "type": "string",
+                            "title": "주문조건구분코드",
+                            "description": "주문 조건\n\"0\": 일반\n\"3\": IOC\n\"4\": FOK",
+                            "maxLength": 1
+                          },
+                          "oder_cls_code": {
+                            "type": "string",
+                            "title": "주문구분코드",
+                            "description": "주문 구분\n\"01\": 보통(지정가)\n\"05\": 시장가\n\"06\": 조건부지정가\n\"12\": 최유리지정가\n\"13\": 최우선지정가\n\"61\": 장전시간외\n\"71\": 장후시간외\n\"81\": 시간외단일가",
+                            "maxLength": 2
+                          },
+                          "crdt_oder_cls_code": {
+                            "type": "string",
+                            "title": "신용주문구분코드",
+                            "description": "결제 재원 구분입니다.\n\"10\": 현금\n\"21\": 신용 매수(자기융자)\n\"31\": 신용 매수(유통융자)\n\"32\": 신용 상환 매도\n\"33\": 대주",
+                            "maxLength": 2
+                          },
+                          "loan_dtl_type_code": {
+                            "type": "string",
+                            "title": "대출상세유형코드",
+                            "description": "대출 상세 유형\n\"0000\": 해당 없음(현금 주문)\n\"0101\": 자기융자\n\"0102\": 유통융자\n\"0201\": 예탁주식(대출)",
+                            "maxLength": 4
+                          }
+                        }
+                      },
+                      "title": "주문내역 목록"
+                    }
+                  }
+                },
+                "example": {
+                  "data": [
+                    {
+                      "oder_no": 10,
+                      "iscd": "A005930",
+                      "kor_issu_abwr_name": "삼성전자",
+                      "deal_cls_code": "2",
+                      "odqt": 100,
+                      "oder_unpr": 100000,
+                      "total_cntg_qty": 1,
+                      "cntg_unpr": 100000,
+                      "ncnt_qty": 0,
+                      "oder_pros_sta_time": "10000000000000",
+                      "oder_pros_stat_cls_code": "1",
+                      "orgl_oder_no": 0,
+                      "chan_type_cls_code": "120",
+                      "rctf_cncl_cls_code": "1",
+                      "oder_type_cls_code": "01",
+                      "rctf_qty": 0,
+                      "cncl_qty": 0,
+                      "cnfr_qty": 0,
+                      "oder_able_qty": 0,
+                      "loan_date": "0",
+                      "oder_rfus_reas_code": "0000",
+                      "oder_cond_cls_code": "0",
+                      "oder_cls_code": "01",
+                      "crdt_oder_cls_code": "10",
+                      "loan_dtl_type_code": "0000"
+                    },
+                    {
+                      "oder_no": 10,
+                      "iscd": "A005930",
+                      "kor_issu_abwr_name": "삼성전자",
+                      "deal_cls_code": "1",
+                      "odqt": 100,
+                      "oder_unpr": 100000,
+                      "total_cntg_qty": 0,
+                      "cntg_unpr": 0,
+                      "ncnt_qty": 0,
+                      "oder_pros_sta_time": "10000000000000",
+                      "oder_pros_stat_cls_code": "1",
+                      "orgl_oder_no": 0,
+                      "chan_type_cls_code": "120",
+                      "rctf_cncl_cls_code": "1",
+                      "oder_type_cls_code": "01",
+                      "rctf_qty": 0,
+                      "cncl_qty": 0,
+                      "cnfr_qty": 0,
+                      "oder_able_qty": 0,
+                      "loan_date": "0",
+                      "oder_rfus_reas_code": "S607",
+                      "oder_cond_cls_code": "0",
+                      "oder_cls_code": "01",
+                      "crdt_oder_cls_code": "10",
+                      "loan_dtl_type_code": "0000"
+                    }
+                  ],
+                  "rsp_cd": "5762",
+                  "rsp_msg": "조회가 계속 됩니다. 다음 또는 PgDn을 누르십시오.",
+                  "tr_cont": "1",
+                  "tr_cont_key": "106500000000113"
+                }
+              }
+            }
+          }
+        },
+        "x-tr-id": "obtrs_comn_615r",
+        "x-tps": "10"
+      }
+    },
+    "/market/v1/prices": {
+      "get": {
+        "operationId": "market_prices",
+        "summary": "현재가 조회",
+        "tags": [
+          "domestic_market"
+        ],
+        "description": "국내주식 한 종목의 현재가와 당일 시세를 조회합니다.",
+        "parameters": [
+          {
+            "name": "mac_address",
+            "in": "header",
+            "required": true,
+            "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+            "schema": {
+              "type": "string",
+              "title": "사용자 MAC_ADDRESS",
+              "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+              "maxLength": 12
+            }
+          },
+          {
+            "name": "mrkt_div_code",
+            "in": "query",
+            "required": true,
+            "description": "어느 시장의 시세를 볼지 정합니다.\n\"J\": KRX\n\"NJ\": 대체거래소(NXT)\n\"TJ\": KRX + NXT 통합\n\n위 세 값만 넣으십시오. 그 밖의 값도 오류 없이 정상 응답코드로 내려올 수 있으므로 보내는 값을 먼저 확인하십시오.",
+            "schema": {
+              "type": "string",
+              "title": "시장 구분 코드",
+              "description": "어느 시장의 시세를 볼지 정합니다.\n\"J\": KRX\n\"NJ\": 대체거래소(NXT)\n\"TJ\": KRX + NXT 통합\n\n위 세 값만 넣으십시오. 그 밖의 값도 오류 없이 정상 응답코드로 내려올 수 있으므로 보내는 값을 먼저 확인하십시오.",
+              "maxLength": 2
+            },
+            "example": "J"
+          },
+          {
+            "name": "iscd",
+            "in": "query",
+            "required": true,
+            "description": "종목 코드입니다. 6자리(005930) 또는 대문자 A 를 붙인 7자리(A005930)로 넣으십시오. 값 앞뒤의 공백은 무시됩니다.\n표준코드(KR7005930003)·소문자 a(a005930)·등록되지 않은 코드는 오류 없이 정상 응답코드 \"0000\" 으로 내려오되 값이 비거나 0 입니다. 뒤에 문자가 더 붙은 값(예: A005930ZZZZZ)은 앞 7자리만 읽습니다. 응답의 단축종목코드(shrn_iscd)가 채워져 있는지 확인하십시오.",
+            "schema": {
+              "type": "string",
+              "title": "종목 코드",
+              "description": "종목 코드입니다. 6자리(005930) 또는 대문자 A 를 붙인 7자리(A005930)로 넣으십시오. 값 앞뒤의 공백은 무시됩니다.\n표준코드(KR7005930003)·소문자 a(a005930)·등록되지 않은 코드는 오류 없이 정상 응답코드 \"0000\" 으로 내려오되 값이 비거나 0 입니다. 뒤에 문자가 더 붙은 값(예: A005930ZZZZZ)은 앞 7자리만 읽습니다. 응답의 단축종목코드(shrn_iscd)가 채워져 있는지 확인하십시오.",
+              "maxLength": 12
+            },
+            "example": "005930"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "rsp_cd": {
+                      "type": "string",
+                      "title": "응답코드",
+                      "description": "이 API 의 성공 응답 코드입니다.\n\"0000\": 정상 처리\n\n조회 결과가 없을 때도 \"0000\" 이 내려옵니다. 목록을 내려주는 조회는 빈 배열이, 한 건을 내려주는 조회는 값이 0 이거나 빈 내용이 \"0000\" 과 함께 옵니다. 결과 건수나 값으로 직접 확인하십시오.\n\n오류는 종류와 무관하게 HTTP 500 으로 반환됩니다. 성공·실패는 HTTP 상태가 아니라 이 값으로 판정하시고, 다른 계열 API 는 성공 코드가 \"0000\" 이 아닐 수 있으니 API 마다 확인하십시오.",
+                      "maxLength": 8
+                    },
+                    "rsp_msg": {
+                      "type": "string",
+                      "title": "응답메시지",
+                      "description": "응답 메시지입니다. 오류일 때 원인이 담깁니다.\n오류 응답에는 data·tr_cont 가 없으므로 data 를 읽기 전에 HTTP 상태와 rsp_cd 를 먼저 확인하십시오. 조치에 필요한 정보는 rsp_sub_msg 에 담길 수 있습니다.",
+                      "maxLength": 200
+                    },
+                    "rsp_sub_msg": {
+                      "type": "string",
+                      "title": "응답 상세 메시지",
+                      "description": "오류일 때 내려올 수 있는 상세 사유입니다. 조치에 필요한 정보가 담깁니다. 정상 응답에는 포함되지 않습니다.",
+                      "maxLength": 200
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "issu_stat_cls_code": {
+                          "type": "string",
+                          "title": "종목상태구분코드",
+                          "description": "종목 상태 구분 코드입니다(2자리).",
+                          "maxLength": 2
+                        },
+                        "marg_rate": {
+                          "type": "string",
+                          "title": "증거금비율",
+                          "description": "이 종목의 증거금 비율(%)입니다.",
+                          "maxLength": 9
+                        },
+                        "rprs_mrkt_kor_name": {
+                          "type": "string",
+                          "title": "대표시장한글명",
+                          "description": "이 종목이 속한 대표 시장의 한글 이름입니다. (예: \"KOSPI200\")",
+                          "maxLength": 40
+                        },
+                        "nw_hprc_lprc_clcd": {
+                          "type": "string",
+                          "title": "신고가저가구분코드",
+                          "description": "신고가·신저가 구분입니다.",
+                          "maxLength": 10
+                        },
+                        "rprs_bstp_kor_isnm": {
+                          "type": "string",
+                          "title": "대표업종한글종목명",
+                          "description": "이 종목이 속한 대표 업종의 한글 이름입니다. 빈 값으로 내려올 수 있으므로 업종 표시에 쓰기 전에 값을 확인하십시오. 시장 구분이 필요하시면 같은 응답의 대표시장한글명(rprs_mrkt_kor_name)을 쓰십시오.",
+                          "maxLength": 40
+                        },
+                        "tmpr_susp_yn": {
+                          "type": "string",
+                          "title": "임시정지여부",
+                          "description": "임시 정지 여부\n\"Y\": 정지\n\"N\": 정상",
+                          "maxLength": 2
+                        },
+                        "oprc_rang_exts_yn": {
+                          "type": "string",
+                          "title": "시가범위연장여부",
+                          "description": "시가 결정 시 가격 범위가 연장되었는지 여부입니다.\n\"Y\": 연장\n\"N\": 미연장\n\n빈 값으로 내려올 수 있으므로 빈 값을 함께 처리하십시오.",
+                          "maxLength": 2
+                        },
+                        "clpr_rang_exts_yn": {
+                          "type": "string",
+                          "title": "종가범위연장여부",
+                          "description": "종가 결정 시 가격 범위가 연장되었는지 여부입니다.\n\"Y\": 연장\n\"N\": 미연장\n\n빈 값으로 내려올 수 있으므로 빈 값을 함께 처리하십시오.",
+                          "maxLength": 2
+                        },
+                        "crdt_able_yn": {
+                          "type": "string",
+                          "title": "신용가능여부",
+                          "description": "신용 거래 가능 여부\n\"Y\": 가능\n\"N\": 불가",
+                          "maxLength": 2
+                        },
+                        "grmn_rate_cls_code": {
+                          "type": "string",
+                          "title": "보증금비율구분코드",
+                          "description": "증거금률 구분입니다. 값이 있으면 증거금률(%)입니다.",
+                          "maxLength": 5
+                        },
+                        "elw_pblc_yn": {
+                          "type": "string",
+                          "title": "ELW발행여부",
+                          "description": "ELW 발행 여부입니다.\n\"Y\": 발행\n\"N\": 미발행\n\n빈 값으로 내려올 수 있으므로 빈 값을 함께 처리하십시오.",
+                          "maxLength": 2
+                        },
+                        "stck_prpr": {
+                          "type": "number",
+                          "title": "주식현재가",
+                          "description": "현재가입니다.\n\n실시간 국내주식 현재가(/websocket/ohhts-stck-cntg)에서는 같은 값이 prpr 이라는 다른 이름으로 옵니다. 조회로 첫 화면을 채우고 실시간으로 이어 붙이실 때는 이름을 맞춰 주십시오. 가중평균주가도 이 조회는 wghn_avrg_prc, 실시간은 wghn_avrg_stck_prc 입니다."
+                        },
+                        "prdy_vrss": {
+                          "type": "number",
+                          "title": "전일대비",
+                          "description": "전일 종가 대비 등락 금액"
+                        },
+                        "prdy_vrss_sign": {
+                          "type": "string",
+                          "title": "전일대비부호",
+                          "description": "전일 대비 부호\n\"1\": 상한\n\"2\": 상승\n\"3\": 보합\n\"4\": 하한\n\"5\": 하락",
+                          "maxLength": 2
+                        },
+                        "prdy_ctrt": {
+                          "type": "string",
+                          "title": "전일대비율",
+                          "description": "전일 종가 대비 등락률(%)",
+                          "maxLength": 9
+                        },
+                        "acml_vol": {
+                          "type": "number",
+                          "title": "누적거래량",
+                          "description": "장 시작부터 지금까지 체결된 주식 수를 모두 더한 값입니다. 개별 체결 수량이 아닙니다."
+                        },
+                        "prdy_vrss_vol_rate": {
+                          "type": "string",
+                          "title": "전일대비거래량비율",
+                          "description": "전일 대비 거래량 비율(%)입니다.",
+                          "maxLength": 9
+                        },
+                        "prdy_smns_hour_vol_rate": {
+                          "type": "string",
+                          "title": "전일동일시간거래량비율",
+                          "description": "전일 같은 시간 대비 거래량 비율(%)입니다.",
+                          "maxLength": 9
+                        },
+                        "oprc": {
+                          "type": "number",
+                          "title": "시가",
+                          "description": "당일 첫 체결 가격(시가)입니다."
+                        },
+                        "hprc": {
+                          "type": "number",
+                          "title": "고가",
+                          "description": "당일 장중 가장 높았던 체결 가격(고가)입니다."
+                        },
+                        "lprc": {
+                          "type": "number",
+                          "title": "저가",
+                          "description": "당일 장중 가장 낮았던 체결 가격(저가)입니다."
+                        },
+                        "mxpr": {
+                          "type": "number",
+                          "title": "상한가",
+                          "description": "당일 주문 가능한 최고 가격(상한가)입니다."
+                        },
+                        "llam": {
+                          "type": "number",
+                          "title": "하한가",
+                          "description": "당일 주문 가능한 최저 가격(하한가)입니다."
+                        },
+                        "sdpr": {
+                          "type": "number",
+                          "title": "기준가",
+                          "description": "당일 기준가(전일 종가)"
+                        },
+                        "wghn_avrg_prc": {
+                          "type": "string",
+                          "title": "가중평균가격",
+                          "description": "당일 가중평균 가격입니다.",
+                          "maxLength": 11
+                        },
+                        "ssts_cntg_qty": {
+                          "type": "number",
+                          "title": "공매도체결수량",
+                          "description": "당일 공매도 체결 수량입니다."
+                        },
+                        "frgn_ehrt": {
+                          "type": "string",
+                          "title": "외국인소진율",
+                          "description": "외국인이 보유할 수 있는 한도 중 실제로 채운 비율(%)입니다. 100에 가까울수록 외국인 매수 여력이 적습니다.",
+                          "maxLength": 9
+                        },
+                        "whol_fncg_rmnd_rate": {
+                          "type": "string",
+                          "title": "전체융자잔고비율",
+                          "description": "전체 융자 잔고 비율(%)",
+                          "maxLength": 9
+                        },
+                        "frgn_hldn_qty_icdc": {
+                          "type": "number",
+                          "title": "외국인보유수량증감",
+                          "description": "전일 대비 외국인 보유 수량 증감입니다."
+                        },
+                        "pvt_scnd_dmrs": {
+                          "type": "number",
+                          "title": "피벗2차디저항",
+                          "description": "피벗 2차 저항선(디저항)입니다."
+                        },
+                        "pvt_fst_dmrs": {
+                          "type": "number",
+                          "title": "피벗1차디저항",
+                          "description": "피벗 1차 저항선(디저항)입니다."
+                        },
+                        "pvt_pont": {
+                          "type": "number",
+                          "title": "피벗포인트",
+                          "description": "피벗 포인트(기준선)입니다."
+                        },
+                        "pvt_fst_dmsp": {
+                          "type": "number",
+                          "title": "피벗1차디지지",
+                          "description": "피벗 1차 지지선(디지지)입니다."
+                        },
+                        "pvt_scnd_dmsp": {
+                          "type": "number",
+                          "title": "피벗2차디지지",
+                          "description": "피벗 2차 지지선(디지지)입니다."
+                        },
+                        "dmrs": {
+                          "type": "number",
+                          "title": "디저항",
+                          "description": "저항선(디저항) 가격입니다."
+                        },
+                        "dmsp": {
+                          "type": "number",
+                          "title": "디지지",
+                          "description": "지지선(디지지) 가격입니다."
+                        },
+                        "fcam": {
+                          "type": "string",
+                          "title": "액면가",
+                          "description": "1주의 액면가입니다.",
+                          "maxLength": 14
+                        },
+                        "sspr": {
+                          "type": "number",
+                          "title": "대용가",
+                          "description": "대용가. 대용 주문 시 담보로 인정되는 금액입니다."
+                        },
+                        "aspr_unit": {
+                          "type": "number",
+                          "title": "호가단위",
+                          "description": "호가 단위입니다."
+                        },
+                        "deal_qty_unit": {
+                          "type": "number",
+                          "title": "매매수량단위",
+                          "description": "매매 수량 단위. 주문 수량은 이 단위의 배수여야 합니다."
+                        },
+                        "cpfn": {
+                          "type": "number",
+                          "title": "자본금",
+                          "description": "자본금입니다. 억원 단위입니다."
+                        },
+                        "lstn_stcn": {
+                          "type": "number",
+                          "title": "상장주수",
+                          "description": "이 종목이 발행해 상장된 총 주식 수입니다. 시가총액(avls)을 원 단위로 구하려면 현재가 × 이 값으로 계산하십시오."
+                        },
+                        "avls": {
+                          "type": "number",
+                          "title": "시가총액",
+                          "description": "시가총액입니다. 1억원 단위로 내려오며, 원 단위가 필요하면 1억을 곱하십시오."
+                        },
+                        "prdy_avls_rank": {
+                          "type": "number",
+                          "title": "전일시가총액순위",
+                          "description": "전일 기준 시가총액 순위입니다. 0 으로 내려올 수 있으므로 순위 표시에 쓰기 전에 값을 확인하십시오. 시가총액 자체는 같은 응답의 시가총액(avls)을 쓰십시오."
+                        },
+                        "frgn_hldn_qty": {
+                          "type": "number",
+                          "title": "외국인보유수량",
+                          "description": "외국인이 보유한 주식 수량입니다."
+                        },
+                        "per": {
+                          "type": "string",
+                          "title": "PER",
+                          "description": "주가수익비율(PER)입니다.",
+                          "maxLength": 9
+                        },
+                        "pbr": {
+                          "type": "string",
+                          "title": "PBR",
+                          "description": "주가순자산비율(PBR)입니다.",
+                          "maxLength": 9
+                        },
+                        "fnaf_eps": {
+                          "type": "string",
+                          "title": "재무EPS",
+                          "description": "주당순이익(EPS)",
+                          "maxLength": 26
+                        },
+                        "fnaf_bps": {
+                          "type": "string",
+                          "title": "재무BPS",
+                          "description": "주당순자산(BPS)",
+                          "maxLength": 26
+                        },
+                        "dryy_hgpr": {
+                          "type": "number",
+                          "title": "연중최고가",
+                          "description": "연중 최고가입니다."
+                        },
+                        "dryy_hgpr_date": {
+                          "type": "string",
+                          "title": "연중최고가일자",
+                          "description": "연중 최고가 일자(YYYYMMDD)",
+                          "maxLength": 8
+                        },
+                        "dryy_hgpr_rate": {
+                          "type": "string",
+                          "title": "연중최고가비율",
+                          "description": "연중 최고가 대비율(%)",
+                          "maxLength": 9
+                        },
+                        "dryy_lwpr": {
+                          "type": "number",
+                          "title": "연중최저가",
+                          "description": "연중 최저가입니다."
+                        },
+                        "dryy_lwpr_rate": {
+                          "type": "string",
+                          "title": "연중최저가비율",
+                          "description": "연중 최저가 대비율(%)",
+                          "maxLength": 9
+                        },
+                        "dryy_lwpr_date": {
+                          "type": "string",
+                          "title": "연중최저가일자",
+                          "description": "연중 최저가 일자(YYYYMMDD)",
+                          "maxLength": 8
+                        },
+                        "52_week_hgpr": {
+                          "type": "number",
+                          "title": "52주최고가",
+                          "description": "52주 최고가입니다."
+                        },
+                        "52_week_hgpr_rate": {
+                          "type": "string",
+                          "title": "52주최고가비율",
+                          "description": "52주 최고가 대비율(%)",
+                          "maxLength": 9
+                        },
+                        "52_week_hgpr_date": {
+                          "type": "string",
+                          "title": "52주최고가일자",
+                          "description": "52주 최고가 일자(YYYYMMDD)",
+                          "maxLength": 8
+                        },
+                        "52_week_lwpr": {
+                          "type": "number",
+                          "title": "52주최저가",
+                          "description": "최근 52주 최저가입니다."
+                        },
+                        "52_week_lwpr_rate": {
+                          "type": "string",
+                          "title": "52주최저가비율",
+                          "description": "52주 최저가 대비율(%)",
+                          "maxLength": 9
+                        },
+                        "52_week_lwpr_date": {
+                          "type": "string",
+                          "title": "52주최저가일자",
+                          "description": "52주 최저가 일자(YYYYMMDD)",
+                          "maxLength": 8
+                        },
+                        "ssts_yn": {
+                          "type": "string",
+                          "title": "공매도여부",
+                          "description": "공매도 가능 여부\n\"Y\": 가능\n\"N\": 불가",
+                          "maxLength": 2
+                        },
+                        "shrn_iscd": {
+                          "type": "string",
+                          "title": "단축종목코드",
+                          "description": "단축 종목코드(6자리)",
+                          "maxLength": 9
+                        },
+                        "sltr_yn": {
+                          "type": "string",
+                          "title": "정리매매여부",
+                          "description": "정리매매 여부\n\"Y\": 해당\n\"N\": 비해당",
+                          "maxLength": 2
+                        },
+                        "invt_epmd_cntt": {
+                          "type": "string",
+                          "title": "투자유의내용",
+                          "description": "투자 유의 안내 문구입니다.",
+                          "maxLength": 50
+                        },
+                        "kor_isnm": {
+                          "type": "string",
+                          "title": "한글종목명",
+                          "description": "종목의 한글명입니다.",
+                          "maxLength": 40
+                        },
+                        "stac_month": {
+                          "type": "string",
+                          "title": "결산월",
+                          "description": "결산월입니다. 2자리 월로 내려옵니다. (예: \"12\")",
+                          "maxLength": 2
+                        },
+                        "prdy_vol": {
+                          "type": "number",
+                          "title": "전일거래량",
+                          "description": "전일 거래량입니다."
+                        },
+                        "glob_ntby_qty": {
+                          "type": "number",
+                          "title": "외국계순매수수량",
+                          "description": "외국인 순매수 수량입니다."
+                        },
+                        "acml_tr_pbmn": {
+                          "type": "number",
+                          "title": "누적거래대금",
+                          "description": "장 시작부터 지금까지 체결된 거래대금을 모두 더한 값입니다."
+                        }
+                      },
+                      "title": "현재가 정보"
+                    }
+                  }
+                },
+                "example": {
+                  "data": {
+                    "issu_stat_cls_code": "55",
+                    "marg_rate": "30",
+                    "rprs_mrkt_kor_name": "KOSPI200",
+                    "nw_hprc_lprc_clcd": "신고가",
+                    "rprs_bstp_kor_isnm": "",
+                    "tmpr_susp_yn": "N",
+                    "oprc_rang_exts_yn": "",
+                    "clpr_rang_exts_yn": "",
+                    "crdt_able_yn": "Y",
+                    "grmn_rate_cls_code": "30",
+                    "elw_pblc_yn": "",
+                    "stck_prpr": 1263000,
+                    "prdy_vrss": 1000,
+                    "prdy_vrss_sign": "2",
+                    "prdy_ctrt": "0.08",
+                    "acml_vol": 286714,
+                    "prdy_vrss_vol_rate": "15.10",
+                    "prdy_smns_hour_vol_rate": "21.87",
+                    "oprc": 1251000,
+                    "hprc": 1640000,
+                    "lprc": 884000,
+                    "mxpr": 1640000,
+                    "llam": 884000,
+                    "sdpr": 1262000,
+                    "wghn_avrg_prc": "1396914",
+                    "ssts_cntg_qty": 59031,
+                    "frgn_ehrt": "46.71",
+                    "whol_fncg_rmnd_rate": "0.40",
+                    "frgn_hldn_qty_icdc": 0,
+                    "pvt_scnd_dmrs": 1481333,
+                    "pvt_fst_dmrs": 1086666,
+                    "pvt_pont": 889333,
+                    "pvt_fst_dmsp": 494666,
+                    "pvt_scnd_dmsp": 297333,
+                    "dmrs": 988000,
+                    "dmsp": 396000,
+                    "fcam": "100",
+                    "sspr": 199430,
+                    "aspr_unit": 1000,
+                    "deal_qty_unit": 1,
+                    "cpfn": 7780,
+                    "lstn_stcn": 5846278608,
+                    "avls": 73838499,
+                    "prdy_avls_rank": 0,
+                    "frgn_hldn_qty": 2730694215,
+                    "per": "18.27",
+                    "pbr": "1.87",
+                    "fnaf_eps": "6564",
+                    "fnaf_bps": "63997",
+                    "dryy_hgpr": 1640000,
+                    "dryy_hgpr_date": "20260910",
+                    "dryy_hgpr_rate": "-22.99",
+                    "dryy_lwpr": 120200,
+                    "dryy_lwpr_rate": "950.75",
+                    "dryy_lwpr_date": "20260102",
+                    "52_week_hgpr": 1640000,
+                    "52_week_hgpr_rate": "-22.99",
+                    "52_week_hgpr_date": "20260910",
+                    "52_week_lwpr": 72100,
+                    "52_week_lwpr_rate": "1651.73",
+                    "52_week_lwpr_date": "20250911",
+                    "ssts_yn": "Y",
+                    "shrn_iscd": "005930",
+                    "sltr_yn": "N",
+                    "invt_epmd_cntt": "",
+                    "kor_isnm": "삼성전자",
+                    "stac_month": "12",
+                    "prdy_vol": 1898347,
+                    "glob_ntby_qty": 146721,
+                    "acml_tr_pbmn": 400514936000
+                  },
+                  "rsp_cd": "0000",
+                  "rsp_msg": "정상 처리 되었습니다."
+                }
+              }
+            }
+          }
+        },
+        "x-tr-id": "ohhts_1001_001r",
+        "x-tps": "10"
+      }
+    },
+    "/trading/v1/overseas/orders/buy": {
+      "post": {
+        "operationId": "ovs_orders_buy",
+        "summary": "해외주식 매수 주문",
+        "tags": [
+          "trading"
+        ],
+        "description": "해외주식 매수 주문을 접수합니다.",
+        "parameters": [
+          {
+            "name": "mac_address",
+            "in": "header",
+            "required": true,
+            "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+            "schema": {
+              "type": "string",
+              "title": "사용자 MAC_ADDRESS",
+              "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+              "maxLength": 12
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "rsp_cd": {
+                      "type": "string",
+                      "title": "응답코드",
+                      "description": "응답 코드\n\"0001\": 주문 접수 성공\n오류는 종류와 무관하게 HTTP 500 으로 반환되며 사유는 rsp_msg 에 담깁니다.",
+                      "maxLength": 8
+                    },
+                    "rsp_msg": {
+                      "type": "string",
+                      "title": "응답메시지",
+                      "description": "응답 메시지입니다. 오류일 때 원인이 이 값에 담깁니다.",
+                      "maxLength": 200
+                    },
+                    "tr_cont": {
+                      "type": "string",
+                      "title": "연속조회 여부",
+                      "description": "항상 \"0\"으로 내려옵니다. 이 API는 연속조회를 지원하지 않습니다.",
+                      "maxLength": 1
+                    },
+                    "rsp_sub_msg": {
+                      "type": "string",
+                      "title": "응답 상세 메시지",
+                      "description": "오류일 때만 내려오며 조치 정보가 담깁니다.\n정상 응답에는 포함되지 않습니다.",
+                      "maxLength": 200
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "oder_no": {
+                          "type": "number",
+                          "title": "주문번호",
+                          "description": "이번 요청으로 채번된 주문 번호입니다. 이 주문을 정정·취소할 때 해외주식 주문 정정(/trading/v1/overseas/orders/modify)·취소(/trading/v1/overseas/orders/cancel)의 orgl_oder_no 에 넣는 값입니다."
+                        },
+                        "warn_cls_code": {
+                          "type": "string",
+                          "title": "경고구분코드",
+                          "description": "경고 구분 코드\n\"0\": 정상 접수\n\n경고 ― \"1\"(경고) · \"3\"(미국 PTP 종목 과세 확인)\nwarn_msg 내용을 확인한 뒤 같은 요청을 warn_cnfr_yn \"Y\"로 재전송하십시오.\n\n보류 ― \"2\"",
+                          "maxLength": 1
+                        },
+                        "warn_msg": {
+                          "type": "string",
+                          "title": "메시지내용",
+                          "description": "경고 또는 안내 문구입니다. 해당 사항이 없으면 빈 값입니다.",
+                          "maxLength": 100
+                        }
+                      },
+                      "title": "DATA"
+                    }
+                  }
+                },
+                "example": {
+                  "data": {
+                    "oder_no": 100000,
+                    "warn_cls_code": "0",
+                    "warn_msg": ""
+                  },
+                  "rsp_cd": "0001",
+                  "rsp_msg": "주문이 완료되었습니다.",
+                  "tr_cont": "0"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "ovrs_stck_symb_iscd",
+                  "ovrs_exch_vndr_idno",
+                  "oder_cls_code",
+                  "oder_cond_cls_code",
+                  "odqt",
+                  "ovrs_stck_oder_prc"
+                ],
+                "properties": {
+                  "ovrs_stck_symb_iscd": {
+                    "type": "string",
+                    "title": "해외주식심볼종목코드",
+                    "description": "해외주식 심볼입니다. (예: \"AAPL\")",
+                    "maxLength": 12
+                  },
+                  "ovrs_exch_vndr_idno": {
+                    "type": "string",
+                    "title": "해외거래소벤더식별번호",
+                    "description": "종목이 상장된 거래소 코드입니다.\n\"0321\": 뉴욕(NYSE)\n\"0537\": 나스닥(NASDAQ)\n\"0066\": 아멕스(AMEX)\n\"0104\": 홍콩\n\"0215\": 상해\n\"0106\": 도쿄\n전체 목록은 해외 거래소 조회(/reference/v1/overseas/exchanges)로 확인하십시오.",
+                    "maxLength": 6
+                  },
+                  "oder_cls_code": {
+                    "type": "string",
+                    "title": "주문구분코드",
+                    "description": "주문 구분 코드\n\"01\": 지정가\n\"05\": 시장가\n\"31\": LOO (장 개시 지정가)\n\"32\": LOC (장 마감 지정가)\n\"33\": MOO (장 개시 시장가)\n\"34\": MOC (장 마감 시장가)\n\"35\": Limit VWAP\n\"36\": Limit TWAP\n\"37\": VWAP\n\"38\": TWAP",
+                    "maxLength": 2
+                  },
+                  "oder_cond_cls_code": {
+                    "type": "string",
+                    "title": "주문조건구분코드",
+                    "description": "주문 조건입니다.\n\"0\": 조건 없음\n\"2\": 개장 전\n\"7\": 종가 \noder_cls_code 가 01 지정가, 05시장가의 경우 0 \n31 LOO, 33 MOO의 경우 2 \n 32 LOC, 34 MOC의 경우 7 \n35, 36, 37, 38 (VWAP/TWAP계열)은 0",
+                    "maxLength": 1
+                  },
+                  "odqt": {
+                    "type": "number",
+                    "title": "주문수량",
+                    "description": "주문 수량입니다."
+                  },
+                  "ovrs_stck_oder_prc": {
+                    "type": "string",
+                    "title": "주문가격",
+                    "description": "주문 단가입니다(현지 통화). 소수점 이하 4자리까지 입력할 수 있으며, 초과하면 IGW50002 오류로 거절됩니다.\n지정가 계열(oder_cls_code \"01\" \"31\" \"32\" \"35\" \"36\")은 단가를, 시장가 계열(\"05\" \"33\" \"34\" \"37\" \"38\")은 0을 넣습니다.",
+                    "maxLength": 20
+                  },
+                  "warn_cnfr_yn": {
+                    "type": "string",
+                    "title": "경고확인여부",
+                    "description": "경고 확인 여부\n\"N\": 미확인\n\"Y\": 확인\n평소에는 넣지 않아도 됩니다. 응답의 warn_cls_code 가 \"1\"(경고) 또는 \"3\"(미국 PTP 종목 과세 확인)이면 warn_msg 내용을 확인한 뒤 같은 요청에 이 값을 \"Y\"로 넣어 재전송합니다.",
+                    "maxLength": 1
+                  }
+                }
+              },
+              "example": {
+                "ovrs_stck_symb_iscd": "AAPL",
+                "ovrs_exch_vndr_idno": "0537",
+                "oder_cls_code": "01",
+                "oder_cond_cls_code": "0",
+                "odqt": 1,
+                "ovrs_stck_oder_prc": 150.0
+              }
+            }
+          }
+        },
+        "x-tr-id": "obtro_oder_101a",
+        "x-tps": "10"
+      }
+    },
+    "/trading/v1/overseas/orders/sell": {
+      "post": {
+        "operationId": "ovs_orders_sell",
+        "summary": "해외주식 매도 주문",
+        "tags": [
+          "trading"
+        ],
+        "description": "보유 해외주식의 매도 주문을 접수합니다.",
+        "parameters": [
+          {
+            "name": "mac_address",
+            "in": "header",
+            "required": true,
+            "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+            "schema": {
+              "type": "string",
+              "title": "사용자 MAC_ADDRESS",
+              "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+              "maxLength": 12
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "rsp_cd": {
+                      "type": "string",
+                      "title": "응답코드",
+                      "description": "응답 코드\n\"0001\": 주문 접수 성공\n사유는 rsp_msg 에 담깁니다.",
+                      "maxLength": 8
+                    },
+                    "rsp_msg": {
+                      "type": "string",
+                      "title": "응답메시지",
+                      "description": "응답 메시지입니다. 오류일 때 원인이 이 값에 담깁니다.",
+                      "maxLength": 200
+                    },
+                    "tr_cont": {
+                      "type": "string",
+                      "title": "연속조회 여부",
+                      "description": "연속조회 여부입니다.",
+                      "maxLength": 1
+                    },
+                    "rsp_sub_msg": {
+                      "type": "string",
+                      "title": "응답 상세 메시지",
+                      "description": "오류일 때 구체적인 사유가 담기는 경우 내려옵니다.",
+                      "maxLength": 200
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "oder_no": {
+                          "type": "number",
+                          "title": "주문번호",
+                          "description": "이번 요청으로 채번된 주문 번호입니다.\n이 주문을 다시 정정·취소할 때 해외주식 주문 정정(/trading/v1/overseas/orders/modify)·취소(/trading/v1/overseas/orders/cancel)의 orgl_oder_no 에 넣는 값입니다."
+                        },
+                        "warn_cls_code": {
+                          "type": "string",
+                          "title": "경고구분코드",
+                          "description": "경고 구분 코드\n\"0\": 정상 접수\n\"1\": 경고\n\"2\": 보류\n\"3\": 미국 PTP 종목 과세 확인\n\n\"1\" 또는 \"3\" 이면 warn_msg 내용을 확인한 뒤 같은 요청을 warn_cnfr_yn \"Y\" 로 재전송하십시오.",
+                          "maxLength": 1
+                        },
+                        "warn_msg": {
+                          "type": "string",
+                          "title": "메시지내용",
+                          "description": "경고 또는 안내 문구입니다. 해당 사항이 없으면 빈 값입니다.",
+                          "maxLength": 100
+                        }
+                      },
+                      "title": "DATA"
+                    }
+                  }
+                },
+                "example": {
+                  "data": {
+                    "oder_no": 100000,
+                    "warn_cls_code": "0",
+                    "warn_msg": ""
+                  },
+                  "rsp_cd": "0001",
+                  "rsp_msg": "주문이 완료되었습니다.",
+                  "tr_cont": "0"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "ovrs_stck_symb_iscd",
+                  "ovrs_exch_vndr_idno",
+                  "oder_cls_code",
+                  "oder_cond_cls_code",
+                  "odqt",
+                  "ovrs_stck_oder_prc"
+                ],
+                "properties": {
+                  "ovrs_stck_symb_iscd": {
+                    "type": "string",
+                    "title": "해외주식심볼종목코드",
+                    "description": "해외주식 심볼입니다. (예: \"AAPL\")",
+                    "maxLength": 12
+                  },
+                  "ovrs_exch_vndr_idno": {
+                    "type": "string",
+                    "title": "해외거래소벤더식별번호",
+                    "description": "종목이 상장된 거래소 코드입니다.\n미국 ― \"0321\": 뉴욕(NYSE), \"0537\": 나스닥(NASDAQ), \"0066\": 아멕스(AMEX)\n중화권 ― \"0104\": 홍콩, \"0215\": 상해, \"0214\": 심천\n일본 ― \"0106\": 도쿄, \"0107\": 오사카, \"0112\": 자스닥\n베트남 ― \"0770\": 호치민, \"0771\": 하노이\n전체 목록은 해외 거래소 조회(/reference/v1/overseas/exchanges)로 확인하십시오.",
+                    "maxLength": 6
+                  },
+                  "oder_cls_code": {
+                    "type": "string",
+                    "title": "주문구분코드",
+                    "description": "주문 구분 코드\n\"01\": 지정가\n\"05\": 시장가\n\"31\": LOO (장 개시 지정가)\n\"32\": LOC (장 마감 지정가)\n\"33\": MOO (장 개시 시장가)\n\"34\": MOC (장 마감 시장가)\n\"35\": Limit VWAP\n\"36\": Limit TWAP\n\"37\": VWAP\n\"38\": TWAP\n\n지정가 계열(\"01\" \"31\" \"32\" \"35\" \"36\")은 ovrs_stck_oder_prc 에 단가를 넣고, 시장가 계열(\"05\" \"33\" \"34\" \"37\" \"38\")은 0을 넣습니다.",
+                    "maxLength": 2
+                  },
+                  "oder_cond_cls_code": {
+                    "type": "string",
+                    "title": "주문조건구분코드",
+                    "description": "주문 조건입니다.\n\"0\": 조건 없음\n\"2\": 개장 전\n\"7\": 종가\n\n 지정가·시장가 주문은 넣지 않으셔도 됩니다.\noder_cls_code 가 01 지정가, 05시장가의 경우 0 \n31 LOO, 33 MOO의 경우 2 \n 32 LOC, 34 MOC의 경우 7 \n35, 36, 37, 38 (VWAP/TWAP계열)은 0",
+                    "maxLength": 1
+                  },
+                  "odqt": {
+                    "type": "number",
+                    "title": "주문수량",
+                    "description": "주문 수량입니다."
+                  },
+                  "ovrs_stck_oder_prc": {
+                    "type": "string",
+                    "title": "주문가격",
+                    "description": "주문 단가입니다(현지 통화). 소수점 이하 4자리까지 입력할 수 있으며, 초과하면 IGW50002 오류로 거절됩니다.\n지정가 계열(oder_cls_code \"01\" \"31\" \"32\" \"35\" \"36\")은 단가를, 시장가 계열(\"05\" \"33\" \"34\" \"37\" \"38\")은 0을 넣습니다.",
+                    "maxLength": 20
+                  },
+                  "warn_cnfr_yn": {
+                    "type": "string",
+                    "title": "경고확인여부",
+                    "description": "경고 확인 여부\n\"N\": 미확인\n\"Y\": 확인\n평소에는 넣지 않으셔도 됩니다. 응답의 warn_cls_code 가 \"1\"(경고) 또는 \"3\"(미국 PTP 종목 과세 확인)이면 warn_msg 내용을 확인한 뒤 같은 요청에 이 값을 \"Y\" 로 넣어 다시 보내십시오.",
+                    "maxLength": 1
+                  }
+                }
+              },
+              "example": {
+                "ovrs_stck_symb_iscd": "TSLA",
+                "ovrs_exch_vndr_idno": "0537",
+                "oder_cls_code": "01",
+                "oder_cond_cls_code": "0",
+                "odqt": 1,
+                "ovrs_stck_oder_prc": 1000
+              }
+            }
+          }
+        },
+        "x-tr-id": "obtro_oder_101a",
+        "x-tps": "10"
+      }
+    },
+    "/trading/v1/overseas/orders/modify": {
+      "post": {
+        "operationId": "ovs_orders_modify",
+        "summary": "해외주식 주문 정정",
+        "tags": [
+          "trading"
+        ],
+        "description": "접수된 해외주식 주문의 단가 또는 수량을 정정합니다.",
+        "parameters": [
+          {
+            "name": "mac_address",
+            "in": "header",
+            "required": true,
+            "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+            "schema": {
+              "type": "string",
+              "title": "사용자 MAC_ADDRESS",
+              "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+              "maxLength": 12
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "rsp_cd": {
+                      "type": "string",
+                      "title": "응답코드",
+                      "description": "응답 코드\n\"0001\": 주문 접수 성공\n사유는 rsp_msg 에 담깁니다.",
+                      "maxLength": 8
+                    },
+                    "rsp_msg": {
+                      "type": "string",
+                      "title": "응답메시지",
+                      "description": "응답 메시지입니다. 오류일 때 원인이 이 값에 담깁니다.",
+                      "maxLength": 200
+                    },
+                    "tr_cont": {
+                      "type": "string",
+                      "title": "연속조회 여부",
+                      "description": "연속조회 여부입니다.",
+                      "maxLength": 1
+                    },
+                    "rsp_sub_msg": {
+                      "type": "string",
+                      "title": "응답 상세 메시지",
+                      "description": "오류일 때 구체적인 사유가 담기는 경우 내려옵니다.",
+                      "maxLength": 200
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "oder_no": {
+                          "type": "number",
+                          "title": "주문번호",
+                          "description": "이번 요청으로 채번된 주문 번호입니다.\n이 주문을 다시 정정·취소할 때 해외주식 주문 정정(/trading/v1/overseas/orders/modify)·취소(/trading/v1/overseas/orders/cancel)의 orgl_oder_no 에 넣는 값입니다."
+                        },
+                        "warn_cls_code": {
+                          "type": "string",
+                          "title": "경고구분코드",
+                          "description": "경고 구분 코드\n\"0\": 정상 접수\n\"1\": 경고\n\"2\": 보류\n\"3\": 미국 PTP 종목 과세 확인\n\n\"1\" 또는 \"3\" 이면 warn_msg 내용을 확인한 뒤 같은 요청을 warn_cnfr_yn \"Y\" 로 재전송하십시오.",
+                          "maxLength": 1
+                        },
+                        "warn_msg": {
+                          "type": "string",
+                          "title": "메시지내용",
+                          "description": "경고 또는 안내 문구입니다. 해당 사항이 없으면 빈 값입니다.",
+                          "maxLength": 100
+                        }
+                      },
+                      "title": "DATA"
+                    }
+                  }
+                },
+                "example": {
+                  "data": {
+                    "oder_no": 100000,
+                    "warn_cls_code": "0",
+                    "warn_msg": ""
+                  },
+                  "rsp_cd": "0001",
+                  "rsp_msg": "주문이 완료되었습니다.",
+                  "tr_cont": "0"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "oder_date",
+                  "orgl_oder_no",
+                  "oder_cls_code",
+                  "odqt",
+                  "ovrs_stck_oder_prc",
+                  "oder_cond_cls_code"
+                ],
+                "properties": {
+                  "oder_date": {
+                    "type": "string",
+                    "title": "주문일자",
+                    "description": "정정할 주문의 주문일자를 YYYYMMDD 형식으로 넣습니다.",
+                    "maxLength": 8
+                  },
+                  "orgl_oder_no": {
+                    "type": "number",
+                    "title": "원주문번호",
+                    "description": "정정할 주문의 번호를 넣습니다. 주문 접수 응답 또는 주문체결내역 조회의 oder_no 입니다."
+                  },
+                  "oder_cls_code": {
+                    "type": "string",
+                    "title": "주문구분코드",
+                    "description": "주문 구분 코드\n\"01\": 지정가\n\"05\": 시장가\n\"31\": LOO (장 개시 지정가)\n\"32\": LOC (장 마감 지정가)\n\"33\": MOO (장 개시 시장가)\n\"34\": MOC (장 마감 시장가)\n\"35\": Limit VWAP\n\"36\": Limit TWAP\n\"37\": VWAP\n\"38\": TWAP\n\n지정가 계열(\"01\" \"31\" \"32\" \"35\" \"36\")은 ovrs_stck_oder_prc 에 단가를 넣고, 시장가 계열(\"05\" \"33\" \"34\" \"37\" \"38\")은 0을 넣습니다.",
+                    "maxLength": 2
+                  },
+                  "odqt": {
+                    "type": "number",
+                    "title": "주문수량",
+                    "description": "주문 수량입니다."
+                  },
+                  "ovrs_stck_oder_prc": {
+                    "type": "string",
+                    "title": "주문가격",
+                    "description": "정정 후 단가입니다(현지 통화). 소수점 이하 4자리까지 입력할 수 있으며, 초과하면 IGW50002 오류로 거절됩니다.\n지정가 계열(oder_cls_code \"01\" \"31\" \"32\" \"35\" \"36\")은 단가를, 시장가 계열(\"05\" \"33\" \"34\" \"37\" \"38\")은 0을 넣습니다.",
+                    "maxLength": 20
+                  },
+                  "oder_cond_cls_code": {
+                    "type": "string",
+                    "title": "주문조건구분코드",
+                    "description": "주문 조건입니다.\n\"0\": 조건 없음\n\"2\": 개장 전\n\"7\": 종가\n\n 지정가·시장가 주문은 넣지 않으셔도 됩니다.\noder_cls_code 가 01 지정가, 05시장가의 경우 0 \n31 LOO, 33 MOO의 경우 2 \n 32 LOC, 34 MOC의 경우 7 \n35, 36, 37, 38 (VWAP/TWAP계열)은 0",
+                    "maxLength": 1
+                  },
+                  "warn_cnfr_yn": {
+                    "type": "string",
+                    "title": "경고확인여부",
+                    "description": "경고 확인 여부\n\"N\": 미확인\n\"Y\": 확인\n평소에는 넣지 않으셔도 됩니다. 응답의 warn_cls_code 가 \"1\"(경고) 또는 \"3\"(미국 PTP 종목 과세 확인)이면 warn_msg 내용을 확인한 뒤 같은 요청에 이 값을 \"Y\" 로 넣어 다시 보내십시오.",
+                    "maxLength": 1
+                  }
+                }
+              },
+              "example": {
+                "oder_date": "20260825",
+                "orgl_oder_no": 284262,
+                "oder_cls_code": "01",
+                "odqt": 1,
+                "ovrs_stck_oder_prc": 1200,
+                "oder_cond_cls_code": "0"
+              }
+            }
+          }
+        },
+        "x-tr-id": "obtro_oder_102a",
+        "x-tps": "10"
+      }
+    },
+    "/trading/v1/overseas/orders/cancel": {
+      "post": {
+        "operationId": "ovs_orders_cancel",
+        "summary": "해외주식 주문 취소",
+        "tags": [
+          "trading"
+        ],
+        "description": "접수된 해외주식 주문을 취소합니다.",
+        "parameters": [
+          {
+            "name": "mac_address",
+            "in": "header",
+            "required": true,
+            "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+            "schema": {
+              "type": "string",
+              "title": "사용자 MAC_ADDRESS",
+              "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+              "maxLength": 12
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "rsp_cd": {
+                      "type": "string",
+                      "title": "응답코드",
+                      "description": "응답 코드\n\"0001\": 주문 접수 성공\n오류는 종류와 무관하게 HTTP 500 으로 반환되며 사유는 rsp_msg 에 담깁니다.",
+                      "maxLength": 8
+                    },
+                    "rsp_msg": {
+                      "type": "string",
+                      "title": "응답메시지",
+                      "description": "응답 메시지입니다. 오류일 때 원인이 이 값에 담깁니다.",
+                      "maxLength": 200
+                    },
+                    "tr_cont": {
+                      "type": "string",
+                      "title": "연속조회 여부",
+                      "description": "항상 \"0\"으로 내려옵니다. 이 API는 연속조회를 지원하지 않습니다.",
+                      "maxLength": 1
+                    },
+                    "rsp_sub_msg": {
+                      "type": "string",
+                      "title": "응답 상세 메시지",
+                      "description": "오류일 때만 내려오며 조치 정보가 담깁니다.\n정상 응답에는 포함되지 않습니다.",
+                      "maxLength": 200
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "oder_no": {
+                          "type": "number",
+                          "title": "주문번호",
+                          "description": "취소 요청으로 채번된 주문 번호입니다."
+                        },
+                        "warn_cls_code": {
+                          "type": "string",
+                          "title": "경고구분코드",
+                          "description": "경고 구분 코드\n\"0\": 정상 접수\n\n경고 ― \"1\"(경고) · \"3\"(미국 PTP 종목 과세 확인)\nwarn_msg 내용을 확인한 뒤 같은 요청을 warn_cnfr_yn \"Y\"로 재전송하십시오.\n\n보류 ― \"2\"\n\n국내주식 주문과 값 체계가 다르므로 코드를 공용으로 쓰지 마십시오.",
+                          "maxLength": 1
+                        },
+                        "warn_msg": {
+                          "type": "string",
+                          "title": "메시지내용",
+                          "description": "경고 또는 안내 문구입니다. 해당 사항이 없으면 빈 값입니다.",
+                          "maxLength": 100
+                        }
+                      },
+                      "title": "DATA"
+                    }
+                  }
+                },
+                "example": {
+                  "data": {
+                    "oder_no": 100000,
+                    "warn_cls_code": "0",
+                    "warn_msg": ""
+                  },
+                  "rsp_cd": "0001",
+                  "rsp_msg": "주문이 완료되었습니다.",
+                  "tr_cont": "0"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "oder_date",
+                  "orgl_oder_no",
+                  "oder_cls_code",
+                  "odqt"
+                ],
+                "properties": {
+                  "oder_date": {
+                    "type": "string",
+                    "title": "주문일자",
+                    "description": "취소할 주문의 주문일자를 YYYYMMDD 형식으로 넣습니다.",
+                    "maxLength": 8
+                  },
+                  "orgl_oder_no": {
+                    "type": "number",
+                    "title": "원주문번호",
+                    "description": "취소할 주문의 번호를 넣습니다. 주문 접수 응답 또는 주문체결내역 조회의 oder_no 입니다."
+                  },
+                  "oder_cls_code": {
+                    "type": "string",
+                    "title": "주문구분코드",
+                    "description": "원주문의 주문 구분 코드를 그대로 넣습니다.\n\"01\": 지정가\n\"05\": 시장가\n\"31\": LOO\n\"32\": LOC\n\"33\": MOO\n\"34\": MOC\n\"35\": Limit VWAP\n\"36\": Limit TWAP\n\"37\": VWAP\n\"38\": TWAP",
+                    "maxLength": 2
+                  },
+                  "odqt": {
+                    "type": "number",
+                    "title": "주문수량",
+                    "description": "주문 수량입니다."
+                  },
+                  "warn_cnfr_yn": {
+                    "type": "string",
+                    "title": "경고확인여부",
+                    "description": "경고 확인 여부\n\"N\": 미확인\n\"Y\": 확인\n평소에는 넣지 않으셔도 됩니다. 응답의 warn_cls_code 가 \"1\"(경고) 또는 \"3\"(미국 PTP 종목 과세 확인)이면 warn_msg 내용을 확인한 뒤 같은 요청에 이 값을 \"Y\"로 넣어 재전송합니다.",
+                    "maxLength": 1
+                  }
+                }
+              },
+              "example": {
+                "oder_date": "20260825",
+                "orgl_oder_no": 284263,
+                "oder_cls_code": "01",
+                "odqt": 1
+              }
+            }
+          }
+        },
+        "x-tr-id": "obtro_oder_102a",
+        "x-tps": "10"
+      }
+    },
+    "/trading/v1/overseas/orders/estimate": {
+      "get": {
+        "operationId": "ovs_orders_estimate",
+        "summary": "해외주식 주문가능금액 조회",
+        "tags": [
+          "trading"
+        ],
+        "description": "해외주식 주문 전에 통화별 주문 가능 금액을 조회합니다.",
+        "parameters": [
+          {
+            "name": "mac_address",
+            "in": "header",
+            "required": true,
+            "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+            "schema": {
+              "type": "string",
+              "title": "사용자 MAC_ADDRESS",
+              "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+              "maxLength": 12
+            }
+          },
+          {
+            "name": "intg_marg_iqry_yn",
+            "in": "query",
+            "required": false,
+            "description": "통합증거금 기준으로 조회할지 지정합니다.\n\"Y\": 통합증거금 기준\n\"N\": 일반 기준 (query string)",
+            "schema": {
+              "type": "string",
+              "title": "통합증거금조회여부",
+              "description": "통합증거금 기준으로 조회할지 지정합니다.\n\"Y\": 통합증거금 기준\n\"N\": 일반 기준 (query string)",
+              "maxLength": 1
+            },
+            "example": "Y"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "rsp_cd": {
+                      "type": "string",
+                      "title": "응답코드",
+                      "description": "이 API 의 성공 응답 코드입니다.\n\"5766\": 조회 완료\n\"5820\": 조회할 자료 없음\n\n오류는 종류와 무관하게 HTTP 500 으로 반환되므로, 성공·실패는 HTTP 상태가 아니라 이 값으로 판정하십시오.",
+                      "maxLength": 8
+                    },
+                    "rsp_msg": {
+                      "type": "string",
+                      "title": "응답메시지",
+                      "description": "응답 메시지입니다. 오류일 때 원인이 이 값에 담깁니다.",
+                      "maxLength": 200
+                    },
+                    "tr_cont": {
+                      "type": "string",
+                      "title": "연속조회 여부",
+                      "description": "항상 \"0\"으로 내려옵니다. 이 API는 연속조회를 지원하지 않습니다.",
+                      "maxLength": 1
+                    },
+                    "rsp_sub_msg": {
+                      "type": "string",
+                      "title": "응답 상세 메시지",
+                      "description": "오류일 때만 내려오며 조치 정보가 담깁니다.\n정상 응답에는 포함되지 않습니다.",
+                      "maxLength": 200
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "crcd": {
+                            "type": "string",
+                            "title": "통화코드",
+                            "description": "통화 코드입니다.",
+                            "maxLength": 3
+                          },
+                          "stnd_deps_camt": {
+                            "type": "string",
+                            "title": "외화예수금",
+                            "description": "해당 통화의 예수금입니다.",
+                            "maxLength": 20
+                          },
+                          "exrt": {
+                            "type": "string",
+                            "title": "기준환율",
+                            "description": "원화 환산에 적용된 환율입니다.",
+                            "maxLength": 12
+                          },
+                          "stnd_evdn_camt": {
+                            "type": "string",
+                            "title": "증거금",
+                            "description": "증거금입니다.",
+                            "maxLength": 20
+                          },
+                          "othr_crnc_evdn_camt": {
+                            "type": "string",
+                            "title": "타통화증거금",
+                            "description": "다른 통화 잔액을 증거금으로 활용한 금액입니다.",
+                            "maxLength": 20
+                          },
+                          "pcur_oder_able_camt": {
+                            "type": "string",
+                            "title": "주문가능금액(원화)",
+                            "description": "주문 가능 금액을 원화로 환산한 값입니다. oder_crnc_oder_able_camt x exrt 와 같습니다.",
+                            "maxLength": 20
+                          },
+                          "oder_crnc_oder_able_camt": {
+                            "type": "string",
+                            "title": "주문가능금액(주문통화)",
+                            "description": "주문 통화 기준 주문 가능 금액입니다.",
+                            "maxLength": 20
+                          },
+                          "camt": {
+                            "type": "string",
+                            "title": "재매매가능금액",
+                            "description": "재매매 가능 금액입니다.",
+                            "maxLength": 20
+                          },
+                          "frcr_amt": {
+                            "type": "string",
+                            "title": "외화추정예수금",
+                            "description": "외화 추정 예수금입니다. 현재 예수금은 stnd_deps_camt 입니다.",
+                            "maxLength": 20
+                          }
+                        }
+                      },
+                      "title": "통화별 주문가능 목록"
+                    }
+                  }
+                },
+                "example": {
+                  "data": [
+                    {
+                      "crcd": "USD",
+                      "stnd_deps_camt": "10000.0000",
+                      "exrt": "1000.0000",
+                      "stnd_evdn_camt": "0.0000",
+                      "othr_crnc_evdn_camt": "0.0000",
+                      "pcur_oder_able_camt": "10000000.0000",
+                      "oder_crnc_oder_able_camt": "10000.0000",
+                      "camt": "0.0000",
+                      "frcr_amt": "10000.000"
+                    }
+                  ],
+                  "rsp_cd": "5766",
+                  "rsp_msg": "조회가 완료되었습니다.",
+                  "tr_cont": "0"
+                }
+              }
+            }
+          }
+        },
+        "x-tr-id": "obtro_acnt_151r",
+        "x-tps": "10"
+      }
+    },
+    "/trading/v1/overseas/orders/history": {
+      "get": {
+        "operationId": "ovs_orders_history",
+        "summary": "해외주식 주문체결내역 조회",
+        "tags": [
+          "trading"
+        ],
+        "description": "기간으로 해외주식 주문·체결 내역을 조회합니다. 정정·취소 건은 원주문과 별개의 행으로 내려오며, orgl_oder_no 는 최초 주문이 아니라 바로 직전 건을 가리킵니다.",
+        "parameters": [
+          {
+            "name": "mac_address",
+            "in": "header",
+            "required": true,
+            "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+            "schema": {
+              "type": "string",
+              "title": "사용자 MAC_ADDRESS",
+              "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+              "maxLength": 12
+            }
+          },
+          {
+            "name": "oder_sta_date",
+            "in": "query",
+            "required": true,
+            "description": "조회 시작일자를 YYYYMMDD 8자리로 입력합니다.\n시작일자에 \"00000000\" 을 넣고 종료일자를 뒤의 날짜(예: \"20991231\")로 두면 전체 이력이 내려옵니다. 시작일자가 종료일자보다 크면 rsp_cd \"3174\" 오류입니다. (query string)",
+            "schema": {
+              "type": "string",
+              "title": "주문시작일자",
+              "description": "조회 시작일자를 YYYYMMDD 8자리로 입력합니다.\n시작일자에 \"00000000\" 을 넣고 종료일자를 뒤의 날짜(예: \"20991231\")로 두면 전체 이력이 내려옵니다. 시작일자가 종료일자보다 크면 rsp_cd \"3174\" 오류입니다. (query string)",
+              "maxLength": 8
+            },
+            "example": "20260101"
+          },
+          {
+            "name": "oder_fin_date",
+            "in": "query",
+            "required": true,
+            "description": "조회 종료일자를 YYYYMMDD 8자리로 입력합니다.\n\"00000000\" 은 넣지 마십시오. 시작일자보다 작아 rsp_cd \"3174\" 오류가 납니다. 기간 끝을 열어 두려면 충분히 뒤의 날짜(예: \"20991231\")를 넣으십시오. (query string)",
+            "schema": {
+              "type": "string",
+              "title": "주문종료일자",
+              "description": "조회 종료일자를 YYYYMMDD 8자리로 입력합니다.\n\"00000000\" 은 넣지 마십시오. 시작일자보다 작아 rsp_cd \"3174\" 오류가 납니다. 기간 끝을 열어 두려면 충분히 뒤의 날짜(예: \"20991231\")를 넣으십시오. (query string)",
+              "maxLength": 8
+            },
+            "example": "20261010"
+          },
+          {
+            "name": "seln_byov_clcd",
+            "in": "query",
+            "required": false,
+            "description": "매도·매수 구분입니다.\n\"0\": 전체\n\"1\": 매도\n\"2\": 매수\n\n값대로 걸러집니다. \"1\" 은 매도만 내려옵니다.\n\n항목을 빼시면 전체가 조회됩니다. 목록에 없는 한 자리 값은 전체 조회가 아니라 0건(rsp_cd \"5820\")이 내려옵니다. 자료가 없는 것과 값이 잘못된 것이 같은 응답이므로 보내시기 전에 세 값 가운데 하나인지 확인하십시오. (query string)",
+            "schema": {
+              "type": "string",
+              "title": "매도매수구분코드",
+              "description": "매도·매수 구분입니다.\n\"0\": 전체\n\"1\": 매도\n\"2\": 매수\n\n값대로 걸러집니다. \"1\" 은 매도만 내려옵니다.\n\n항목을 빼시면 전체가 조회됩니다. 목록에 없는 한 자리 값은 전체 조회가 아니라 0건(rsp_cd \"5820\")이 내려옵니다. 자료가 없는 것과 값이 잘못된 것이 같은 응답이므로 보내시기 전에 세 값 가운데 하나인지 확인하십시오. (query string)",
+              "maxLength": 1
+            },
+            "example": "0"
+          },
+          {
+            "name": "cntg_cls_code",
+            "in": "query",
+            "required": true,
+            "description": "체결 여부로 걸러냅니다.\n\"0\": 전체\n\"1\": 체결\n\"2\": 미체결\n\n필수 항목입니다. (query string)",
+            "schema": {
+              "type": "string",
+              "title": "체결구분코드",
+              "description": "체결 여부로 걸러냅니다.\n\"0\": 전체\n\"1\": 체결\n\"2\": 미체결\n\n필수 항목입니다. (query string)",
+              "maxLength": 1
+            },
+            "example": "2"
+          },
+          {
+            "name": "tr_cont",
+            "in": "query",
+            "required": false,
+            "description": "다음 페이지를 요청하실 때 \"1\" 을 넣습니다. 첫 조회에는 넣지 않습니다. tr_cont_key 와 함께 쿼리 스트링으로 보내십시오.",
+            "schema": {
+              "type": "string",
+              "title": "연속조회 여부",
+              "description": "다음 페이지를 요청하실 때 \"1\" 을 넣습니다. 첫 조회에는 넣지 않습니다. tr_cont_key 와 함께 쿼리 스트링으로 보내십시오.",
+              "maxLength": 1
+            }
+          },
+          {
+            "name": "tr_cont_key",
+            "in": "query",
+            "required": false,
+            "description": "직전 응답의 tr_cont_key 를 그대로 넣습니다. 첫 조회에는 넣지 않습니다. 쿼리 스트링으로 보내십시오.\n\n직전 응답의 값을 고치지 말고 그대로 보내십시오.",
+            "schema": {
+              "type": "string",
+              "title": "연속조회 키",
+              "description": "직전 응답의 tr_cont_key 를 그대로 넣습니다. 첫 조회에는 넣지 않습니다. 쿼리 스트링으로 보내십시오.\n\n직전 응답의 값을 고치지 말고 그대로 보내십시오.",
+              "maxLength": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "rsp_cd": {
+                      "type": "string",
+                      "title": "응답코드",
+                      "description": "이 API 의 성공 응답 코드입니다. \"5762\": 조회 결과가 더 있음(연속조회), \"5766\": 조회 완료, \"5820\": 조회할 자료 없음.\n오류는 종류와 무관하게 HTTP 500 으로 반환됩니다.",
+                      "maxLength": 8
+                    },
+                    "rsp_msg": {
+                      "type": "string",
+                      "title": "응답메시지",
+                      "description": "응답 메시지입니다. 오류일 때 원인이 담깁니다.\n오류 응답 본문에는 rsp_cd·rsp_msg 가 있고 data 와 tr_cont 는 없으므로, data 를 꺼내기 전에 HTTP 상태와 rsp_cd 를 먼저 확인하십시오.",
+                      "maxLength": 200
+                    },
+                    "tr_cont": {
+                      "type": "string",
+                      "title": "연속조회 여부",
+                      "description": "다음 페이지가 남아 있으면 \"1\", 마지막이면 \"0\"입니다.",
+                      "maxLength": 1
+                    },
+                    "tr_cont_key": {
+                      "type": "string",
+                      "title": "연속조회 키",
+                      "description": "연속조회 키입니다. tr_cont 가 \"1\" 일 때만 담기며, 마지막 페이지와 오류 응답에는 이 항목이 없습니다.\n다음 페이지를 요청할 때는 직전 응답의 값을 한 글자도 바꾸지 말고 그대로 넣으십시오.",
+                      "maxLength": 64
+                    },
+                    "rsp_sub_msg": {
+                      "type": "string",
+                      "title": "응답 상세 메시지",
+                      "description": "오류일 때 구체적인 사유가 담기는 경우 내려옵니다.",
+                      "maxLength": 200
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "oder_date": {
+                            "type": "string",
+                            "title": "주문일자",
+                            "description": "주문일자입니다. YYYYMMDD 형식입니다. 정정·취소 요청에 이 값을 함께 넣습니다.",
+                            "maxLength": 8
+                          },
+                          "oder_no": {
+                            "type": "number",
+                            "title": "주문번호",
+                            "description": "주문 번호입니다. 정정·취소 요청의 orgl_oder_no 에 이 값을 넣습니다."
+                          },
+                          "orgl_oder_no": {
+                            "type": "number",
+                            "title": "원주문번호",
+                            "description": "이 정정·취소 주문이 대상으로 삼은 주문의 번호입니다. 신규 주문은 0 입니다."
+                          },
+                          "iscd": {
+                            "type": "string",
+                            "title": "종목 코드",
+                            "description": "종목 코드입니다. 심볼에 거래소 접미어가 붙은 형태입니다. (예: \"PLTR.OQ\")",
+                            "maxLength": 12
+                          },
+                          "kor_isnm": {
+                            "type": "string",
+                            "title": "한글종목명",
+                            "description": "한글 종목명입니다.",
+                            "maxLength": 100
+                          },
+                          "seln_byov_clcd": {
+                            "type": "string",
+                            "title": "매도매수구분코드",
+                            "description": "매매 구분입니다.\n\"1\": 매도\n\"2\": 매수",
+                            "maxLength": 1
+                          },
+                          "oder_dqty": {
+                            "type": "string",
+                            "title": "주문수량",
+                            "description": "주문 수량입니다. 소수점 주문을 지원하므로 소수 자릿수가 붙습니다.",
+                            "maxLength": 24
+                          },
+                          "ovrs_stck_oder_prc": {
+                            "type": "string",
+                            "title": "주문가격",
+                            "description": "주문 단가입니다.",
+                            "maxLength": 20
+                          },
+                          "cntg_dqty": {
+                            "type": "string",
+                            "title": "체결수량",
+                            "description": "체결된 수량입니다. 미체결 건은 0입니다.",
+                            "maxLength": 24
+                          },
+                          "cntg_crnc_prc": {
+                            "type": "string",
+                            "title": "체결가격",
+                            "description": "체결 단가입니다. 미체결 건은 0입니다. 거래 통화 기준입니다.",
+                            "maxLength": 20
+                          },
+                          "ncnt_odqt": {
+                            "type": "number",
+                            "title": "미체결수량",
+                            "description": "미체결 수량 항목입니다. 실제 미체결 수량과 다를 수 있으므로 남은 수량은 같은 행의 주문수량(oder_dqty)에서 체결수량(cntg_dqty)을 빼서 구하십시오."
+                          },
+                          "cntg_camt": {
+                            "type": "string",
+                            "title": "체결금액",
+                            "description": "체결 금액입니다. 미체결 건은 0입니다. 거래 통화 기준입니다.",
+                            "maxLength": 20
+                          },
+                          "ovrs_stck_oder_stat_cls_code": {
+                            "type": "string",
+                            "title": "주문상태구분코드",
+                            "description": "주문의 접수 처리 상태입니다.\n\"0\": 정상\n\"1\": 거부\n\"2\": 자동거부\n\"3\": 자동취소(체결후)\n\"4\": 미접수",
+                            "maxLength": 1
+                          },
+                          "oder_rctf_cncl_cls_code": {
+                            "type": "string",
+                            "title": "주문정정취소구분코드",
+                            "description": "이 행이 원주문인지 정정·취소인지 구분합니다.\n\"0\": 원주문\n\"1\": 정정\n\"2\": 취소\n\n같은 행의 rctf_cncl_cls_name 에 \"정정\" \"취소\" 한글 표기가 함께 오며 원주문 행은 빈 값입니다.",
+                            "maxLength": 1
+                          },
+                          "rctf_cncl_cls_name": {
+                            "type": "string",
+                            "title": "정정취소구분명",
+                            "description": "정정·취소 구분의 한글명입니다. 원주문 행은 빈 값입니다.",
+                            "maxLength": 40
+                          },
+                          "oder_exec_ymdh": {
+                            "type": "string",
+                            "title": "주문실행일시",
+                            "description": "주문이 접수된 시각입니다. \"YYYY-MM-DD HH:MM:SS\" 형식입니다.",
+                            "maxLength": 19
+                          },
+                          "cntg_ymdh": {
+                            "type": "string",
+                            "title": "체결일시",
+                            "description": "체결된 시각입니다. \"YYYY-MM-DD HH:MM:SS\" 형식이며 미체결 건은 빈 값입니다.",
+                            "maxLength": 19
+                          },
+                          "aspr_type_code": {
+                            "type": "string",
+                            "title": "호가유형코드",
+                            "description": "호가 유형입니다. \"1\": 시장가, \"2\": 지정가, \"4\": LOO, \"5\": LOC, \"6\": MOO, \"7\": MOC, \"8\": Limit VWAP, \"9\": Limit TWAP, \"A\": VWAP, \"B\": TWAP.",
+                            "maxLength": 1
+                          },
+                          "oder_cond_cls_code": {
+                            "type": "string",
+                            "title": "주문조건구분코드",
+                            "description": "주문의 조건 코드입니다.",
+                            "maxLength": 1
+                          },
+                          "ovrs_stck_mrkt_tr_cls_code": {
+                            "type": "string",
+                            "title": "해외주식시장거래구분코드",
+                            "description": "해외 시장 거래 구분입니다. \"01\": 미국, \"02\": 홍콩, \"03\": 상해, \"04\": 심천, \"05\": 일본.\n그 밖의 값: \"06\" 호주, \"07\" 싱가폴, \"08\" 런던, \"10\" 독일, \"12\" 프랑스, \"21\" 캐나다, \"24\" 베트남, \"26\" 스위스 등.",
+                            "maxLength": 2
+                          },
+                          "crcd": {
+                            "type": "string",
+                            "title": "통화코드",
+                            "description": "거래 통화 코드입니다.",
+                            "maxLength": 3
+                          },
+                          "onln_yn": {
+                            "type": "string",
+                            "title": "온라인 주문가능 여부",
+                            "description": "온라인으로 접수된 건인지 여부입니다.\n\"Y\": 온라인\n\"N\": 영업점",
+                            "maxLength": 1
+                          },
+                          "oder_cnfr_yn": {
+                            "type": "string",
+                            "title": "주문확인여부",
+                            "description": "주문 확인 여부입니다.\n\"Y\": 확인\n\"N\": 미확인",
+                            "maxLength": 1
+                          },
+                          "cntg_no": {
+                            "type": "number",
+                            "title": "체결번호",
+                            "description": "체결 번호입니다."
+                          },
+                          "ovrs_stck_rfus_idnt_code": {
+                            "type": "string",
+                            "title": "거부식별코드",
+                            "description": "주문 거부를 식별하는 코드입니다. 거부 사유는 ovrs_stck_rfus_reas 를 읽으십시오.",
+                            "maxLength": 10
+                          },
+                          "ovrs_stck_rfus_reas": {
+                            "type": "string",
+                            "title": "거부사유",
+                            "description": "주문이 거부된 사유입니다. 정상 접수 건은 빈 값입니다.",
+                            "maxLength": 100
+                          },
+                          "loan_date": {
+                            "type": "string",
+                            "title": "대출일자",
+                            "description": "대출 일자입니다. 대출 주문이 아니면 빈 값입니다.",
+                            "maxLength": 8
+                          },
+                          "loan_dtl_type_code": {
+                            "type": "string",
+                            "title": "대출상세유형코드",
+                            "description": "대출 상세 유형입니다.\n\"0000\": 보통\n\"0101\": 자기융자\n\"0102\": 유통융자\n\"0103\": 자기대주\n\"0104\": 유통대주\n\"0201\": 예탁주식\n\"0251\": 예탁주식(해외)\n\n대출 주문이 아니면 \"0000\"입니다.",
+                            "maxLength": 4
+                          },
+                          "entm_onsl_intg_clcd": {
+                            "type": "string",
+                            "title": "위탁자기통합구분코드",
+                            "description": "주문 단위 구분입니다.\n\"10\": 일반\n\"30\": 소수점",
+                            "maxLength": 2
+                          },
+                          "oder_amt": {
+                            "type": "number",
+                            "title": "주문금액",
+                            "description": "주문 금액 칸입니다. 이 항목은 0 으로 내려옵니다. 주문 금액은 주문수량(oder_dqty)에 주문가격(ovrs_stck_oder_prc)을 곱해 구하십시오."
+                          },
+                          "oder_unpr": {
+                            "type": "number",
+                            "title": "주문단가",
+                            "description": "주문 단가 항목입니다. 0 으로 내려오며 같은 행의 주문금액(oder_amt)도 같습니다.\n주문 단가는 같은 행의 주문가격(ovrs_stck_oder_prc)을 쓰십시오."
+                          }
+                        }
+                      },
+                      "title": "주문체결 내역 목록"
+                    }
+                  }
+                },
+                "example": {
+                  "data": [
+                    {
+                      "oder_date": "20260102",
+                      "oder_no": 1,
+                      "orgl_oder_no": 0,
+                      "iscd": "NVDA.OQ",
+                      "kor_isnm": "삼성전자",
+                      "seln_byov_clcd": "2",
+                      "oder_dqty": "1.0000000000",
+                      "ovrs_stck_oder_prc": "100.00000000",
+                      "cntg_dqty": "0.0000000000",
+                      "cntg_crnc_prc": "0.00000000",
+                      "ncnt_odqt": 0,
+                      "cntg_camt": "0.0000",
+                      "ovrs_stck_oder_stat_cls_code": "0",
+                      "oder_rctf_cncl_cls_code": "0",
+                      "rctf_cncl_cls_name": "",
+                      "oder_exec_ymdh": "2026-08-24 11:21:47",
+                      "cntg_ymdh": "",
+                      "aspr_type_code": "2",
+                      "oder_cond_cls_code": "8",
+                      "ovrs_stck_mrkt_tr_cls_code": "01",
+                      "crcd": "USD",
+                      "onln_yn": "Y",
+                      "oder_cnfr_yn": "Y",
+                      "cntg_no": 0,
+                      "ovrs_stck_rfus_idnt_code": "",
+                      "ovrs_stck_rfus_reas": "",
+                      "loan_date": "",
+                      "loan_dtl_type_code": "0000",
+                      "entm_onsl_intg_clcd": "10",
+                      "oder_amt": 0,
+                      "oder_unpr": 0
+                    },
+                    {
+                      "oder_date": "20260102",
+                      "oder_no": 1,
+                      "orgl_oder_no": 0,
+                      "iscd": "AAPL.OQ",
+                      "kor_isnm": "삼성전자",
+                      "seln_byov_clcd": "2",
+                      "oder_dqty": "1.0000000000",
+                      "ovrs_stck_oder_prc": "100.00000000",
+                      "cntg_dqty": "0.0000000000",
+                      "cntg_crnc_prc": "0.00000000",
+                      "ncnt_odqt": 0,
+                      "cntg_camt": "0.0000",
+                      "ovrs_stck_oder_stat_cls_code": "0",
+                      "oder_rctf_cncl_cls_code": "0",
+                      "rctf_cncl_cls_name": "",
+                      "oder_exec_ymdh": "2026-08-24 11:21:58",
+                      "cntg_ymdh": "",
+                      "aspr_type_code": "2",
+                      "oder_cond_cls_code": "8",
+                      "ovrs_stck_mrkt_tr_cls_code": "01",
+                      "crcd": "USD",
+                      "onln_yn": "Y",
+                      "oder_cnfr_yn": "Y",
+                      "cntg_no": 0,
+                      "ovrs_stck_rfus_idnt_code": "",
+                      "ovrs_stck_rfus_reas": "",
+                      "loan_date": "",
+                      "loan_dtl_type_code": "0000",
+                      "entm_onsl_intg_clcd": "10",
+                      "oder_amt": 0,
+                      "oder_unpr": 0
+                    }
+                  ],
+                  "rsp_cd": "5766",
+                  "rsp_msg": "조회가 완료되었습니다.",
+                  "tr_cont": "0"
+                }
+              }
+            }
+          }
+        },
+        "x-tr-id": "obtro_oder_201r",
+        "x-tps": "10"
+      }
+    },
+    "/accounts/v1/me/overseas/holdings": {
+      "get": {
+        "operationId": "ovs_holdings",
+        "summary": "해외주식 잔고 조회",
+        "tags": [
+          "account"
+        ],
+        "description": "접근토큰에 매핑된 계좌의 해외주식 보유 내역을 조회합니다.",
+        "parameters": [
+          {
+            "name": "mac_address",
+            "in": "header",
+            "required": true,
+            "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+            "schema": {
+              "type": "string",
+              "title": "사용자 MAC_ADDRESS",
+              "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+              "maxLength": 12
+            }
+          },
+          {
+            "name": "tr_cont",
+            "in": "query",
+            "required": false,
+            "description": "다음 페이지를 요청할 때 정확히 \"1\" 을 넣습니다. 첫 조회에는 넣지 않습니다. 연속조회 키(tr_cont_key)와 반드시 함께 보내십시오. (query string)",
+            "schema": {
+              "type": "string",
+              "title": "연속조회 여부",
+              "description": "다음 페이지를 요청할 때 정확히 \"1\" 을 넣습니다. 첫 조회에는 넣지 않습니다. 연속조회 키(tr_cont_key)와 반드시 함께 보내십시오. (query string)",
+              "maxLength": 1
+            }
+          },
+          {
+            "name": "tr_cont_key",
+            "in": "query",
+            "required": false,
+            "description": "직전 응답의 tr_cont_key 를 한 글자도 바꾸지 말고 그대로 URL 인코딩하여 넣습니다. 첫 조회에는 넣지 않습니다. tr_cont 에 \"1\" 을 함께 보내십시오. 키를 바꾸면 오류 없이 첫 페이지가 다시 내려옵니다. (query string)",
+            "schema": {
+              "type": "string",
+              "title": "연속조회 키",
+              "description": "직전 응답의 tr_cont_key 를 한 글자도 바꾸지 말고 그대로 URL 인코딩하여 넣습니다. 첫 조회에는 넣지 않습니다. tr_cont 에 \"1\" 을 함께 보내십시오. 키를 바꾸면 오류 없이 첫 페이지가 다시 내려옵니다. (query string)",
+              "maxLength": 200
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "rsp_cd": {
+                      "type": "string",
+                      "title": "응답코드",
+                      "description": "이 API 의 성공 응답 코드입니다.\n\"5766\": 조회 완료\n\"5820\": 조회할 자료 없음\n\n오류는 종류와 무관하게 HTTP 500 으로 반환되므로, 성공·실패는 HTTP 상태가 아니라 이 값으로 판정하십시오.",
+                      "maxLength": 8
+                    },
+                    "rsp_msg": {
+                      "type": "string",
+                      "title": "응답메시지",
+                      "description": "응답 메시지입니다. 오류일 때 원인이 이 값에 담깁니다.",
+                      "maxLength": 200
+                    },
+                    "tr_cont": {
+                      "type": "string",
+                      "title": "연속조회 여부",
+                      "description": "다음 페이지가 남아 있으면 \"1\", 마지막이면 \"0\" 입니다.\n한 번에 30건씩 내려오며, 다음 페이지는 tr_cont 와 tr_cont_key 를 요청에 함께 보내 이어서 받으십시오. 키는 쿼리스트링으로 보냅니다.",
+                      "maxLength": 1
+                    },
+                    "rsp_sub_msg": {
+                      "type": "string",
+                      "title": "응답 상세 메시지",
+                      "description": "응답에 덧붙는 상세 사유입니다. 값이 없으면 응답에서 이 항목 자체가 빠집니다.",
+                      "maxLength": 200
+                    },
+                    "tr_cont_key": {
+                      "type": "string",
+                      "title": "연속조회 키",
+                      "description": "tr_cont 가 \"1\" 일 때만 응답에 담깁니다. 마지막 페이지(tr_cont \"0\")와 오류 응답에는 이 항목이 없습니다. 값 안에 공백이 길게 이어지므로 잘라내거나 줄이지 말고 URL 인코딩하여 쿼리스트링으로 보내십시오.",
+                      "maxLength": 200
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "prod_cls_name": {
+                            "type": "string",
+                            "title": "상품구분명",
+                            "description": "잔고 구분의 한글명입니다. rmnd_clcd 에 대응합니다.",
+                            "maxLength": 40
+                          },
+                          "rmnd_clcd": {
+                            "type": "string",
+                            "title": "잔고구분코드",
+                            "description": "잔고 구분입니다.\n\"1\": 일반\n\"2\": 소수\n\"3\": 대출",
+                            "maxLength": 1
+                          },
+                          "ovrs_stck_mrkt_tr_cls_code": {
+                            "type": "string",
+                            "title": "해외주식시장거래구분코드",
+                            "description": "해외 시장 거래 구분 코드입니다.",
+                            "maxLength": 2
+                          },
+                          "crcd": {
+                            "type": "string",
+                            "title": "통화코드",
+                            "description": "거래 통화 코드입니다. (예: \"USD\")",
+                            "maxLength": 3
+                          },
+                          "iscd": {
+                            "type": "string",
+                            "title": "종목 코드",
+                            "description": "종목 코드입니다. 심볼에 거래소 접미어가 붙은 형태입니다. (예: \"AAPL.OQ\") 해외주식 현재가 조회(/market/v1/overseas/prices)에는 접미어를 뗀 순수 심볼인 해외주식심볼종목코드(ovrs_stck_symb_iscd)를 넣으십시오. 접미어가 붙은 채로 넣으시면 오류가 나지 않고 응답코드가 정상인 채 종목코드가 빈 값으로, 가격이 0 으로 내려옵니다. 값이 0 이라고 해서 그 종목의 가격이 0 인 것이 아니니, 응답의 iscd 가 비어 있는지로 조회 성공 여부를 판정하십시오.",
+                            "maxLength": 12
+                          },
+                          "isnm": {
+                            "type": "string",
+                            "title": "종목명",
+                            "description": "종목명입니다.\n\n거래소 접미어가 붙은 종목 코드는 같은 행의 iscd, 접미어를 뗀 심볼은 ovrs_stck_symb_iscd 입니다.",
+                            "maxLength": 100
+                          },
+                          "rmnd_dqty": {
+                            "type": "string",
+                            "title": "잔고소수점수량",
+                            "description": "보유 수량입니다. 소수 10자리 문자열로 내려오니 숫자로 바꿔 쓰십시오. (국내 보유종목 조회의 정수 수량 rmnd_qty 는 이 API 에 없습니다.)"
+                          },
+                          "seln_able_dqty": {
+                            "type": "string",
+                            "title": "매도가능수량",
+                            "description": "매도 가능 수량입니다."
+                          },
+                          "avrg_unpr": {
+                            "type": "string",
+                            "title": "평균단가",
+                            "description": "매입 평균 단가입니다. 거래 통화 기준입니다."
+                          },
+                          "vltn_prls_camt": {
+                            "type": "string",
+                            "title": "평가손익",
+                            "description": "평가 손익입니다."
+                          },
+                          "vltn_ert": {
+                            "type": "string",
+                            "title": "평가수익률",
+                            "description": "평가 수익률(%)이며 소수 4자리 문자열입니다."
+                          },
+                          "psnt_prc": {
+                            "type": "string",
+                            "title": "현재가격",
+                            "description": "현재가입니다. 거래 통화 기준입니다."
+                          },
+                          "prdy_vrss_rsfl_crnc_prc": {
+                            "type": "string",
+                            "title": "전일대비",
+                            "description": "전일 대비 등락 가격입니다."
+                          },
+                          "byov_camt": {
+                            "type": "string",
+                            "title": "매수금액",
+                            "description": "매입 금액입니다."
+                          },
+                          "frcr_vltn_amt": {
+                            "type": "string",
+                            "title": "외화평가금액",
+                            "description": "평가 금액입니다. 소수 3자리 문자열입니다."
+                          },
+                          "exrt": {
+                            "type": "string",
+                            "title": "환율",
+                            "description": "평가에 적용된 환율입니다."
+                          },
+                          "ovrs_stck_symb_iscd": {
+                            "type": "string",
+                            "title": "해외주식심볼종목코드",
+                            "description": "거래소 접미어를 뗀 순수 심볼입니다. (예: \"AAPL\") 해외주식 현재가 조회에는 종목코드(iscd)가 아니라 이 값을 넣으십시오. 시세 조회의 거래소 구분 코드(mrkt_cls_code)는 이 응답에 없으므로, 해외거래소벤더식별번호(ovrs_exch_vndr_idno) 설명의 대응표로 시세용 거래소 코드를 찾으십시오.",
+                            "maxLength": 12
+                          },
+                          "ovrs_exch_vndr_idno": {
+                            "type": "string",
+                            "title": "해외거래소벤더식별번호",
+                            "description": "종목이 상장된 거래소의 벤더 코드입니다. 해외주식 현재가·호가 조회의 거래소 구분(mrkt_cls_code)은 이 벤더 코드가 아니라 시세용 거래소 코드를 받습니다. 벤더 코드를 넣으시면 오류 없이 빈 값이 내려옵니다. 대응은 \"0537\" 나스닥(OQ) · \"0321\" 뉴욕(NY) · \"0066\" 아멕스(AX) · \"0104\" 홍콩(HK) · \"0215\" 상해(SH) · \"0106\" 도쿄(JP) 입니다. 전체 대응표는 해외 거래소 조회(/reference/v1/overseas/exchanges)로 만드십시오.",
+                            "maxLength": 6
+                          },
+                          "dcpn_loeq_ciph": {
+                            "type": "number",
+                            "title": "소수점이하자릿수",
+                            "description": "소수점 이하 자릿수입니다. 보유 수량(rmnd_dqty)과 매도가능수량(seln_able_dqty)은 소수 10자리 문자열로 내려옵니다."
+                          },
+                          "ovrs_stck_rsfl_tpcd": {
+                            "type": "string",
+                            "title": "등락유형코드",
+                            "description": "전일 종가 대비 등락 방향 코드입니다. 값에 대응하는 이름은 응답에 함께 오지 않습니다.",
+                            "maxLength": 1
+                          },
+                          "loan_dtl_type_code": {
+                            "type": "string",
+                            "title": "대출상세유형코드",
+                            "description": "대출 상세 유형입니다.",
+                            "maxLength": 4
+                          },
+                          "loan_date": {
+                            "type": "string",
+                            "title": "대출일자",
+                            "description": "대출 일자입니다.",
+                            "maxLength": 8
+                          },
+                          "loan_srno": {
+                            "type": "number",
+                            "title": "대출일련번호",
+                            "description": "대출 일련번호입니다."
+                          },
+                          "mtrt_date": {
+                            "type": "string",
+                            "title": "만기일자",
+                            "description": "대출 만기 일자입니다.",
+                            "maxLength": 8
+                          }
+                        }
+                      },
+                      "title": "보유 내역 목록"
+                    }
+                  }
+                },
+                "example": {
+                  "data": [
+                    {
+                      "prod_cls_name": "일반",
+                      "rmnd_clcd": "1",
+                      "ovrs_stck_mrkt_tr_cls_code": "01",
+                      "crcd": "USD",
+                      "iscd": "AAPL.OQ",
+                      "isnm": "삼성전자",
+                      "rmnd_dqty": "10000.0000000000",
+                      "seln_able_dqty": "10000.0000000000",
+                      "avrg_unpr": "100.000000",
+                      "vltn_prls_camt": "100000.0000",
+                      "vltn_ert": "10.0000",
+                      "psnt_prc": "100.000000",
+                      "prdy_vrss_rsfl_crnc_prc": "0.00000000",
+                      "byov_camt": "1000000.0000",
+                      "frcr_vltn_amt": "1000000.000",
+                      "exrt": "1000.0000",
+                      "ovrs_stck_symb_iscd": "AAPL",
+                      "ovrs_exch_vndr_idno": "0537",
+                      "dcpn_loeq_ciph": 1,
+                      "ovrs_stck_rsfl_tpcd": "5",
+                      "loan_dtl_type_code": "0000",
+                      "loan_date": "",
+                      "loan_srno": 0,
+                      "mtrt_date": ""
+                    }
+                  ],
+                  "rsp_cd": "5766",
+                  "rsp_msg": "조회가 완료되었습니다."
+                }
+              }
+            }
+          }
+        },
+        "x-tr-id": "obtro_oder_110r",
+        "x-tps": "10"
+      }
+    },
+    "/market/v1/overseas/prices": {
+      "get": {
+        "operationId": "ovs_market_prices",
+        "summary": "해외주식 현재가 조회",
+        "tags": [
+          "overseas_market"
+        ],
+        "description": "해외주식 한 종목의 현재가를 조회합니다.",
+        "parameters": [
+          {
+            "name": "mac_address",
+            "in": "header",
+            "required": true,
+            "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+            "schema": {
+              "type": "string",
+              "title": "사용자 MAC_ADDRESS",
+              "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+              "maxLength": 12
+            }
+          },
+          {
+            "name": "mrkt_div_code",
+            "in": "query",
+            "required": true,
+            "description": "해외 시세는 \"OV\"를 넣습니다. (query string)",
+            "schema": {
+              "type": "string",
+              "title": "시장 구분 코드",
+              "description": "해외 시세는 \"OV\"를 넣습니다. (query string)",
+              "maxLength": 2
+            },
+            "example": "OV"
+          },
+          {
+            "name": "mrkt_cls_code",
+            "in": "query",
+            "required": true,
+            "description": "거래소 구분입니다.\n\"OQ\": 나스닥\n\"NY\": 뉴욕\n\"AX\": 아멕스\n\"HK\": 홍콩증권거래소\n\"SH\": 상하이증권거래소\n\"SZ\": 심천증권거래소\n\"JP\": 도쿄증권거래소\n\n홍콩·상하이는 dely_rltm_cls_code 를 \"0\" 으로 보내면 오류(IGW50002)가 반환되며 \"1\"(지연)로 조회하십시오. (query string)",
+            "schema": {
+              "type": "string",
+              "title": "거래소 구분 코드",
+              "description": "거래소 구분입니다.\n\"OQ\": 나스닥\n\"NY\": 뉴욕\n\"AX\": 아멕스\n\"HK\": 홍콩증권거래소\n\"SH\": 상하이증권거래소\n\"SZ\": 심천증권거래소\n\"JP\": 도쿄증권거래소\n\n홍콩·상하이는 dely_rltm_cls_code 를 \"0\" 으로 보내면 오류(IGW50002)가 반환되며 \"1\"(지연)로 조회하십시오. (query string)",
+              "maxLength": 2
+            },
+            "example": "OQ"
+          },
+          {
+            "name": "iscd",
+            "in": "query",
+            "required": true,
+            "description": "해외 종목 심볼을 입력합니다. (예: AAPL, 홍콩 00700) (query string)",
+            "schema": {
+              "type": "string",
+              "title": "종목 코드",
+              "description": "해외 종목 심볼을 입력합니다. (예: AAPL, 홍콩 00700) (query string)",
+              "maxLength": 16
+            },
+            "example": "AAPL"
+          },
+          {
+            "name": "dely_rltm_cls_code",
+            "in": "query",
+            "required": true,
+            "description": "시세 종류입니다. \"0\": 실시간 \"1\": 지연. (query string)",
+            "schema": {
+              "type": "string",
+              "title": "지연실시간구분코드",
+              "description": "시세 종류입니다. \"0\": 실시간 \"1\": 지연. (query string)",
+              "maxLength": 1
+            },
+            "example": "0"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "rsp_cd": {
+                      "type": "string",
+                      "title": "응답코드",
+                      "description": "이 API 의 성공 응답 코드입니다.\n\"0000\": 정상 처리\n\n오류는 종류와 무관하게 HTTP 500 으로 반환되므로, 성공·실패는 HTTP 상태가 아니라 이 값으로 판정하십시오.",
+                      "maxLength": 8
+                    },
+                    "rsp_msg": {
+                      "type": "string",
+                      "title": "응답메시지",
+                      "description": "응답 메시지입니다. 오류일 때 원인이 담깁니다.\n\n오류 응답에는 data 와 tr_cont 가 담기지 않습니다. 오류일 때 본문은 rsp_cd·rsp_msg(일부 API 는 rsp_sub_msg 포함)로 이루어지므로, rsp_cd 를 먼저 확인한 뒤 data 를 읽으십시오.",
+                      "maxLength": 200
+                    },
+                    "rsp_sub_msg": {
+                      "type": "string",
+                      "title": "응답 상세 메시지",
+                      "description": "오류일 때 내려올 수 있는 상세 사유 항목입니다. 정상 응답에는 포함되지 않습니다.",
+                      "maxLength": 200
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "iscd": {
+                          "type": "string",
+                          "title": "종목 코드",
+                          "description": "요청한 종목 심볼입니다.",
+                          "maxLength": 16
+                        },
+                        "prpr": {
+                          "type": "string",
+                          "title": "현재가",
+                          "description": "가장 최근 체결된 가격(현재가)입니다. 소수점 자릿수는 같은 응답의 dcpn_cnt(소수점수)로 확인하십시오.",
+                          "maxLength": 14
+                        },
+                        "acml_vol": {
+                          "type": "number",
+                          "title": "누적거래량",
+                          "description": "장 시작부터 지금까지 체결된 주식 수를 모두 더한 값입니다. 개별 체결 수량이 아닙니다."
+                        },
+                        "prdy_vrss_sign": {
+                          "type": "string",
+                          "title": "전일대비부호",
+                          "description": "전일 대비 부호입니다.\n\"1\": 상한\n\"2\": 상승\n\"3\": 보합\n\"4\": 하한\n\"5\": 하락",
+                          "maxLength": 1
+                        },
+                        "prdy_clpr": {
+                          "type": "string",
+                          "title": "전일종가",
+                          "description": "전일 종가입니다. 등락 계산의 기준이 되는 값입니다.",
+                          "maxLength": 14
+                        },
+                        "prdy_vol": {
+                          "type": "number",
+                          "title": "전일거래량",
+                          "description": "전일 거래량입니다."
+                        },
+                        "52_week_hgpr": {
+                          "type": "string",
+                          "title": "52주최고가",
+                          "description": "최근 52주 동안의 최고가입니다.",
+                          "maxLength": 14
+                        },
+                        "52_week_lwpr": {
+                          "type": "string",
+                          "title": "52주최저가",
+                          "description": "최근 52주 동안의 최저가입니다.",
+                          "maxLength": 14
+                        },
+                        "lstn_stcn": {
+                          "type": "number",
+                          "title": "상장주수",
+                          "description": "이 종목이 발행해 상장된 총 주식 수입니다."
+                        },
+                        "oprc": {
+                          "type": "string",
+                          "title": "시가",
+                          "description": "당일 첫 체결 가격(시가)입니다.",
+                          "maxLength": 14
+                        },
+                        "hprc": {
+                          "type": "string",
+                          "title": "고가",
+                          "description": "당일 최고 체결 가격(고가)입니다.",
+                          "maxLength": 14
+                        },
+                        "lprc": {
+                          "type": "string",
+                          "title": "저가",
+                          "description": "당일 최저 체결 가격(저가)입니다.",
+                          "maxLength": 14
+                        },
+                        "mxpr": {
+                          "type": "string",
+                          "title": "상한가",
+                          "description": "당일 주문 가능한 가장 높은 가격(상한가)입니다. 미국(AAPL)과 홍콩(00700) 종목은 0 으로 내려옵니다.",
+                          "maxLength": 14
+                        },
+                        "llam": {
+                          "type": "string",
+                          "title": "하한가",
+                          "description": "당일 주문 가능한 가장 낮은 가격(하한가)입니다. 미국(AAPL)과 홍콩(00700) 종목은 0 으로 내려옵니다.",
+                          "maxLength": 14
+                        },
+                        "avls": {
+                          "type": "number",
+                          "title": "시가총액",
+                          "description": "시세 조회 시점의 시가총액입니다."
+                        },
+                        "eps": {
+                          "type": "string",
+                          "title": "EPS",
+                          "description": "주당순이익(EPS)입니다.",
+                          "maxLength": 11
+                        },
+                        "prdy_vrss": {
+                          "type": "string",
+                          "title": "전일대비",
+                          "description": "전일 종가 대비 가격 변동폭입니다.",
+                          "maxLength": 14
+                        },
+                        "prdy_ctrt": {
+                          "type": "string",
+                          "title": "전일대비율",
+                          "description": "전일 대비 등락률(%)입니다.",
+                          "maxLength": 11
+                        },
+                        "bstp_cls_code": {
+                          "type": "string",
+                          "title": "업종구분코드",
+                          "description": "업종 구분 코드입니다. 같은 응답의 bstp_lrdv_name(대분류명)·bstp_mddv_name(중분류명)·bstp_smdv_name(소분류명)에 업종 이름이 내려옵니다.",
+                          "maxLength": 4
+                        },
+                        "bstp_lrdv_name": {
+                          "type": "string",
+                          "title": "업종대분류명",
+                          "description": "업종 대분류명입니다. (예: \"IT\")",
+                          "maxLength": 80
+                        },
+                        "bstp_mddv_name": {
+                          "type": "string",
+                          "title": "업종중분류명",
+                          "description": "업종 중분류명입니다. (예: \"하드웨어 및 장비\")",
+                          "maxLength": 80
+                        },
+                        "bstp_smdv_name": {
+                          "type": "string",
+                          "title": "업종소분류명",
+                          "description": "업종 소분류명입니다. 소분류가 없는 종목은 빈 값입니다.",
+                          "maxLength": 80
+                        },
+                        "dcpn_cnt": {
+                          "type": "number",
+                          "title": "소수점수",
+                          "description": "가격의 소수점 자릿수입니다."
+                        },
+                        "shnu_aspr_unit": {
+                          "type": "string",
+                          "title": "매수호가단위",
+                          "description": "매수 호가 단위 항목입니다. 미국 AAPL·홍콩 00700 종목에서는 0 으로 내려옵니다.",
+                          "maxLength": 14
+                        },
+                        "seln_aspr_unit": {
+                          "type": "string",
+                          "title": "매도호가단위",
+                          "description": "매도 호가 단위 항목입니다. 미국 AAPL·홍콩 00700 종목에서는 0 으로 내려옵니다.",
+                          "maxLength": 14
+                        },
+                        "shnu_oder_qty_unit": {
+                          "type": "number",
+                          "title": "매수주문수량단위",
+                          "description": "매수 주문 수량 단위입니다. 종목마다 다릅니다(예: AAPL 1, 홍콩 00700 100)."
+                        },
+                        "seln_oder_qty_unit": {
+                          "type": "number",
+                          "title": "매도주문수량단위",
+                          "description": "매도 주문 수량 단위입니다. 종목마다 다릅니다(예: AAPL 1, 홍콩 00700 100)."
+                        },
+                        "crnc_code": {
+                          "type": "string",
+                          "title": "통화코드",
+                          "description": "이 종목이 거래되는 통화입니다. ISO 통화 코드 세 자리입니다(예: 미국 USD, 홍콩 HKD).",
+                          "maxLength": 4
+                        },
+                        "kor_isnm": {
+                          "type": "string",
+                          "title": "한글종목명",
+                          "description": "한글 종목명입니다.",
+                          "maxLength": 65
+                        },
+                        "tick_cls": {
+                          "type": "string",
+                          "title": "틱구분",
+                          "description": "틱 구분입니다.",
+                          "maxLength": 4
+                        },
+                        "pbr": {
+                          "type": "string",
+                          "title": "PBR",
+                          "description": "주가순자산비율(PBR)입니다.",
+                          "maxLength": 9
+                        },
+                        "per": {
+                          "type": "string",
+                          "title": "PER",
+                          "description": "주가수익비율(PER)입니다.",
+                          "maxLength": 9
+                        },
+                        "bstp_kor_isnm": {
+                          "type": "string",
+                          "title": "업종한글종목명",
+                          "description": "업종명입니다.",
+                          "maxLength": 100
+                        },
+                        "cas_trgt_issu_yn": {
+                          "type": "string",
+                          "title": "CAS대상종목여부",
+                          "description": "홍콩 단일가매매(CAS) 대상 종목 여부입니다.\n\"Y\": 대상\n\"N\": 비대상",
+                          "maxLength": 1
+                        },
+                        "vcm_stat_cls_code": {
+                          "type": "string",
+                          "title": "VCM상태구분코드",
+                          "description": "변동성 완화장치(VCM) 상태입니다.",
+                          "maxLength": 1
+                        },
+                        "eng_isnm": {
+                          "type": "string",
+                          "title": "영문종목명",
+                          "description": "영문 종목명입니다.",
+                          "maxLength": 65
+                        },
+                        "sdpr": {
+                          "type": "string",
+                          "title": "기준가",
+                          "description": "기준 가격 항목입니다. 등락 계산의 기준은 전일 종가(prdy_clpr)를 쓰십시오.",
+                          "maxLength": 14
+                        },
+                        "vcm_sta_hour": {
+                          "type": "string",
+                          "title": "VCM시작시간",
+                          "description": "VCM 시작 시각입니다. HHMMSS 형식입니다.",
+                          "maxLength": 6
+                        },
+                        "vcm_fin_hour": {
+                          "type": "string",
+                          "title": "VCM종료시간",
+                          "description": "VCM 종료 시각입니다. HHMMSS 형식입니다.",
+                          "maxLength": 6
+                        },
+                        "sell_only": {
+                          "type": "number",
+                          "title": "SELLONLY",
+                          "description": "매도만 가능한 종목인지 여부입니다."
+                        },
+                        "issu_stat_cls_code": {
+                          "type": "string",
+                          "title": "종목상태구분코드",
+                          "description": "종목 상태 구분입니다.",
+                          "maxLength": 1
+                        },
+                        "cas_iep": {
+                          "type": "string",
+                          "title": "CASIEP",
+                          "description": "단일가 매매(CAS) 구간의 예상 체결가입니다.",
+                          "maxLength": 11
+                        },
+                        "cas_iev": {
+                          "type": "string",
+                          "title": "CASIEV",
+                          "description": "CAS 예상 체결량입니다.",
+                          "maxLength": 11
+                        },
+                        "etf_yn": {
+                          "type": "string",
+                          "title": "ETF여부",
+                          "description": "ETF 여부입니다.\n\"Y\": ETF\n\"N\": 일반 종목",
+                          "maxLength": 1
+                        },
+                        "lvrg": {
+                          "type": "string",
+                          "title": "레버리지",
+                          "description": "레버리지 배수입니다. ETF 가 아닌 일반 종목(예: AAPL)은 \"0.0\" 으로 내려옵니다.",
+                          "maxLength": 14
+                        },
+                        "cas_trgt_issu": {
+                          "type": "string",
+                          "title": "CAS대상종목",
+                          "description": "CAS 대상 종목 구분입니다.",
+                          "maxLength": 1
+                        },
+                        "cas_stat": {
+                          "type": "string",
+                          "title": "CAS상태",
+                          "description": "CAS 진행 상태입니다.",
+                          "maxLength": 2
+                        },
+                        "cas_sdpr": {
+                          "type": "string",
+                          "title": "CAS기준가",
+                          "description": "단일가 매매(CAS) 구간의 기준가입니다.",
+                          "maxLength": 14
+                        },
+                        "cas_mxpr": {
+                          "type": "string",
+                          "title": "CAS상한가",
+                          "description": "단일가 매매(CAS) 구간의 상한가입니다.",
+                          "maxLength": 14
+                        },
+                        "cas_llam": {
+                          "type": "string",
+                          "title": "CAS하한가",
+                          "description": "단일가 매매(CAS) 구간의 하한가입니다.",
+                          "maxLength": 14
+                        },
+                        "etf_type_code": {
+                          "type": "string",
+                          "title": "ETF유형코드",
+                          "description": "ETF·ETN 유형 코드입니다. 일반 종목(AAPL, 홍콩 00700)은 빈 값으로 내려옵니다.",
+                          "maxLength": 3
+                        },
+                        "unch_prpr": {
+                          "type": "string",
+                          "title": "환산현재가",
+                          "description": "현재가를 원화로 환산한 값입니다. 고시환율 조회(/forex/v1/rates)의 매매기준환율(deal_stnd_exrt)을 곱한 값입니다.",
+                          "maxLength": 14
+                        }
+                      },
+                      "title": "현재가 정보"
+                    }
+                  }
+                },
+                "example": {
+                  "data": {
+                    "iscd": "AAPL",
+                    "prpr": "326.5700",
+                    "acml_vol": 0,
+                    "prdy_vrss_sign": "3",
+                    "prdy_clpr": "326.5700",
+                    "prdy_vol": 70011913,
+                    "52_week_hgpr": "344.5699",
+                    "52_week_lwpr": "229.0200",
+                    "lstn_stcn": 14594200000,
+                    "oprc": "326.5700",
+                    "hprc": "326.5700",
+                    "lprc": "326.5700",
+                    "mxpr": "0.0000",
+                    "llam": "0.0000",
+                    "avls": 4766027894,
+                    "eps": "8.723",
+                    "prdy_vrss": "0.0000",
+                    "prdy_ctrt": "0.00",
+                    "bstp_cls_code": "2520",
+                    "bstp_lrdv_name": "IT",
+                    "bstp_mddv_name": "하드웨어 및 장비",
+                    "bstp_smdv_name": "",
+                    "dcpn_cnt": 4,
+                    "shnu_aspr_unit": "0.0000",
+                    "seln_aspr_unit": "0.0000",
+                    "shnu_oder_qty_unit": 1,
+                    "seln_oder_qty_unit": 1,
+                    "crnc_code": "USD",
+                    "kor_isnm": "애플",
+                    "tick_cls": "1",
+                    "pbr": "44.37",
+                    "per": "37.44",
+                    "bstp_kor_isnm": "",
+                    "cas_trgt_issu_yn": "N",
+                    "vcm_stat_cls_code": "N",
+                    "eng_isnm": "APPLE INC",
+                    "sdpr": "326.5700",
+                    "vcm_sta_hour": "000000",
+                    "vcm_fin_hour": "000000",
+                    "sell_only": 0,
+                    "issu_stat_cls_code": "N",
+                    "cas_iep": "0.0000",
+                    "cas_iev": "0",
+                    "etf_yn": "N",
+                    "lvrg": "0.0",
+                    "cas_trgt_issu": "",
+                    "cas_stat": "",
+                    "cas_sdpr": "0.0000",
+                    "cas_mxpr": "0.0000",
+                    "cas_llam": "0.0000",
+                    "etf_type_code": "",
+                    "unch_prpr": "437015.95"
+                  },
+                  "rsp_cd": "0000",
+                  "rsp_msg": "정상 처리 되었습니다."
+                }
+              }
+            }
+          }
+        },
+        "x-tr-id": "ohhts_6000_001r",
+        "x-tps": "10"
+      }
+    }
+  }
+}

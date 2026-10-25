@@ -38,6 +38,27 @@ class RejectCode:
 
 #: broker_code -> vendor code -> class. broker_code matches BaseBroker.broker_code.
 DEFINITIVE_REJECTS: dict[str, dict[str, RejectCode]] = {
+    "meritz": {
+        "0760": RejectCode(REJECTED, "rejected", "meritz-securities/open-api@2cef2e9f docs/errors.md 0760"),
+        "3174": RejectCode(REJECTED, "rejected", "meritz-securities/open-api@2cef2e9f docs/errors.md 3174"),
+        "3176": RejectCode(REJECTED, "rejected", "meritz-securities/open-api@2cef2e9f docs/errors.md 3176"),
+        "3180": RejectCode(REJECTED, "rejected", "meritz-securities/open-api@2cef2e9f docs/errors.md 3180"),
+        "5018": RejectCode(REJECTED, "rejected", "meritz-securities/open-api@2cef2e9f docs/errors.md 5018"),
+        "5806": RejectCode(REJECTED, "rejected", "meritz-securities/open-api@2cef2e9f docs/errors.md 5806"),
+        "6102": RejectCode(REJECTED, "rejected", "meritz-securities/open-api@2cef2e9f docs/errors.md 6102"),
+        "7936": RejectCode(REJECTED, "rejected", "meritz-securities/open-api@2cef2e9f docs/errors.md 7936"),
+        "IGW50004": RejectCode(REJECTED, "rejected", "meritz-securities/open-api@2cef2e9f docs/errors.md IGW50004"),
+        "IGW50006": RejectCode(REJECTED, "rejected", "meritz-securities/open-api@2cef2e9f docs/errors.md IGW50006"),
+        "IGW50024": RejectCode(REJECTED, "rejected", "meritz-securities/open-api@2cef2e9f docs/errors.md IGW50024"),
+        "EGW00103": RejectCode(REJECTED, "rejected", "meritz-securities/open-api@2cef2e9f docs/errors.md EGW00103"),
+        "EGW00121": RejectCode(TOKEN_EXPIRED, "token_expired",
+                                 "meritz-securities/open-api@2cef2e9f docs/errors.md EGW00121"),
+        "EGW00123": RejectCode(TOKEN_EXPIRED, "token_expired",
+                                 "meritz-securities/open-api@2cef2e9f docs/errors.md EGW00123"),
+        "EGW00200": RejectCode(RATE_LIMITED, "rate_limited",
+                                "meritz-securities/open-api@2cef2e9f docs/errors.md EGW00200"),
+        "EGW00202": RejectCode(REJECTED, "rejected", "meritz-securities/open-api@2cef2e9f docs/errors.md EGW00202"),
+    },
     "kis": {
         # HTTP 500 gateway envelope {"rt_cd":"1","msg_cd":...}: the token is refused before the TR runs.
         "EGW00121": RejectCode(TOKEN_EXPIRED, "token_expired",
