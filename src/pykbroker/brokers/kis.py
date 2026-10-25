@@ -142,6 +142,7 @@ def _kis_more(flag: Any) -> bool:
 class KIS(BaseBroker):
     broker_code = "kis"
     supports_virtual = True
+    us_class_separator = "/"  # KIS master spells class shares BRK/B
 
     def __init__(
         self,

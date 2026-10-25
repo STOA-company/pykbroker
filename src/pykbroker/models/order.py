@@ -94,6 +94,8 @@ class Order(Model):
     market: str = "KR"
     # Execution venue the broker reported or the request named (KRX/NXT/SOR); None when not stated.
     venue: str | None = None
+    # Echo of the caller's idempotency key (copied from the request) so an unknown outcome can be reconciled by key.
+    client_key: str | None = Field(default=None, max_length=128, repr=False)
     # True only when the submission went to a broker mock (virtual) account.
     virtual: bool = False
 

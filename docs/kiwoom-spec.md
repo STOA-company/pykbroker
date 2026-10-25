@@ -40,9 +40,9 @@ full error table: `tests/fixtures/kiwoom/official/error_codes_all.json` (37 rows
 | `kt10001` | 주식 매도주문 | `/api/dostk/ordr` | dmst_stex_tp, ord_qty, stk_cd, trde_tp | cond_uv, ord_uv |
 | `kt10003` | 주식 취소주문 | `/api/dostk/ordr` | cncl_qty, dmst_stex_tp, orig_ord_no, stk_cd | - |
 
-Order fields: `dmst_stex_tp` KRX|NXT|SOR (adapter sends KRX only), `trde_tp` 0 limit / 3 market / 5 conditional limit /
-81, 61, 62 after-hours (adapter sends 0 only), `ord_no` is 7 digits, `cncl_qty` `0` cancels the whole remainder
-(adapter always sends the explicit quantity).
+Order fields: `dmst_stex_tp` KRX|NXT|SOR, `trde_tp` see the order-kind table, `ord_no` is 7 digits, `cncl_qty` and
+`mdfy_qty` `0` mean the whole remainder (adapter always sends the explicit quantity), kt10002 adds `mdfy_uv` (required)
+and `mdfy_cond_uv`.
 
 ## Errors (official table, selected)
 
@@ -61,6 +61,58 @@ cash, bad order number) are not in this table.
    non-zero integer as refusal.
 5. kt00007/ka10075 row text after cancel or partial fill (`mdfy_cncl` "취소확인", `cnfm_qty`) is only shown in the
    official examples without a cancel case; the adapter reads a cancel only when the linked confirmed quantities add up.
-6. Market orders, NXT/SOR routing, after-hours order types, amend (kt10002): not implemented (limit KRX only).
+6. `cond_uv` / `mdfy_cond_uv` meaning (trde_tp 28 스톱지정가 is listed but never explained): 28 is not built. Whether 61/81 take
+   a price (sent empty) and 62 does (sent when given). NXT/SOR holdings under kt00018 (queried as KRX). `ka10001/04` exchange
+   suffix for quotes (`_NX`, `_AL`): quotes stay KRX.
 7. `kt00001` qry_tp meaning (2 vs 3) and kt00018 `qry_tp`: adapter uses the one that cannot overstate cash.
 8. Real mock round trip against `mockapi.kiwoom.com`: not run (no mock key on this machine).
+
+## Order-kind table (same shape for every broker)
+
+Columns: kind as the caller states it (`order_type` / `time_in_force` / `session` / `venue`) -> broker wire value ->
+spec evidence -> contract-server walk -> real mock walk. «walk» = a multi-turn test in `tests/test_kiwoom_order_kinds.py`
+or `tests/test_kiwoom_contract_server.py` through the production adapter. «mock» = `mockapi.kiwoom.com` (KRX only per
+the official mock info, 2026-10-24); none has been walked there (no mock key).
+
+| Kind | Caller states | Wire | Spec evidence | Supported | Contract walk | Real mock walk |
+|---|---|---|---|---|---|---|
+| Limit | `limit` + price | kt10000/1 `trde_tp=0` | trde_tp list «0:보통» | yes | yes | not run |
+| Market | `market` | `3` | «3:시장가» | yes (needs session authorization) | yes (fills at quote) | not run |
+| Conditional limit | `conditional_limit` + price | `5` | «5:조건부지정가» | yes | yes (sent) | not run |
+| Best / top limit | `best` / `top` | `6` / `7` | «6:최유리지정가, 7:최우선지정가» | yes | yes | not run |
+| Mid price | `mid` | `29` | «29:중간가» | yes | yes | not run |
+| IOC | `time_in_force=ioc` on limit/market/best/mid | `10/13/16/30` | «10:보통(IOC) 13 16 30» | yes | yes (remainder killed) | not run |
+| FOK | `time_in_force=fok` on limit/market/best/mid | `20/23/26/31` | «20:보통(FOK) 23 26 31» | yes | yes (all or nothing) | not run |
+| Stop limit | - | `28` | «28:스톱지정가» listed, `cond_uv` unexplained | **no** (fail-closed) | refused test | - |
+| After-hours close | `close` | `81` | «81:장마감후시간외»; same meaning as KIS/DB `close` | yes | yes | not run |
+| Pre-open session | `market` + `session=pre` | `61` | «61:장시작전시간외» | yes | yes | not run |
+| Single-price session | `limit`/`market` + `session=single` | `62` | «62:시간외단일가» (price rule unstated) | yes | yes | not run |
+| NXT | `venue=NXT` | `dmst_stex_tp=NXT` | «KRX,NXT,SOR»; ka10075 `stex_tp` 0/1/2, kt00007 `%/KRX/NXT/SOR` | yes (real host only) | yes (all kinds above) | impossible: mock is KRX only |
+| SOR | `venue=SOR` | `dmst_stex_tp=SOR` | same | yes (real host only) | yes | impossible: mock is KRX only |
+| Amend (native) | `amend_order(AmendRequest)` | kt10002 | kt10002 page: `mdfy_qty`, `mdfy_uv`; new `ord_no` | yes, KR limit original only | yes (partial fill then amend) | not run |
+| Cancel | `cancel_order(CancelRequest)` | kt10003 | kt10003 page | yes, venue must match the order | yes | not run |
+| US | plain day limit | usa/ust TRs | see 2026-10-08 pack | limit only | existing tests | not run |
+
+`amend_no_double_fill` (native amend TR): the amend request is sent once under its own idempotency key. A timeout or
+unreadable answer is `TransportError`/`InvalidResponseError` (unknown), the same key is refused (`duplicate`) and no
+second kt10002 or new order is made until the caller reads `list_orders`/`status`. After a partial fill the amend
+quantity may not exceed the remainder (server refusal, nothing created). Walk: `test_amend_unknown_answer_is_not_resent...`,
+`test_amend_after_partial_fill_never_exceeds_the_remainder`. A «cancel + new order» form is not used by this adapter.
+
+Adapter choices that differ from before this table (all data cells, no broker-name branching in shared code):
+`list_orders` asks `stex_tp=0` (통합) on the real host and `1` (KRX) on the mock; `status` asks `dmst_stex_tp` of the
+order's venue (KRX when unknown); cancel/amend answers must echo the requested venue.
+
+## SEAM cross-check (SEAM.md of 2026-10-25, base `integ/q-order-four-brokers-1024` 4e2860c)
+
+| SEAM cell | This change | Match |
+|---|---|---|
+| §3 amend = `amend_order(AmendRequest)` | Kiwoom keeps the integ method, not duplicated | match |
+| §3 `Capabilities.supports_amend` | added (default False); Kiwoom KR True | match |
+| §7 I2 `Order.client_key` echo | added (optional, hidden from repr); Kiwoom place/amend/cancel fill it; other brokers still None | partial: only Kiwoom fills it (KB/LS/NH/KIS/DB/Toss are other workers' share) |
+| §4 reject classes as data rows with source | `DEFINITIVE_REJECTS["kiwoom"]` = 36 rows of the official error table, 1999 excluded (unknown) | match; business errors (insufficient cash) are not in the table so they stay a plain refusal |
+| §5 `us_class_separator` + `canonical_symbol` | BaseBroker `"."`, KIS `"/"`, inverse added | partial: responses of KIS are not yet rewired to `canonical_symbol` |
+| §2 B `OrderRequest` fields | unchanged shape; added `time_in_force`, `session` (defaults keep every old call identical); `order_type` gained `conditional_limit/best/top/mid` | different on purpose: A (`limit·market`) cannot yet express these; the trader's map must pass them through |
+| §2 `venue` for NXT | existing `venue`/`supports_nxt` cells, SOR added to `venues` | match |
+| §8 item 5 contract mock for Kiwoom | `tests/kiwoom_contract_server.py` | match |
+| D2 KB/LS amend rename | not touched | out of scope |

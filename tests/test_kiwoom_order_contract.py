@@ -117,7 +117,8 @@ def test_buy_request_and_the_official_sample(live_safety):
         "trde_tp": "0",
     }
     assert order == Order(
-        id="00024", symbol="005930", side="buy", order_type="limit", quantity=1, price=Decimal(70000), status="accepted"
+        id="00024", symbol="005930", side="buy", order_type="limit", quantity=1, price=Decimal(70000),
+        status="accepted", client_key="k1",
     )
 
 
@@ -274,7 +275,7 @@ def test_cancel_request_and_the_official_sample(live_safety):
     assert call["path"] == ORDERS and call["headers"]["api-id"] == "kt10003"
     assert call["json"] == {"dmst_stex_tp": "KRX", "orig_ord_no": "0000140", "stk_cd": "005930", "cncl_qty": "1"}
     # the order stays the one that was cancelled; the cancel's own number (0000141) is not its identity
-    assert result == Order(id="0000140", symbol="005930", status="accepted")
+    assert result == Order(id="0000140", symbol="005930", status="accepted", venue=None, client_key="c1")
 
 
 def test_cancel_quantity_is_explicit_never_the_remainder_shorthand(live_safety):
@@ -348,7 +349,7 @@ def test_open_orders_request_and_the_official_sample():
     orders = broker.list_orders()
     (call,) = client.calls
     assert call["path"] == "/api/dostk/acnt" and call["headers"]["api-id"] == "ka10075"
-    assert call["json"] == {"all_stk_tp": "0", "trde_tp": "0", "stex_tp": "1"}  # 전체·전체·KRX
+    assert call["json"] == {"all_stk_tp": "0", "trde_tp": "0", "stex_tp": "0"}  # 전체·전체·통합 (mock: KRX only)
     # +매수 (the sign only colours the label), 시장가 has no price, nothing is filled yet
     assert orders == [
         Order(
@@ -361,6 +362,7 @@ def test_open_orders_request_and_the_official_sample():
             filled=0,
             remaining=1,
             status="open",
+            venue="KRX",
         )
     ]
 
@@ -370,7 +372,7 @@ def test_open_orders_for_one_symbol_name_it_and_filter_on_it():
     page = {**OFFICIAL["ka10075"], "oso": [OFFICIAL["ka10075"]["oso"][0], other]}
     broker, client = make({"ka10075": [page]})
     assert [o.id for o in broker.list_orders("A005930")] == ["0000069"]
-    assert client.calls[0]["json"] == {"all_stk_tp": "1", "trde_tp": "0", "stex_tp": "1", "stk_cd": "005930"}
+    assert client.calls[0]["json"] == {"all_stk_tp": "1", "trde_tp": "0", "stex_tp": "0", "stk_cd": "005930"}
 
 
 @pytest.mark.parametrize(

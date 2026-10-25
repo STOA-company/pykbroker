@@ -35,6 +35,7 @@ from pykbroker.models import (
     Rules,
 )
 from pykbroker.models.order import OrderType, Side
+from pykbroker.reject_codes import DEFINITIVE_REJECTS
 from pykbroker.rules.kr import KST, equity_rules
 from pykbroker.safety.gate import OrderSafety
 from pykbroker.safety.rate_limit import RateLimiter, credential_rate_limiter
@@ -83,8 +84,9 @@ KIWOOM_LIMIT_TRDE_TP = "0"
 KIWOOM_MARKET_TRDE_TP = "3"
 # kt10000/kt10001 trde_tp list (official spec 2026-10-25, same sha256 as the pin): 0 보통, 3 시장가, 5 조건부지정가,
 # 81 장마감후시간외, 61 장시작전시간외, 62 시간외단일가, 6 최유리지정가, 7 최우선지정가,
-# 10/13/16 IOC (보통/시장가/최유리), 20/23/26 FOK, 29 중간가, 30/31 중간가 IOC/FOK, 28 스톱지정가. Keyed by (order_type, time_in_force) in the regular
-# session. 28 is left out on purpose: the spec names cond_uv but never says it is the trigger price.
+# 10/13/16 IOC (보통/시장가/최유리), 20/23/26 FOK, 29 중간가, 30/31 중간가 IOC/FOK, 28 스톱지정가.
+# Keyed by (order_type, time_in_force) in the regular session. 28 is left out on purpose: the spec names
+# cond_uv but never says it is the trigger price.
 _TRDE_REGULAR: dict[tuple[str, str], str] = {
     ("limit", "day"): "0", ("limit", "ioc"): "10", ("limit", "fok"): "20",
     ("market", "day"): "3", ("market", "ioc"): "13", ("market", "fok"): "23",
@@ -157,6 +159,12 @@ def _unpack(reply: Any, *, write: bool = False) -> tuple[Mapping[str, Any], Mapp
     if write and body["return_code"] == _UNEXPECTED_ERROR_CODE:
         raise InvalidResponseError("Kiwoom reported an unexpected error (1999); reconcile before retrying")
     if type(body["return_code"]) is not int or body["return_code"] != 0:
+        code = body["return_code"]
+        listed = DEFINITIVE_REJECTS["kiwoom"].get(str(code)) if type(code) is int else None
+        if listed is not None:
+            raise BrokerRejectedError(
+                "Kiwoom rejected the request", code=str(body["return_code"]), kind=listed.kind, reason=listed.reason
+            )
         raise BrokerRejectedError("Kiwoom rejected the request")
     return body, {str(key).lower(): value for key, value in headers.items()}
 
@@ -357,6 +365,7 @@ class Kiwoom(BaseBroker):
             time_in_forces=("ioc", "fok") if self.market == "KR" else (),
             sessions=("pre", "single") if self.market == "KR" else (),
             supports_single_order_cancel=True,
+            supports_amend=self.market == "KR",
             supports_order_history=True,
             # ka10075 is a snapshot, but the spec does not say how current it is: not declared real-time.
             supports_virtual_account=True,
@@ -518,6 +527,7 @@ class Kiwoom(BaseBroker):
             price=request.price,
             status="accepted",
             venue=request.venue,
+            client_key=request.client_key,
             virtual=self.virtual,
         )
 
@@ -570,6 +580,8 @@ class Kiwoom(BaseBroker):
                 quantity=request.quantity,
                 price=request.price,
                 status="accepted",
+                venue=request.venue,
+                client_key=request.client_key,
                 virtual=self.virtual,
             )
 
@@ -591,7 +603,8 @@ class Kiwoom(BaseBroker):
         if whole(response["cncl_qty"]) != request.quantity:
             raise InvalidResponseError("Kiwoom cancelled another quantity; reconcile before retrying")
         # A cancel acknowledgement does not establish the final state of the order.
-        return Order(id=request.order_id, symbol=code, status="accepted", venue=request.venue, virtual=self.virtual)
+        return Order(id=request.order_id, symbol=code, status="accepted", venue=request.venue,
+                     client_key=request.client_key, virtual=self.virtual)
 
     def list_orders(self, symbol: str | None = None) -> list[Order]:
         if self.market == "US":

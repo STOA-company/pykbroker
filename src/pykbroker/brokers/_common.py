@@ -116,6 +116,9 @@ class BaseBroker:
     # list has nothing to name. Declaring the requirement with an empty list is a contradiction:
     # every order and every cancellation is refused whether or not the caller names a venue.
     us_venues: tuple[str, ...] = ()
+    # Internal class-share form is ROOT.CLASS (SEAM §5); a broker whose API spells it otherwise overrides this data
+    # cell only (KIS «/»). `canonical_symbol` is the inverse for responses.
+    us_class_separator: str = "."
 
     def __init__(
         self,
@@ -174,7 +177,11 @@ class BaseBroker:
     def _symbol(self, symbol: str, market: str) -> str:
         if market != self.market:
             raise NotSupportedError("Request market must match this broker instance")
-        return normalize_symbol(symbol) if market == "KR" else symbol
+        return normalize_symbol(symbol) if market == "KR" else symbol.replace(".", self.us_class_separator)
+
+    def canonical_symbol(self, native: str) -> str:
+        """Broker-native US symbol back to the internal ROOT.CLASS form; KR codes are unchanged."""
+        return native if self.market == "KR" else native.replace(self.us_class_separator, ".")
 
     def capabilities(self) -> Capabilities:
         if self.market == "US" and not self.us_venues:

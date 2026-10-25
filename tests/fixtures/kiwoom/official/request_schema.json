@@ -463,7 +463,7 @@
     "required": true
    },
    "trde_tp": {
-    "description": "0:보통 , 3:시장가 , 5:조건부지정가 , 81:장마감후시간외 , 61:장시작전시간외, 62:시간외단일가 , 6:최유리지정가 , 7:최우선지정가 , 10:보통(IOC) , 13:시장가(IOC) , 16:최유리(I",
+    "description": "0:보통 , 3:시장가 , 5:조건부지정가 , 81:장마감후시간외 , 61:장시작전시간외, 62:시간외단일가 , 6:최유리지정가 , 7:최우선지정가 , 10:보통(IOC) , 13:시장가(IOC) , 16:최유리(IOC) , 20:보통(FOK) , 23:시장가(FOK) , 26:최유리(FOK) , 28:스톱지정가,29:중간가,30:중간가(IOC),31:중간가(FOK)",
     "length": "2",
     "required": true
    }
@@ -504,13 +504,56 @@
     "required": true
    },
    "trde_tp": {
-    "description": "0:보통 , 3:시장가 , 5:조건부지정가 , 81:장마감후시간외 , 61:장시작전시간외, 62:시간외단일가 , 6:최유리지정가 , 7:최우선지정가 , 10:보통(IOC) , 13:시장가(IOC) , 16:최유리(I",
+    "description": "0:보통 , 3:시장가 , 5:조건부지정가 , 81:장마감후시간외 , 61:장시작전시간외, 62:시간외단일가 , 6:최유리지정가 , 7:최우선지정가 , 10:보통(IOC) , 13:시장가(IOC) , 16:최유리(IOC) , 20:보통(FOK) , 23:시장가(FOK) , 26:최유리(FOK) , 28:스톱지정가,29:중간가,30:중간가(IOC),31:중간가(FOK)",
     "length": "2",
     "required": true
    }
   },
   "response": [
    "ord_no",
+   "dmst_stex_tp"
+  ],
+  "url": "/api/dostk/ordr"
+ },
+ "kt10002": {
+  "method": "POST",
+  "name": "주식 정정주문",
+  "request": {
+   "dmst_stex_tp": {
+    "description": "KRX,NXT,SOR",
+    "length": "3",
+    "required": true
+   },
+   "mdfy_cond_uv": {
+    "description": "단위: 원",
+    "length": "12",
+    "required": false
+   },
+   "mdfy_qty": {
+    "description": "단위: 1주, '0' 입력 시 잔량 전부 정정",
+    "length": "12",
+    "required": true
+   },
+   "mdfy_uv": {
+    "description": "단위: 원",
+    "length": "12",
+    "required": true
+   },
+   "orig_ord_no": {
+    "description": "매수/매도 주문 요청 응답 결과로 받은 7자리 주문번호",
+    "length": "7",
+    "required": true
+   },
+   "stk_cd": {
+    "description": "",
+    "length": "12",
+    "required": true
+   }
+  },
+  "response": [
+   "ord_no",
+   "base_orig_ord_no",
+   "mdfy_qty",
    "dmst_stex_tp"
   ],
   "url": "/api/dostk/ordr"

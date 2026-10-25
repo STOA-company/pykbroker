@@ -40,8 +40,8 @@ class World:
         return Kiwoom.issue_token(app_key="fixture-app", secret_key="fixture-secret", virtual=virtual,
                                   client_factory=self.factory)
 
-    def broker(self, **kwargs):
-        issued = self.issue()
+    def broker(self, virtual=True, **kwargs):
+        issued = self.issue(virtual=virtual)
         safety = OrderSafety(
             dry_run=False,
             limits=RiskLimits(allow_orders=True, dry_run=False, per_order_krw_cap="1000000",
@@ -50,7 +50,7 @@ class World:
             kill_switch=KillSwitch(lambda broker, account: False),
         )
         return create_broker(
-            "kiwoom", account="fixture-account", client_factory=self.factory, virtual=True, safety=safety,
+            "kiwoom", account="fixture-account", client_factory=self.factory, virtual=virtual, safety=safety,
             client_options={**issued, "app_key": "fixture-app"},
             codes={"exchange": "KRX", "query_type": "1"}, rate_limiter=kwargs.pop("rate_limiter", FAST),
             clock=lambda: self.utc, **kwargs,

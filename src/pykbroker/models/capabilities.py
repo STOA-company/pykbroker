@@ -7,6 +7,8 @@ class Capabilities(Model):
     supports_spot: bool = False
     supports_market_order: bool = False
     supports_single_order_cancel: bool = False
+    # Native in-place price/quantity amendment via amend_order(AmendRequest) (SEAM §3).
+    supports_amend: bool = False
     supports_nxt: bool = False
     # Kinds beyond plain limit/market/close, time-in-force other than "day", sessions other than "regular".
     # Empty means refused: an unlisted kind never reaches the wire.

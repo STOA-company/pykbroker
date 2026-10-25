@@ -19,6 +19,19 @@ OFFICIAL = Path(__file__).parent / "fixtures" / "kiwoom" / "official"
 SCHEMA = json.loads((OFFICIAL / "request_schema.json").read_text())
 ERRORS = json.loads((OFFICIAL / "error_codes_all.json").read_text())
 KST_FMT = "%Y%m%d%H%M%S"
+# kt10000 trde_tp list from the official spec (description column): code -> (label, needs ord_uv, tif, style)
+TRDE = {
+    "0": ("보통", True, "day", "limit"), "3": ("시장가", False, "day", "market"),
+    "5": ("조건부지정가", True, "day", "limit"), "81": ("장마감후시간외", False, "day", "session"),
+    "61": ("장시작전시간외", False, "day", "session"), "62": ("시간외단일가", False, "day", "session"),
+    "6": ("최유리지정가", False, "day", "market"), "7": ("최우선지정가", False, "day", "market"),
+    "10": ("보통(IOC)", True, "ioc", "limit"), "13": ("시장가(IOC)", False, "ioc", "market"),
+    "16": ("최유리(IOC)", False, "ioc", "market"), "20": ("보통(FOK)", True, "fok", "limit"),
+    "23": ("시장가(FOK)", False, "fok", "market"), "26": ("최유리(FOK)", False, "fok", "market"),
+    "28": ("스톱지정가", True, "day", "limit"), "29": ("중간가", False, "day", "market"),
+    "30": ("중간가(IOC)", False, "ioc", "market"), "31": ("중간가(FOK)", False, "fok", "market"),
+}
+VENUES = ("KRX", "NXT", "SOR")
 
 
 def _n(value: int, width: int) -> str:
@@ -40,6 +53,7 @@ class KiwoomContractServer:
         self._window: dict[str, int] = {}
         self._seq = 0
         self.base_url = None
+        self.liquidity = 10**9  # shares available to market-style / IOC / FOK orders at the quote
         self.invalid: list[tuple[str, int]] = []  # (api-id, 1511|1517) the broker should never provoke
         self.fail_next: dict[str, tuple[int, str]] = {}  # api-id -> body error to emit once
 
@@ -150,18 +164,33 @@ class KiwoomContractServer:
 
     # --- orders ---
     def _place(self, body, side):
-        if body["dmst_stex_tp"] != "KRX":
+        venue = body["dmst_stex_tp"]
+        if venue not in VENUES:
             return self._err(1517, p="dmst_stex_tp")
-        if body["trde_tp"] == "0" and not int(body.get("ord_uv") or 0):
+        if body["trde_tp"] not in TRDE:
+            return self._err(1517, p="trde_tp")
+        label, needs_price, tif, style = TRDE[body["trde_tp"]]
+        if needs_price and not int(body.get("ord_uv") or 0):
             return self._err(1517, p="ord_uv")
         qty = int(body["ord_qty"])
-        if side == "buy" and qty * int(body["ord_uv"]) > self.cash:
+        price = int(body.get("ord_uv") or 0)
+        if side == "buy" and qty * (price or self.price) > self.cash:
             return {"return_code": 20, "return_msg": "주문가능금액 부족"}, {"cont-yn": "N"}
         self._seq += 1
         ord_no = _n(self._seq, 7)
-        self.orders[ord_no] = {"side": side, "code": body["stk_cd"], "qty": qty, "price": int(body["ord_uv"]),
-                               "remaining": qty, "cntr_qty": 0, "cntr_amt": 0, "cancelled": 0}
-        return self._ok({"ord_no": ord_no, "dmst_stex_tp": "KRX"})
+        order = {"side": side, "code": body["stk_cd"], "qty": qty, "price": price, "remaining": qty, "cntr_qty": 0,
+                 "cntr_amt": 0, "cancelled": 0, "venue": venue, "label": label, "trde_tp": body["trde_tp"]}
+        self.orders[ord_no] = order
+        if style == "market" or tif in ("ioc", "fok"):
+            can = min(qty, self.liquidity)
+            if tif == "fok" and can < qty:
+                can = 0
+            if can:
+                self.fill(ord_no, can, self.price)
+            if tif in ("ioc", "fok"):
+                order["cancelled"] += order["remaining"]  # the unfilled rest is killed at once
+                order["remaining"] = 0
+        return self._ok({"ord_no": ord_no, "dmst_stex_tp": venue})
 
     def _kt10000(self, body, _):
         return self._place(body, "buy")
@@ -171,7 +200,7 @@ class KiwoomContractServer:
 
     def _kt10003(self, body, _):
         order = self.orders.get(body["orig_ord_no"])
-        if order is None or order["code"] != body["stk_cd"]:
+        if order is None or order["code"] != body["stk_cd"] or order["venue"] != body["dmst_stex_tp"]:
             return {"return_code": 20, "return_msg": "원주문번호 없음"}, {"cont-yn": "N"}
         qty = int(body["cncl_qty"]) or order["remaining"]  # spec: '0' cancels the whole remainder
         if qty > order["remaining"] or qty == 0:
@@ -181,8 +210,26 @@ class KiwoomContractServer:
         self._seq += 1
         cancel_no = _n(self._seq, 7)
         self.ledger_extra.append({"ord_no": cancel_no, "ori_ord": body["orig_ord_no"], "stk_cd": body["stk_cd"],
-                                  "qty": qty})
+                                  "qty": qty, "kind": "취소확인", "venue": order["venue"]})
         return self._ok({"ord_no": cancel_no, "base_orig_ord_no": body["orig_ord_no"], "cncl_qty": _n(qty, 12)})
+
+    def _kt10002(self, body, _):
+        order = self.orders.get(body["orig_ord_no"])
+        if order is None or order["code"] != body["stk_cd"] or order["venue"] != body["dmst_stex_tp"]:
+            return {"return_code": 20, "return_msg": "원주문번호 없음"}, {"cont-yn": "N"}
+        qty = int(body["mdfy_qty"]) or order["remaining"]  # spec: '0' amends the whole remainder
+        if qty > order["remaining"] or qty == 0 or not int(body["mdfy_uv"]):
+            return {"return_code": 20, "return_msg": "정정가능수량 초과"}, {"cont-yn": "N"}
+        order["remaining"] -= qty
+        order["amended"] = order.get("amended", 0) + qty
+        self._seq += 1
+        new_no = _n(self._seq, 7)
+        self.orders[new_no] = {**order, "qty": qty, "price": int(body["mdfy_uv"]), "remaining": qty, "cntr_qty": 0,
+                               "cntr_amt": 0, "cancelled": 0, "amended": 0,
+                               "root": order.get("root", body["orig_ord_no"]), "ori": body["orig_ord_no"],
+                               "mdfy": "정정확인"}
+        return self._ok({"ord_no": new_no, "base_orig_ord_no": order.get("root", body["orig_ord_no"]),
+                         "mdfy_qty": _n(qty, 12), "dmst_stex_tp": order["venue"]})
 
     # --- reads (paged by cont-yn / next-key, as the spec describes) ---
     def _page(self, rows, headers):
@@ -196,30 +243,38 @@ class KiwoomContractServer:
             {"acnt_no": "0000000000", "ord_no": no, "stk_cd": o["code"], "stk_nm": "삼성전자", "ord_stt": "접수",
              "ord_qty": str(o["qty"]), "ord_pric": f"+{o['price']}", "oso_qty": str(o["remaining"]),
              "cntr_tot_amt": str(o["cntr_amt"]), "orig_ord_no": "0000000",
-             "io_tp_nm": "+매수" if o["side"] == "buy" else "-매도", "trde_tp": "보통", "tm": "093005",
-             "cntr_qty": str(o["cntr_qty"]), "stex_tp": "1", "stex_tp_txt": "KRX"}
+             "io_tp_nm": "+매수" if o["side"] == "buy" else "-매도", "trde_tp": o["label"], "tm": "093005",
+             "cntr_qty": str(o["cntr_qty"]), "stex_tp": {"KRX": "1", "NXT": "2", "SOR": "0"}[o["venue"]],
+             "stex_tp_txt": o["venue"]}
             for no, o in self.orders.items()
             if o["remaining"] > 0 and (body["all_stk_tp"] == "0" or o["code"] == body.get("stk_cd"))
+            and body["stex_tp"] in ("0", {"KRX": "1", "NXT": "2", "SOR": "0"}[o["venue"]])
         ]
         chunk, hdr = self._page(rows, headers)
         return self._ok({"oso": chunk}, **hdr)
 
     def _kt00007(self, body, headers):
         rows = []
+        want = body["dmst_stex_tp"]
         for no, o in self.orders.items():
-            rows.append({"ord_no": no, "stk_cd": "A" + o["code"], "trde_tp": "보통", "ord_qty": _n(o["qty"], 10),
+            if want not in ("%", o["venue"]):
+                continue
+            rows.append({"ord_no": no, "stk_cd": "A" + o["code"], "trde_tp": o["label"], "ord_qty": _n(o["qty"], 10),
                          "ord_uv": _n(o["price"], 10), "cnfm_qty": "0000000000", "acpt_tp": "접수",
-                         "ori_ord": "0000000", "stk_nm": "삼성전자",
+                         "ori_ord": o.get("ori", "0000000"), "stk_nm": "삼성전자",
                          "io_tp_nm": "현금매수" if o["side"] == "buy" else "현금매도",
                          "cntr_qty": _n(o["cntr_qty"], 10),
                          "cntr_uv": _n(o["cntr_amt"] // o["cntr_qty"], 10) if o["cntr_qty"] else "0000000000",
-                         "ord_remnq": _n(o["remaining"], 10), "mdfy_cncl": "", "dmst_stex_tp": "KRX"})
+                         "ord_remnq": _n(o["remaining"], 10), "mdfy_cncl": o.get("mdfy", ""),
+                         "dmst_stex_tp": o["venue"]})
         for extra in self.ledger_extra:
+            if want not in ("%", extra["venue"]):
+                continue
             rows.append({"ord_no": extra["ord_no"], "stk_cd": "A" + extra["stk_cd"], "trde_tp": "보통",
                          "ord_qty": _n(extra["qty"], 10), "ord_uv": "0000000000", "cnfm_qty": _n(extra["qty"], 10),
                          "acpt_tp": "확인", "ori_ord": extra["ori_ord"], "stk_nm": "삼성전자",
                          "io_tp_nm": "현금매수취소", "cntr_qty": "0000000000", "cntr_uv": "0000000000",
-                         "ord_remnq": "0000000000", "mdfy_cncl": "취소확인", "dmst_stex_tp": "KRX"})
+                         "ord_remnq": "0000000000", "mdfy_cncl": extra["kind"], "dmst_stex_tp": extra["venue"]})
         chunk, hdr = self._page(rows, headers)
         return self._ok({"acnt_ord_cntr_prps_dtl": chunk}, **hdr)
 
