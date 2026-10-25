@@ -193,7 +193,8 @@ def test_daily_list_and_status_use_integrated_number_without_guessing_market_num
     broker, calls = make({DAILY: [page, page]})
     (listed,) = broker.list_orders("005930")
     assert (listed.id, listed.status, listed.filled, listed.remaining) == ("itg:456", "partial", 1, 1)
-    assert broker.status(listed).status == "partial"
+    observed = broker.status(listed.model_copy(update={"client_key": "kr-status-key"}))
+    assert observed.status == "partial" and observed.client_key == "kr-status-key"
     placed = Order(id="mkt:123", symbol="005930", status="accepted")
     assert broker.status(placed).status == "unknown"
     assert len(calls) == 2
@@ -327,6 +328,7 @@ def test_us_limit_cancel_status_and_fill_share_documented_order_number(live_safe
     }
     assert calls[2][3]["Input_0"]["org_orr_no"] == 123
     observed = broker.status(placed)
+    assert observed.client_key == request.client_key == "us-buy"
     assert (observed.status, observed.filled, observed.remaining, observed.fill_price) == (
         "partial",
         1,

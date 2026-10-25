@@ -614,7 +614,8 @@ def test_us_full_cancel_verifies_remainder_and_never_names_a_cancel_ack_as_final
 def test_us_ledger_quantities_determine_status_without_fabricated_average(changes, status):
     row = {**US_ROW, **changes, "cntr_uv": "199.7700"}
     broker, _ = us_make({"ust21150": [{"return_code": 0, "result_list": [row]}]})
-    order = broker.status(Order(id="000000282", symbol="NVDA", market="US"))
+    order = broker.status(Order(id="000000282", symbol="NVDA", market="US", client_key="us-status-key"))
+    assert order.client_key == "us-status-key"
     assert order.status == status
     assert order.fill_price is None
 

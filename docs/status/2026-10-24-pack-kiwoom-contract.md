@@ -52,3 +52,4 @@
 - KIS 클래스주는 잔고/보유·미체결·주문·취소·시세 응답에서 정본으로 역변환; available_qty도 정본으로 비교.
 - 공용 place/cancel과 독립 NH/LS/KB/키움 정정 반환에 client_key 복사, KR/US 공통.
 - 검증: tests/test_review_54_regressions.py 및 관련 지정 계약 시험; 실키·실주문·배포 0.
+- 독립 후속 I2: NH status(KR itg/US us)와 키움 US 원장 조회도 입력 Order.client_key 보존; 두 override의 새 모델 반환 누락을 함께 수정.

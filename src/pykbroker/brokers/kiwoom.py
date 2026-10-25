@@ -900,4 +900,4 @@ class Kiwoom(BaseBroker):
         mine = [row for row in rows if row.get("ord_no") == order.id and row.get("stk_cd") == code]
         if len(mine) != 1:
             return order.model_copy(update={"status": "unknown"})
-        return self._us_order_row(mine[0])
+        return self._us_order_row(mine[0]).model_copy(update={"client_key": order.client_key})
