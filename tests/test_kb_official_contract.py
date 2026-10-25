@@ -13,10 +13,12 @@ from pydantic import ValidationError
 from pykbroker.brokers import kb as module
 from pykbroker.brokers.kb import KB, KB_API_BASE_URL
 from pykbroker.exceptions import (
+    BrokerRejectedError,
     ConfigurationError,
     DuplicateOrderError,
     InvalidResponseError,
     NotSupportedError,
+    RiskCapError,
     SafetyError,
     SpecUnverifiedError,
     TransportError,
@@ -595,8 +597,9 @@ def test_contract_expiry_explicit_reissue_and_same_read(live_safety):
     b = contract_broker(server, live_safety)
     assert b.list_orders() == []
     server.now = server.expiry
-    with pytest.raises(InvalidResponseError):
+    with pytest.raises(BrokerRejectedError) as expired:  # T043 is a listed token code (reject_codes "kb")
         b.list_orders()
+    assert expired.value.kind == "token_expired" and expired.value.code == "T043"
     assert server.token_count == 1  # No implicit token issuance or read retry.
     b = contract_broker(server, live_safety)
     assert b.list_orders() == [] and server.token_count == 2
@@ -604,15 +607,20 @@ def test_contract_expiry_explicit_reissue_and_same_read(live_safety):
                                              '/api/v1/ssqm2341', '/oauth2/token', '/api/v1/ssqm2341']
 
 
-@pytest.mark.parametrize('code', ['E041', 'I435', 'T043', 'T022', 'E002', 'I446'])
-def test_contract_public_error_codes_fail_without_retry_or_write_replay(code, live_safety):
+@pytest.mark.parametrize('code,kind', [('E041', 'rate_limited'), ('I435', 'rate_limited'),
+                                       ('T043', 'token_expired'), ('T022', None), ('E002', None),
+                                       ('I446', 'rejected')])
+def test_contract_public_error_codes_fail_without_retry_or_write_replay(code, kind, live_safety):
     assert code in {item['key'] for item in sample('public-errors')['codes']}
     server = ContractServer()
     b = contract_broker(server, live_safety)
     server.error_code = code
     request = order(price=Decimal('1000'))
-    with pytest.raises(InvalidResponseError):
+    # A code with a source row in reject_codes is a definitive refusal; any other code stays unknown.
+    with pytest.raises(BrokerRejectedError if kind else InvalidResponseError) as raised:
         b.place_order(request)
+    if kind:
+        assert raised.value.kind == kind and raised.value.code == code
     with pytest.raises(DuplicateOrderError):
         b.place_order(request)
     assert [c[0] for c in server.calls] == ['/oauth2/token', '/api/v1/ssam1802']
@@ -677,12 +685,12 @@ def test_amend_default_gate_dry_run_and_us_scope():
 
 
 @pytest.mark.parametrize('side', ['buy', 'sell'])
-def test_market_sentinel_is_unverified_and_experimental_lock_stays_off(side, live_safety):
+def test_market_order_needs_session_authorization_and_experimental_lock_stays_off(side, live_safety):
     from pykbroker.experimental.kb import KB_SPEC_VERIFIED
 
     client = FakeClient()
     assert KB_SPEC_VERIFIED is False
-    with pytest.raises(NotSupportedError):
+    with pytest.raises(RiskCapError):
         broker(client, writes_enabled=True, safety=live_safety).place_order(
             order(side=side, order_type='market', price=None))
     assert client.calls == []

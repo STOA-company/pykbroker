@@ -128,7 +128,7 @@ def test_ls_is_factory_constructible_but_remains_locked():
     assert module.LS_SPEC_VERIFIED is False
     assert import_module("pykbroker.experimental.ls") is module
     caps = broker.capabilities()
-    assert caps.markets == ("KR",) and caps.venues == ("KRX",)
+    assert caps.markets == ("KR",) and caps.venues == ("KRX", "NXT")
     assert not any(
         (
             caps.supports_spot,
@@ -561,7 +561,6 @@ def test_bad_original_order_number_is_refused_before_cancel(unlocked, live_safet
     "changes",
     [
         {"market": "US"},
-        {"venue": "NXT"},
         {"venue": "SOR"},
         {"order_type": "close"},
         {"price": "70000.5"},

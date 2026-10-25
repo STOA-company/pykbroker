@@ -10,6 +10,7 @@ import json
 from collections.abc import Mapping
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Any
 from urllib.error import HTTPError
 from urllib.request import Request
 from zoneinfo import ZoneInfo
@@ -22,12 +23,19 @@ from pykbroker.exceptions import (
     SpecUnverifiedError,
     TransportError,
 )
-from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote
+from pykbroker.models import AmendRequest, Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote
+from pykbroker.reject_codes import rejection_for_code
 from pykbroker.safety.rate_limit import credential_rate_limiter
 
 from ._common import BaseBroker, PageRows, decimal, optional_price, whole
 
 KB_API_BASE_URL = "https://developer.kbsec.com:32484"
+# SSAM1801/1802 input `ordr_ccd` (official XLSX sheets25/26 row15, 2026-10-24): 00 지정가, 03 시장가,
+# 12 최유리지정가, 13 최우선지정가, M3 중간가. 05 조건부·F*/I* 조건부 체결조건·99 시간외종가 appear only in the
+# OUTPUT enum, so they are not sent (docs/kb-spec.md). Data, not a branch: add a kind by adding a row.
+KB_KR_ORDER_CCD = {"limit": "00", "market": "03", "best": "12", "priority": "13", "midpoint": "M3"}
+# `sor_ordr_ccd` K:KRX, N:NXT, S:SOR (same sheets, row16).
+KB_KR_VENUE_CODE = {"KRX": "K", "NXT": "N", "SOR": "S"}
 # Official row identity: SPQM2226 Record2 (US holdings), SSQM1801 Record1 (KR sellable listing).
 KB_US_ROW_KEY = ("is_cd", "mkt_clsf", "crncy_clsf_nm", "ln_dt", "mtrt_dt")
 KB_KR_SELLABLE_ROW_KEY = ("is_no",)
@@ -59,6 +67,12 @@ def _response_body(result):
     if not isinstance(result, Mapping):
         raise InvalidResponseError("KB response is not an object")
     header, data = result.get("dataHeader"), result.get("dataBody")
+    if isinstance(header, Mapping) and header.get("resultCode") != "200":
+        # A listed gateway code proves the call was refused before processing (never an order).
+        for field_name in ("resultCode", "processCode"):
+            refusal = rejection_for_code("kb", header.get(field_name))
+            if refusal is not None:
+                raise refusal
     if (not isinstance(header, Mapping) or header.get("resultCode") != "200"
             or header.get("processFlag") != "A"):
         raise InvalidResponseError("KB business result is unsuccessful or unknown; reconcile before retrying")
@@ -190,10 +204,15 @@ class KB(BaseBroker):
 
     def capabilities(self) -> Capabilities:
         return Capabilities(
-            supports_spot=True, supports_limit_order=True, supports_market_order=False,
+            supports_spot=True, supports_limit_order=True, supports_market_order=self.market == "KR",
             supports_single_order_cancel=True, markets=(self.market,),
-            requires_venue=self.market == "US", venues=("KRX",) if self.market == "KR" else self.us_venues,
+            requires_venue=self.market == "US",
+            venues=tuple(KB_KR_VENUE_CODE) if self.market == "KR" else self.us_venues,
             supports_order_history=True, realtime_open_orders=False,
+            supports_amend=self.market == "KR",
+            supports_nxt=self.market == "KR",
+            order_types=tuple(k for k in KB_KR_ORDER_CCD if k not in {"limit", "market"})
+            if self.market == "KR" else (),
         )
 
     def _response(self, tr: str, body: dict) -> Mapping:
@@ -255,8 +274,10 @@ class KB(BaseBroker):
 
     def _validate_order(self, request):
         super()._validate_order(request)
-        if isinstance(request, OrderRequest) and request.order_type != "limit":
-            raise NotSupportedError("KB adapter currently submits limit orders only")
+        if isinstance(request, OrderRequest) and request.market == "US" and request.order_type != "limit":
+            raise NotSupportedError("KB US submits limit orders only")
+        if isinstance(request, OrderRequest) and request.market == "KR" and request.order_type not in KB_KR_ORDER_CCD:
+            raise NotSupportedError("KB does not offer this KR order type")
         if isinstance(request, OrderRequest):
             tr, body = self._order_body(request)
             _check_lengths(body, _ORDER_LENGTHS[tr])
@@ -283,12 +304,15 @@ class KB(BaseBroker):
 
     def _order_body(self, request):
         symbol = self._symbol(request.symbol, request.market)
-        price = _price_text(request.price, self.market)
         if self.market == "KR":
+            # ordr_uprc is a required String(9); a venue-priced kind sends "0" (spec silent on market value).
+            price = "0" if request.price is None else _price_text(request.price, self.market)
             return ("ssam1802" if request.side == "buy" else "ssam1801"), {
                 "mkt_tm_clsf": "1", "is_cd": symbol, "ordr_q": str(request.quantity),
-                "ordr_uprc": price, "ordr_ccd": "00", "sor_ordr_ccd": "K",
+                "ordr_uprc": price, "ordr_ccd": KB_KR_ORDER_CCD[request.order_type],
+                "sor_ordr_ccd": KB_KR_VENUE_CODE[request.venue or "KRX"],
             }
+        price = _price_text(request.price, self.market)
         return "skam2101", {"trd_dl_ccd": "02" if request.side == "buy" else "01", "is_cd": symbol,
                             "frgn_ordr_typ_cd": "2", "frgn_ordr_q": str(request.quantity),
                             "frgn_ordr_prc_p4": price}
@@ -306,39 +330,34 @@ class KB(BaseBroker):
                      side=request.side, order_type=request.order_type, quantity=request.quantity,
                      price=request.price, status="accepted", virtual=False)
 
-    def amend_order(self, request: OrderRequest, *, order_id: str) -> Order:
-        """Amend a named KR remainder with SSAM1805's quantity-specific contract.
-
-        ``quantity`` is the quantity being amended, not an inferred remainder.
-        SSAM1805 cannot change a side; ``request.side`` is not transmitted and
-        the acknowledgement does not establish the original order's side.
-        Like place/cancel, this never retries or treats acknowledgement as a fill.
-        The existing place idempotency namespace is shared deliberately: reusing
-        an intent key for a new submission or an amendment cannot write twice.
-        """
-        if self.market != "KR":
-            raise NotSupportedError("KB amendment is domestic only")
-        request = OrderRequest.model_validate(request.model_dump())
-        self._validate_order(request)
-        if (not isinstance(order_id, str) or not order_id.isascii() or not order_id.isdecimal()
-                or len(order_id) > 10 or not order_id.strip("0")):
+    def _prepare_amend(self, request: AmendRequest) -> None:
+        super()._prepare_amend(request)  # no broker_ref keys for KB
+        value = request.order_id
+        if not value.isascii() or not value.isdecimal() or len(value) > 10 or not value.strip("0"):
             raise ConfigurationError("KB original order number must be a nonzero decimal string of at most ten digits")
+        _, body = self._order_body(request)
+        body.update(crct_clsf="1", orgn_ordr_no=value)
+        _check_lengths(body, _ORDER_LENGTHS["ssam1805"])
+
+    def _amend_order(self, request: AmendRequest, prepared: Any = None) -> Order:
+        """SSAM1805 partial amend (crct_clsf=1) of a named KR remainder.
+
+        ``quantity`` is the quantity being amended, not an inferred remainder. SSAM1805 cannot change a
+        side; ``request.side`` is not transmitted and the acknowledgement does not establish the original
+        order's side. An answer that is lost or unknown raises and is never re-sent.
+        """
+        order_id = request.order_id
         _, body = self._order_body(request)
         body.update(crct_clsf="1", orgn_ordr_no=order_id)
         _check_lengths(body, _ORDER_LENGTHS["ssam1805"])
-
-        def submit():
-            row = self._response("ssam1805", body)
-            if (row.get("orgn_ordr_no") != order_id or row.get("is_cd") != body["is_cd"]
-                    or decimal(row["ordr_q"]) != request.quantity
-                    or decimal(row["ordr_uprc"]) != request.price):
-                raise InvalidResponseError("KB amendment identity is inconsistent; reconcile before retrying")
-            return Order(id=self._order_number(row), symbol=request.symbol, market=request.market,
-                         order_type=request.order_type, quantity=request.quantity,
-                         price=request.price, status="accepted", virtual=False)
-
-        return self.safety.execute(self.broker_code, self._account, request, lambda: self._call(submit)).model_copy(
-            update={"client_key": request.client_key})
+        row = self._response("ssam1805", body)
+        if (row.get("orgn_ordr_no") != order_id or row.get("is_cd") != body["is_cd"]
+                or decimal(row["ordr_q"]) != request.quantity
+                or decimal(row["ordr_uprc"]) != request.price):
+            raise InvalidResponseError("KB amendment identity is inconsistent; reconcile before retrying")
+        return Order(id=self._order_number(row), symbol=request.symbol, market=request.market,
+                     order_type=request.order_type, quantity=request.quantity,
+                     price=request.price, status="accepted", virtual=False)
 
     @staticmethod
     def _rows(row, block, count):

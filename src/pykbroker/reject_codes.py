@@ -54,6 +54,37 @@ DEFINITIVE_REJECTS: dict[str, dict[str, RejectCode]] = {
         "APBK0952": RejectCode(REJECTED, "insufficient_funds",
                                "quantus_backend/common/stock_consts.py:51 «주문가능금액을초과»"),
     },
+    # KB B2C: public error list https://openapi.kbsec.com/api/codes/public/B2C_error_code (confirmed 2026-10-24,
+    # tests/fixtures/kb/official/public-errors.json). The list gives meaning only; WHERE the code sits in the
+    # response (dataHeader.resultCode vs processCode, HTTP status) is not documented, so the adapter matches
+    # an exact table key in either dataHeader field and nothing else.
+    "kb": {
+        "T041": RejectCode(TOKEN_EXPIRED, "token_invalid", "KB B2C_error_code T041 «유효하지 않은 접근 토큰입니다.»"),
+        "T042": RejectCode(TOKEN_EXPIRED, "token_not_found", "KB B2C_error_code T042 «접근 토큰을 찾을 수 없습니다.»"),
+        "T043": RejectCode(TOKEN_EXPIRED, "token_expired", "KB B2C_error_code T043 «접근 토큰 기간이 만료되었습니다.»"),
+        "T044": RejectCode(TOKEN_EXPIRED, "token_invalid", "KB B2C_error_code T044 «토큰 검증에 실패했습니다.»"),
+        "E041": RejectCode(RATE_LIMITED, "rate_limited", "KB B2C_error_code E041 «서비스 호출 건수룰 초과 하였습니다.»"),
+        "I435": RejectCode(RATE_LIMITED, "rate_limited", "KB B2C_error_code I435 «서비스 호출 건수를 초과하였습니다.»"),
+        "E042": RejectCode(RATE_LIMITED, "rate_limited", "KB B2C_error_code E042 «유량제어 정책을 확인해주세요.»"),
+        "E031": RejectCode(REJECTED, "ip_not_allowed", "KB B2C_error_code E031 «허용되지 않는 IP입니다.»"),
+        "I446": RejectCode(REJECTED, "no_api_permission", "KB B2C_error_code I446 «API 사용 권한이 없습니다.»"),
+        "T045": RejectCode(REJECTED, "no_api_permission", "KB B2C_error_code T045 «API 사용 권한이 없습니다.»"),
+    },
+    # NH PLUG gateway errors: https://www.nhplug.com/testbed-howto (official error table, 2026-10-24,
+    # tests/fixtures/nh/official/CONTRACT-2026-10-24.md). HTTP/envelope placement is the adapter's assumption.
+    "nh": {
+        "IGW40019": RejectCode(REJECTED, "invalid_symbol", "nhplug.com/testbed-howto IGW40019 종목코드 오류"),
+        "IGW40031": RejectCode(REJECTED, "invalid_app_key", "nhplug.com/testbed-howto IGW40031 AppKey 오류"),
+        "IGW40032": RejectCode(REJECTED, "invalid_app_secret", "nhplug.com/testbed-howto IGW40032 AppSecret 오류"),
+        "IGW40043": RejectCode(TOKEN_EXPIRED, "token_invalid", "nhplug.com/testbed-howto IGW40043 무효 토큰"),
+        "IGW40044": RejectCode(TOKEN_EXPIRED, "token_expired", "nhplug.com/testbed-howto IGW40044 만료 토큰"),
+        "IGW42901": RejectCode(RATE_LIMITED, "rate_limited", "nhplug.com/testbed-howto IGW42901 시스템 총 호출 초과"),
+        "IGW42902": RejectCode(RATE_LIMITED, "rate_limited", "nhplug.com/testbed-howto IGW42902 APP 총 호출 초과"),
+        "IGW42903": RejectCode(RATE_LIMITED, "rate_limited", "nhplug.com/testbed-howto IGW42903 APP+API 총 호출 초과"),
+    },
+    # LS: the public TR guide / FAQ publish no rsp_cd meaning table (tests/fixtures/ls/contract-20261024/CONTRACT.md),
+    # so no row is listed; every non-zero LS write answer stays unknown. See docs/ls-spec.md.
+    "ls": {},
     "dbfi": {
         # HTTP 500 + rsp_cd IGW00121: Pydb re-issues the token and raises (base.py:88-98).
         "IGW00121": RejectCode(TOKEN_EXPIRED, "token_expired",
@@ -135,6 +166,17 @@ def _vendor_answer(exc: BaseException) -> tuple[str | None, bool]:
     if not isinstance(body, Mapping):
         return None, False
     return _safe(body.get("rsp_cd") or body.get("msg_cd")), False
+
+
+def rejection_for_code(broker: str, code: Any):
+    """BrokerRejectedError for a vendor code listed (with source) in the table, else None (stays unknown)."""
+    from pykbroker.exceptions import BrokerRejectedError
+
+    text = _safe(code)
+    entry = DEFINITIVE_REJECTS.get(broker, {}).get(text) if text else None
+    if entry is None:
+        return None
+    return BrokerRejectedError("Broker did not accept the request", code=text, kind=entry.kind, reason=entry.reason)
 
 
 def classify(broker: str, exc: BaseException) -> tuple[str | None, RejectCode | None, bool]:

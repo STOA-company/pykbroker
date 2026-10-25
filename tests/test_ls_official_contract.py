@@ -116,12 +116,17 @@ def test_partial_fill_modify_cancel_and_account_queries(native):
     assert sum(call[1] == "CSPAT00801" for call in server.calls) == 1
 
 
-@pytest.mark.parametrize("kind,price", [("limit", "9900"), ("market", None)])
-def test_amendment_market_and_limit(native, kind, price):
+def test_amendment_limit_and_market_is_refused_before_post(native):
     server, broker, _, _ = native
     placed = broker.place_order(order())
-    amended = broker.modify_order(placed.id, order(order_type=kind, price=price, client_key="amend"))
-    assert amended.id in server.orders and amended.order_type == kind
+    amended = broker.modify_order(placed.id, order(order_type="limit", price="9900", client_key="amend"))
+    assert amended.id in server.orders and amended.order_type == "limit"
+    amends = sum(call[1] == "CSPAT00701" for call in server.calls)
+    # The unified amend shape changes a limit price only; the API accepts 03 but a market amend would drop
+    # the price the safety valuation reserved. Cancel, confirm, then place anew (docs/ls-spec.md).
+    with pytest.raises(NotSupportedError):
+        broker.modify_order(placed.id, order(order_type="market", price=None, client_key="amend-m"))
+    assert sum(call[1] == "CSPAT00701" for call in server.calls) == amends
 
 
 def test_amendment_does_not_echo_unverified_requested_side(native):
