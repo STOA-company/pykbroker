@@ -205,14 +205,14 @@ class KB(BaseBroker):
 
     def capabilities(self) -> Capabilities:
         return Capabilities(
-            supports_spot=True, supports_limit_order=True, supports_market_order=self.market == "KR",
+            supports_spot=True, supports_limit_order=True, supports_market_order=False,
             supports_single_order_cancel=True, markets=(self.market,),
             requires_venue=self.market == "US",
             venues=tuple(KB_KR_VENUE_CODE) if self.market == "KR" else self.us_venues,
             supports_order_history=True, realtime_open_orders=False,
             supports_amend=self.market == "KR",
             supports_nxt=self.market == "KR",
-            order_kinds=tuple(KB_KR_ORDER_CCD) if self.market == "KR" else ("limit",),
+            order_kinds=("limit",),  # CONTRACT-2026-10-24: venue-priced ordr_uprc is unverified.
         )
 
     def _response(self, tr: str, body: dict) -> Mapping:

@@ -41,3 +41,9 @@
 - KB-only SSAM1805 quantity-specific amendment uses existing safety/dedupe; ACK side unknown.
 - Stateful fake + real REST JSON-byte replay cover limit buy/sell, partial fill, amend/cancel/ledger, explicit token reissue.
 - Market price sentinel, nonempty KR holdings, native error placement and numeric quota remain unverified; scope partial.
+
+## 2026-10-25 재검수 fix2
+- KR 능력 order_kinds=(limit,), supports_market_order=False로 공식 계약과 일치.
+- 미확인 가격값의 시장가·최유리·최우선·중간가 등 미선언 종류는 공용 검증에서 HTTP 전 거절.
+- 공식 코드표는 지원 선언과 별개로 보존; 지정가 KRX/NXT/SOR·정정·취소 계약 유지.
+- tests/test_kb_contract_walk.py는 매수·매도 7종 미선언 주문 전송 0 단언; 실키·실주문 0.

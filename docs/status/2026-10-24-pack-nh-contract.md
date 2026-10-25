@@ -50,3 +50,8 @@
 - LS 정정·취소는 실제 체결 금액을 중복 계산하지 않음; 매수→부분체결→정정체결→매도체결 대사.
 - 선택 SDK 미설치 시 토스 직접 import 전에 importorskip; 문서 PYTHONPATH 설치 경로에서는 실제 SDK 모의 시험.
 - 검증은 지정 파일 python -m pytest -x -q만; 실키·실주문·머지·배포 0, draft/do-not-merge 유지.
+
+## 2026-10-25 재검수 fix2
+- test_every_order_kind_and_venue_goes_out_with_its_documented_code의 세션 기대값을 독립 상수로 고정.
+- 장전 market=61, 장후 market=71; 구현 NH_KR_SESSION_PRICE_TYPE에서 기대값을 가져오지 않음.
+- 두 코드 뒤바꿈 변이를 각각 실패로 검출; 실제 NH 서버·실계좌는 안 걸어 봄.

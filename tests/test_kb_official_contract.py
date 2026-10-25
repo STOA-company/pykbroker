@@ -18,7 +18,6 @@ from pykbroker.exceptions import (
     DuplicateOrderError,
     InvalidResponseError,
     NotSupportedError,
-    RiskCapError,
     SafetyError,
     SpecUnverifiedError,
     TransportError,
@@ -698,12 +697,12 @@ def test_amend_default_gate_dry_run_and_us_scope():
 
 
 @pytest.mark.parametrize('side', ['buy', 'sell'])
-def test_market_order_needs_session_authorization_and_experimental_lock_stays_off(side, live_safety):
+def test_market_order_is_unsupported_and_experimental_lock_stays_off(side, live_safety):
     from pykbroker.experimental.kb import KB_SPEC_VERIFIED
 
     client = FakeClient()
     assert KB_SPEC_VERIFIED is False
-    with pytest.raises(RiskCapError):
+    with pytest.raises(NotSupportedError):
         broker(client, writes_enabled=True, safety=live_safety).place_order(
             order(side=side, order_type='market', price=None))
     assert client.calls == []

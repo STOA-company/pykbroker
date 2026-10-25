@@ -12,7 +12,7 @@ def test_four_brokers_accept_the_same_order_request_and_echo_the_same_client_key
                            time_in_force="day", session="regular", client_key="common-order-key")
     for broker in (World().broker(), kb_world[1], ls_world[1], nh_world[1]):
         caps = broker.capabilities()
-        assert {"limit", "market"} <= set(caps.order_kinds)
+        assert request.order_type in caps.order_kinds
         assert caps.supports_amend and caps.amend_time_in_force == ("day",)
         assert caps.amend_sessions == ("regular",)
         result = broker.place_order(request)

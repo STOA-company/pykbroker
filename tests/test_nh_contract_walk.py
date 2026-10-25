@@ -9,7 +9,7 @@ from decimal import Decimal
 
 import pytest
 
-from pykbroker.brokers.nh import NH, NH_KR_PRICE_TYPE, NH_KR_SESSION_PRICE_TYPE, NH_KR_TIF
+from pykbroker.brokers.nh import NH, NH_KR_PRICE_TYPE, NH_KR_TIF
 from pykbroker.exceptions import (
     BrokerRejectedError,
     DuplicateOrderError,
@@ -66,7 +66,7 @@ def test_kind_and_tif_tables_cover_the_official_codes_the_adapter_offers():
 @pytest.mark.parametrize("venue", ["KRX", "NXT"])
 @pytest.mark.parametrize("session,kind,code",
     [("regular", kind, code) for kind, code in NH_KR_PRICE_TYPE.items()] +
-    [(session, kind, code) for (session, kind), code in NH_KR_SESSION_PRICE_TYPE.items()])
+    [("pre", "market", "61"), ("after", "market", "71")])
 @pytest.mark.parametrize("side,endpoint", [("buy", "cashBuy"), ("sell", "cashSell")])
 def test_every_order_kind_and_venue_goes_out_with_its_documented_code(live_safety, session, kind, code, venue, side, endpoint):
     live_safety.market_order_allowed = lambda request: True

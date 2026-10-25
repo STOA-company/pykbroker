@@ -44,17 +44,14 @@ def test_kind_table_matches_the_official_enum():
 
 
 @pytest.mark.parametrize("venue", ["KRX", "NXT", "SOR"])
-@pytest.mark.parametrize("kind", list(KB_KR_ORDER_CCD))
 @pytest.mark.parametrize("side,tr", [("buy", "ssam1802"), ("sell", "ssam1801")])
-def test_every_order_kind_and_venue_goes_out_with_its_documented_code(world, kind, venue, side, tr):
+def test_limit_order_and_venue_go_out_with_the_documented_code(world, venue, side, tr):
     server, broker = world
-    priced = kind == "limit"
-    placed = broker.place_order(order(side=side, order_type=kind, venue=venue,
-                                      price=Decimal("1000") if priced else None))
+    placed = broker.place_order(order(side=side, order_type="limit", venue=venue, price=Decimal("1000")))
     body = server.placed[-1]
     assert (body["ordr_ccd"], body["sor_ordr_ccd"], body["ordr_uprc"]) == (
-        KB_KR_ORDER_CCD[kind], KB_KR_VENUE_CODE[venue], "1000" if priced else "0")
-    assert count(server, tr) == 1 and placed.status == "accepted" and placed.order_type == kind
+        "00", KB_KR_VENUE_CODE[venue], "1000")
+    assert count(server, tr) == 1 and placed.status == "accepted" and placed.order_type == "limit"
 
 
 def test_kinds_the_api_lists_only_in_its_output_enum_are_not_sent(world):
@@ -71,7 +68,8 @@ def test_kinds_the_api_lists_only_in_its_output_enum_are_not_sent(world):
 def test_buy_list_partial_fill_amend_cancel_walk(world):
     server, broker = world
     caps = broker.capabilities()
-    assert caps.supports_amend and caps.supports_nxt and caps.supports_market_order
+    assert caps.supports_amend and caps.supports_nxt and not caps.supports_market_order
+    assert caps.order_kinds == ("limit",)
     placed = broker.place_order(order(quantity=2, price=Decimal("1000")))
     server.fill(placed.id, 1)
     [partial] = broker.list_orders()
@@ -171,3 +169,18 @@ def test_token_expired_response_discards_stored_token_and_next_read_sends_nothin
     with pytest.raises(ConfigurationError):
         broker.get_balance()
     assert len(server.calls) == before
+
+
+@pytest.mark.parametrize("side", ["buy", "sell"])
+@pytest.mark.parametrize("kind,price,stop", [
+    ("market", None, None), ("best", None, None), ("priority", None, None),
+    ("midpoint", None, None), ("close", None, None),
+    ("conditional_limit", Decimal("1000"), None), ("stop_limit", Decimal("1000"), Decimal("1100")),
+])
+def test_undeclared_kr_kind_is_rejected_before_any_transport(world, side, kind, price, stop):
+    server, broker = world
+    before = len(server.calls)
+    with pytest.raises(NotSupportedError):
+        broker.place_order(order(side=side, order_type=kind, price=price, stop_price=stop))
+    assert len(server.calls) == before
+    assert server.placed == []

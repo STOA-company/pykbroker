@@ -27,19 +27,19 @@ XLSX 재다운로드 sha256 `1ff93a32…dae8` 는 10-24 판(`880b43b4…`)과 �
 | 종류 | API 지원(근거) | 어댑터 구현 | 모의 걸음(계약 모의) | amend_no_double_fill |
 |---|---|---|---|---|
 | 지정가 00 | 지원 | 구현 `limit` | 걸음 (`test_kb_contract_walk`) | 네이티브 정정 TR: 응답 분실·unknown 코드 → 재전송 0·새 주문 0 단언 |
-| 시장가 03 | 지원 (입력 열거) | 구현 `market` — `ordr_uprc` 필수 String(9) 이라 «0» 전송(시장가 값은 문서에 없음 → **미확인**) | 걸음(합성) | 정정은 지정가 가격 변경만 |
-| 최유리 12 · 최우선 13 · 중간가 M3 | 지원 (입력 열거) | 구현 `best`·`priority`·`midpoint` (가격 «0») | 걸음(합성) | 해당 없음 |
+| 시장가 03 | 지원 (입력 열거) | **미지원** — 필수 `ordr_uprc` 값 확인 전 능력에서 제외 | 전송 전 거절 단언 | 정정은 지정가 가격 변경만 |
+| 최유리 12 · 최우선 13 · 중간가 M3 | 지원 (입력 열거) | **미지원** — 가격 규칙 확인 전 능력에서 제외 | 전송 전 거절 단언 | 해당 없음 |
 | 조건부지정가 05 | 정정 입력 열거에만, 주문 입력 열거에는 없음 | **미구현** — 주문 입력으로 받는지 문서 모순 | 안 걸음 | — |
 | IOC · FOK (I*/F*) | 출력 열거에만 | **미구현** — 입력 코드 조합 미확인 | 안 걸음 | — |
 | 시간외종가(mkt_tm_clsf 2/3) | 입력 열거 있음, `ordr_ccd` 조합(99?) 미확인 | **미구현** — 추측 전송 금지 | 안 걸음 | — |
-| NXT · SOR | 지원 (`sor_ordr_ccd`) | 구현: `venue="NXT"/"SOR"` (`supports_nxt`, venues `KRX·NXT·SOR`) | 걸음 (모든 종류 × 3) | 정정은 요청 venue 를 그대로 전송 |
+| NXT · SOR | 지원 (`sor_ordr_ccd`) | 구현: `venue="NXT"/"SOR"` (`supports_nxt`, venues `KRX·NXT·SOR`) | 걸음 (지정가 × 3) | 정정은 요청 venue 를 그대로 전송 |
 | 정정(가격) | 지원 (`ssam1805`) | 구현 `supports_amend=True`(KR) | 걸음: 부분체결→정정→취소 | 위와 같음 |
 | 취소 | 지원 (`ssam1806`, 수량 지정) | 구현 | 걸음 | — |
 | 국내 소수점 주문 | 지원 (SSAM5762/5763/5764 · 조회 SSQM5765) | **미구현** — 이번 몫 밖(별도 스펙 읽기 필요) | 안 걸음 | — |
 | 해외(미국) | 지원 (SKAM2101/2102 지정가류) | 기존 US 지정가·취소만, `supports_amend=False`(정정 TR 은 있으나 이번 몫은 KR) | 기존 시험 | 정정 미지원 → `NotSupportedError`, 전송 0 |
 
 ## 문서와 어댑터가 달랐던 곳 (고침)
-- 시장가 코드(03)를 문서는 주면서 어댑터는 지정가만 → 입력 열거 5종을 데이터 행(`KB_KR_ORDER_CCD`)으로, NXT/SOR 은 `KB_KR_VENUE_CODE`.
+- 입력 코드표 `KB_KR_ORDER_CCD`는 공식 열거 5종을 보존한다. 실제 능력 `order_kinds`는 공식 CONTRACT-2026-10-24의 미확인 가격 규칙에 따라 지정가만; NXT/SOR은 `KB_KR_VENUE_CODE`.
 - 공식 오류 목록이 어댑터에선 전부 `InvalidResponseError` 로 접히던 것 → 출처 행은 `BrokerRejectedError(kind)`.
 - 정정이 `amend_order(request, *, order_id)` 였던 것 → 공통 `amend_order(AmendRequest)` (옛 모양은 호환 래퍼).
 
