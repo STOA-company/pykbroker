@@ -68,7 +68,7 @@ cash, bad order number) are not in this table.
    방향(이상/이하), 모의투자 지원 여부, 정정(kt10002)의 mdfy_cond_uv 의미와 28 주문의 정정·취소 가능 여부를 알려 주세요.»
    Who/when: the account holder with the Kiwoom API portal login (대표/운영) sends it via the portal Q&A; needed before the
    flag is turned on. Other open items: Whether 61/81 take
-   a price (sent empty) and 62 does (sent when given). NXT/SOR holdings under kt00018 (queried as KRX). `ka10001/04` exchange
+   a price (sent empty); 62 is limit-only with an explicit price until confirmed. NXT/SOR holdings under kt00018 (queried as KRX). `ka10001/04` exchange
    suffix for quotes (`_NX`, `_AL`): quotes stay KRX.
 7. `kt00001` qry_tp meaning (2 vs 3) and kt00018 `qry_tp`: adapter uses the one that cannot overstate cash.
 8. Real mock round trip against `mockapi.kiwoom.com`: not run (no mock key on this machine).
@@ -92,7 +92,7 @@ the official mock info, 2026-10-24); none has been walked there (no mock key).
 | Stop limit | `stop_limit` + price + `stop_price` | `28`, trigger in `cond_uv` | «28:스톱지정가» listed; `cond_uv` is «조건단가 (단위: 원)» on the order pages, called «스톱가» only in query responses (kt00007, kt00009, kt50030/31/75) and `stop_pric` «스톱지정가주문 스톱가» in ka10075/ka10076 | **slot built, shut** (`KIWOOM_STOP_LIMIT_VERIFIED=False`; not in `order_kinds`) | yes: refused before the wire; with the flag on, 28 + `cond_uv` is built | - |
 | After-hours close | `close` | `81` | «81:장마감후시간외»; same meaning as KIS/DB `close` | yes | yes | not run |
 | Pre-open session | `market` + `session=pre` | `61` | «61:장시작전시간외» | yes | yes | not run |
-| Single-price session | `limit`/`market` + `session=single_price` | `62` | «62:시간외단일가» (price rule unstated) | yes | yes | not run |
+| Single-price session | `limit` + `session=single_price` | `62` | «62:시간외단일가» (price rule unstated) | yes | yes | not run |
 | NXT | `venue=NXT` | `dmst_stex_tp=NXT` | «KRX,NXT,SOR»; ka10075 `stex_tp` 0/1/2, kt00007 `%/KRX/NXT/SOR` | yes (real host only) | yes (all kinds above) | impossible: mock is KRX only |
 | SOR | `venue=SOR` | `dmst_stex_tp=SOR` | same | yes (real host only) | yes | impossible: mock is KRX only |
 | Amend (native) | `amend_order(AmendRequest)` | kt10002 | kt10002 page: `mdfy_qty`, `mdfy_uv`; new `ord_no` | yes, KR limit original only | yes (partial fill then amend) | not run |
@@ -113,7 +113,7 @@ order's venue (KRX when unknown); cancel/amend answers must echo the requested v
 
 | SEAM cell | This change | Match |
 |---|---|---|
-| §3 amend = `amend_order(AmendRequest)` | Kiwoom keeps the integ method, not duplicated | match |
+| §3 amend = `amend_order(AmendRequest)` | BaseBroker.amend_order owns the common shape; Kiwoom translates in _prepare_amend/_amend_order | match |
 | §3 `Capabilities.supports_amend` | added (default False); Kiwoom KR True | match |
 | §7 I2 `Order.client_key` echo | added (optional, hidden from repr); Kiwoom place/amend/cancel fill it; other brokers still None | partial: only Kiwoom fills it (KB/LS/NH/KIS/DB/Toss are other workers' share) |
 | §4 reject classes as data rows with source | `DEFINITIVE_REJECTS["kiwoom"]` = 36 rows of the official error table, 1999 excluded (unknown) | match; business errors (insufficient cash) are not in the table so they stay a plain refusal |

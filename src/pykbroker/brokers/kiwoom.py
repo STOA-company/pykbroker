@@ -98,13 +98,17 @@ _TRDE_REGULAR: dict[tuple[str, str], str] = {
     ("close", "day"): "81",
 }  # fmt: skip
 # Off-session: pre = 장시작전시간외 61 (market style), single = 시간외단일가 62. The spec does not say whether 61/81
-# take a price (sent empty) or 62 does (sent when the caller gives one); see docs/kiwoom-spec.md.
+# take a price (sent empty); 62 is limit-only with an explicit price pending confirmation; see docs/kiwoom-spec.md.
 # trde_tp 28 (스톱지정가) is the one listed code kept shut. Its only trigger-price field, cond_uv, is labelled
 # «조건단가 (단위: 원)» on kt10000/kt10001; only the query responses (kt00007, ka10075 stop_pric) call the same value
 # «스톱가». No order page states it, so the mapping below is ready but off until Kiwoom confirms (docs/kiwoom-spec.md).
 KIWOOM_STOP_LIMIT_VERIFIED = False
 _KR_KINDS = ("limit", "market", "close", "conditional_limit", "best", "priority", "midpoint")
-_TRDE_SESSION = {"pre": "61", "after": "81", "single_price": "62"}
+_TRDE_SESSION = {
+    "pre": ("61", ("market",)),
+    "after": ("81", ("market",)),
+    "single_price": ("62", ("limit",)),
+}
 KIWOOM_VENUE_CODES = {"KRX": "KRX", "NXT": "NXT", "SOR": "SOR"}
 _TYPE_NAMES: dict[str, OrderType] = {
     "보통": "limit", "지정가": "limit", "시장가": "market", "조건부지정가": "conditional_limit",
@@ -178,9 +182,8 @@ def _unpack(reply: Any, *, write: bool = False) -> tuple[Mapping[str, Any], Mapp
 def _trde_tp(request: OrderRequest) -> str:
     """The kt10000/kt10001 trde_tp for this request, or NotSupportedError: an unlisted combination is never guessed."""
     if request.session != "regular":
-        code = _TRDE_SESSION.get(request.session)
-        # pre-open is market style; the single-price session is either; both are plain day orders.
-        allowed = ("market",) if request.session in ("pre", "after") else ("limit", "market")
+        # Each session declares its wire code and supported kinds; no price rule is inferred.
+        code, allowed = _TRDE_SESSION.get(request.session, (None, ()))
         if code is None or request.order_type not in allowed or request.time_in_force != "day":
             raise NotSupportedError("Kiwoom does not list this off-session order")
         return code
@@ -557,63 +560,53 @@ class Kiwoom(BaseBroker):
             virtual=self.virtual,
         )
 
-    def amend_order(self, request: AmendRequest) -> Order:
-        """kt10002: one guarded KR limit amendment. The acknowledgement is not a confirmed fill.
-
-        Quantity must be explicit and positive. The documented zero-for-all variant is deliberately absent,
-        so the safety gate can reserve the full amended notional before sending. Never automatically retried.
-        """
-        request = AmendRequest.model_validate(request.model_dump())
-        if self.market != "KR":
-            raise NotSupportedError("Kiwoom amendment supports KR only")
-        self._validate_order(request)
+    def _prepare_amend(self, request: AmendRequest) -> None:
         if request.broker_ref:
             raise NotSupportedError("Kiwoom amendment does not accept broker_ref")
         if not (_ORDER_NO.fullmatch(request.order_id) and int(request.order_id)):
             raise ConfigurationError("Kiwoom order number format is invalid for this market")
 
-        def submit() -> Order:
-            code = self._symbol(request.symbol, request.market)
-            # AmendRequest carries no original type and this adapter keeps no order cache.
-            # kt10002 preserves the original type, so only a listed limit order may receive a price amendment.
-            originals = [order for order in self.list_orders(code) if order.id == request.order_id]
-            if len(originals) != 1 or originals[0].order_type != "limit":
-                raise NotSupportedError(
-                    "Kiwoom price amendment requires a confirmed limit original order; "
-                    "market or unknown original orders are not supported"
-                )
-            response = self._write(
-                "/api/dostk/ordr",
-                "kt10002",
-                {
-                    "dmst_stex_tp": _venue_code(request.venue),
-                    "orig_ord_no": request.order_id,
-                    "stk_cd": code,
-                    "mdfy_qty": str(request.quantity),
-                    "mdfy_uv": str(int(request.price)),
-                },
+    def _amend_order(self, request: AmendRequest, prepared: Any = None) -> Order:
+        """kt10002 translation; common amend owns validation, safety and the place key scope."""
+        code = self._symbol(request.symbol, request.market)
+        # AmendRequest carries no original type and this adapter keeps no order cache.
+        # kt10002 preserves the original type, so only a listed limit order may receive a price amendment.
+        originals = [order for order in self.list_orders(code) if order.id == request.order_id]
+        if len(originals) != 1 or originals[0].order_type != "limit":
+            raise NotSupportedError(
+                "Kiwoom price amendment requires a confirmed limit original order; "
+                "market or unknown original orders are not supported"
             )
-            _order_number(response.get("base_orig_ord_no"))
-            if (
-                response["ord_no"] == request.order_id
-                or whole(response["mdfy_qty"]) != request.quantity
-                or response.get("dmst_stex_tp", _venue_code(request.venue)) != _venue_code(request.venue)
-            ):
-                raise InvalidResponseError("Kiwoom amendment acknowledgement differs; reconcile before retrying")
-            # base_orig_ord_no is the root, not necessarily the immediately preceding order number.
-            # Neither side nor original order type is echoed: preserve their unknown broker state.
-            return Order(
-                id=response["ord_no"],
-                symbol=code,
-                quantity=request.quantity,
-                price=request.price,
-                status="accepted",
-                venue=request.venue,
-                client_key=request.client_key,
-                virtual=self.virtual,
-            )
-
-        return self.safety.execute(self.broker_code, self._account, request, lambda: self._call(submit))
+        response = self._write(
+            "/api/dostk/ordr",
+            "kt10002",
+            {
+                "dmst_stex_tp": _venue_code(request.venue),
+                "orig_ord_no": request.order_id,
+                "stk_cd": code,
+                "mdfy_qty": str(request.quantity),
+                "mdfy_uv": str(int(request.price)),
+            },
+        )
+        _order_number(response.get("base_orig_ord_no"))
+        if (
+            response["ord_no"] == request.order_id
+            or whole(response["mdfy_qty"]) != request.quantity
+            or response.get("dmst_stex_tp", _venue_code(request.venue)) != _venue_code(request.venue)
+        ):
+            raise InvalidResponseError("Kiwoom amendment acknowledgement differs; reconcile before retrying")
+        # base_orig_ord_no is the root, not necessarily the immediately preceding order number.
+        # Neither side nor original order type is echoed: preserve their unknown broker state.
+        return Order(
+            id=response["ord_no"],
+            symbol=code,
+            quantity=request.quantity,
+            price=request.price,
+            status="accepted",
+            venue=request.venue,
+            client_key=request.client_key,
+            virtual=self.virtual,
+        )
 
     def _cancel_order(self, request: CancelRequest) -> Order:
         code = self._symbol(request.symbol, request.market)

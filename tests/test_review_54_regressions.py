@@ -106,3 +106,69 @@ def test_kis_class_share_round_trip_positions_open_orders_place_cancel_status(li
     cancelled = broker.cancel_order(CancelRequest(symbol="BRK.B", market="US", venue="NYSE", order_id="42", quantity=1, client_key="cancel-key"))
     assert (cancelled.symbol, cancelled.client_key) == ("BRK.B", "cancel-key")
     assert scope.overseas_cancel.call_args.kwargs["code"] == "BRK/B"
+
+
+@pytest.mark.parametrize("adapter", ["kiwoom", "kis", "dbfi"])
+def test_close_without_session_authorization_never_transmits(adapter, kis, dbfi):
+    from pykbroker.exceptions import RiskCapError
+
+    world = World()
+    choices = {"kiwoom": world.broker(), "kis": kis[0], "dbfi": dbfi[0]}
+    broker = choices[adapter]
+    broker.safety.valuation = lambda request: Decimal("70000")
+    before = len(world.server.calls)
+    for mock in (*kis[1:], *dbfi[1:]):
+        mock.reset_mock()
+    request = OrderRequest(symbol="005930", side="buy", quantity=1, order_type="close", client_key="close-key")
+    with pytest.raises(RiskCapError, match="session authorization"):
+        broker.place_order(request)
+    assert len(world.server.calls) == before
+    assert all(not mock.mock_calls for mock in (*kis[1:], *dbfi[1:]))
+
+
+def test_common_status_returns_original_client_key(dbfi):
+    broker, client, _ = dbfi
+    order = broker.place_order(OrderRequest(symbol="005930", side="buy", quantity=1,
+                                            price="70000", client_key="status-key"))
+    client.get_transaction_history.return_value[0]["Out1"][0]["OrdNo"] = order.id
+    status = broker.status(order)
+    assert (status.id, status.status, status.client_key) == (order.id, "partial", "status-key")
+    client.get_transaction_history.return_value = []
+    missing = broker.status(order)
+    assert (missing.status, missing.client_key) == ("unknown", "status-key")
+
+
+def test_kiwoom_place_key_cannot_send_an_amendment():
+    world = World()
+    broker = world.broker()
+    order = broker.place_order(buy("shared-key", qty=1))
+    before = len(world.server.calls)
+    with pytest.raises(DuplicateOrderError):
+        broker.amend_order(AmendRequest(**buy("shared-key", qty=1).model_dump(), order_id=order.id))
+    assert len(world.server.calls) == before
+    assert len(world.server.orders) == 1
+
+
+def test_kiwoom_common_amend_shape_echoes_key_and_reserves_place_namespace():
+    world = World()
+    broker = world.broker()
+    order = broker.place_order(buy("original-key", qty=1))
+    changed = broker.amend_order(buy("amend-key", qty=1), order_id=order.id, broker_ref={})
+    assert (changed.status, changed.client_key) == ("accepted", "amend-key")
+    before = len(world.server.calls)
+    with pytest.raises(DuplicateOrderError):
+        broker.place_order(buy("amend-key", qty=1))
+    assert len(world.server.calls) == before
+
+
+def test_kiwoom_single_price_market_is_refused_before_any_http():
+    world = World()
+    broker = world.broker()
+    broker.safety.market_order_allowed = lambda request: True
+    broker.safety.valuation = lambda request: Decimal("70000")
+    before = len(world.server.calls)
+    request = OrderRequest(symbol="005930", side="buy", quantity=1, order_type="market",
+                           session="single_price", client_key="single-market")
+    with pytest.raises(NotSupportedError):
+        broker.place_order(request)
+    assert len(world.server.calls) == before

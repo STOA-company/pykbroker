@@ -422,14 +422,18 @@ def test_accepted_order_with_lost_reply_is_not_duplicated():
     assert broker.list_orders()[0].id == next(iter(server.orders))
 
 
-def test_amendment_action_claim_is_separate_from_place_cancel_and_cannot_repeat():
+def test_amendment_shares_place_claim_but_cancel_is_separate_and_cannot_repeat():
     server = FakeServer()
     broker = connect(server)
     order = broker.place_order(request(client_key="shared"))
-    changed = broker.amend_order(amendment(order, client_key="shared"))
     count = len(server.calls)
     with pytest.raises(DuplicateOrderError):
-        broker.amend_order(amendment(changed, client_key="shared"))
+        broker.amend_order(amendment(order, client_key="shared"))
+    assert len(server.calls) == count
+    changed = broker.amend_order(amendment(order, client_key="amend-shared"))
+    count = len(server.calls)
+    with pytest.raises(DuplicateOrderError):
+        broker.amend_order(amendment(changed, client_key="amend-shared"))
     assert len(server.calls) == count
     broker.cancel_order(CancelRequest(order_id=changed.id, symbol=changed.symbol, quantity=2, client_key="shared"))
     assert broker.status(changed).status == "cancelled"

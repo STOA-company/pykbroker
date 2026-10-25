@@ -295,6 +295,52 @@ class BaseBroker:
             self.broker_code, self._account, request, lambda: self._call(lambda: self._cancel_order(request))
         ).model_copy(update={"client_key": request.client_key})
 
+    def amend_order(
+        self, request: AmendRequest, *, order_id: str | None = None, broker_ref: Mapping[str, str] | None = None
+    ) -> Order:
+        """Amend an open remainder's price in place: the one amend shape for every adapter.
+
+        ``order_id`` (keyword) is only for the pre-unification call shape ``amend_order(OrderRequest,
+        order_id=...)``; a plain OrderRequest is lifted into an AmendRequest. A broker without a native
+        amend TR reports ``supports_amend=False`` and refuses here before any HTTP: the caller then cancels,
+        waits for a confirmed cancel, and places anew (never two live orders at once).
+
+        The guarded mutation shares the *place* idempotency namespace on purpose: a client key used for a
+        placement cannot also send an amendment, and a lost amend answer keeps its claim so a retry with
+        the same key is blocked until the caller reconciles. Never retried automatically.
+        """
+        if not isinstance(request, AmendRequest):
+            if order_id is None:
+                raise ConfigurationError("amend_order needs an AmendRequest (or order_id=)")
+            if request.order_type != "limit":
+                raise NotSupportedError("Only a limit order can be amended in place")
+            if not isinstance(order_id, str) or not order_id:
+                raise ConfigurationError("Invalid original order number")
+            request = AmendRequest(**{**request.model_dump(exclude={"order_type"}), "order_id": order_id,
+                                      "broker_ref": dict(broker_ref or {})})
+        elif order_id is not None and order_id != request.order_id:
+            raise ConfigurationError("order_id conflicts with the AmendRequest")
+        elif broker_ref is not None:
+            request = request.model_copy(update={"broker_ref": dict(broker_ref)})
+        request = AmendRequest.model_validate(request.model_dump())
+        if not self.capabilities().supports_amend:
+            raise NotSupportedError("Amend is not supported; cancel, confirm, then place anew")
+        self._validate_order(request)
+        prepared = self._prepare_amend(request)
+        guarded = OrderRequest.model_validate(request.model_dump(exclude={"order_id", "broker_ref"}))
+        return self.safety.execute(
+            self.broker_code, self._account, guarded, lambda: self._call(lambda: self._amend_order(request, prepared))
+        ).model_copy(update={"client_key": request.client_key})
+
+    def _prepare_amend(self, request: AmendRequest) -> Any:
+        """Read-only checks before the guarded write; the returned context goes to ``_amend_order``."""
+        if request.broker_ref:
+            raise ConfigurationError("Unknown broker_ref key for this broker")
+        return None
+
+    def _amend_order(self, request: AmendRequest, prepared: Any = None) -> Order:
+        raise NotSupportedError("Amend is not implemented")
+
     def _place_order(self, request: OrderRequest) -> Order:
         raise NotSupportedError("Order submission is not implemented")
 
