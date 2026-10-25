@@ -11,8 +11,8 @@ from pydantic import ValidationError
 
 from pykbroker.brokers.kis import KIS
 from pykbroker.brokers.meritz import Meritz
-from pykbroker.exceptions import DuplicateOrderError, NotSupportedError
-from pykbroker.models import CancelRequest, OrderRequest
+from pykbroker.exceptions import ConfigurationError, DuplicateOrderError, InvalidResponseError, NotSupportedError
+from pykbroker.models import AmendRequest, CancelRequest, OrderRequest
 from pykbroker.safety.rate_limit import RateLimiter
 
 from .meritz_contract_server import ContractServer
@@ -128,7 +128,7 @@ def test_kis_market_wire_code(safety, market, venue, exchange, tr, currency, sid
     assert call.kwargs["headers"]["tr_id"] == (tr if side == "buy" else sell_tr[market])
     assert call.kwargs["body"]["ORD_QTY"] == "1" and call.kwargs["body"]["OVRS_ORD_UNPR"] == "100"
     assert placed.market == market and broker.capabilities().currency[market] == currency
-    assert ("ORD_DVSN" in call.kwargs["body"]) is (market == "HK")
+    assert ("ORD_DVSN" in call.kwargs["body"]) is (market == "HK" and side == "sell")
 
 
 @pytest.mark.parametrize("kind,side,price,native", [("loo", "buy", "100", "32"), ("loc", "buy", "100", "34"),
@@ -191,7 +191,11 @@ def test_kis_new_market_ledger_and_cash_never_use_usd_or_nasdaq(safety, market, 
     balance = broker.get_balance()
     assert (balance.currency, balance.cash_available, balance.position_value) == (currency, 150, 0)
     assert broker.available_cash() == 150
-    assert broker._api.get_balances.call_args.kwargs["NATN_CD"] != "840"
+    expected = {"HK": ("344", "01"), "CN_SH": ("156", "03"), "CN_SZ": ("156", "04"),
+                "JP_TSE": ("392", "01"), "VN_HOSE": ("704", "02"), "VN_HNX": ("704", "01")}
+    broker.get_positions()
+    for call in broker._api.get_balances.call_args_list:
+        assert (call.kwargs["NATN_CD"], call.kwargs["TR_MKET_CD"]) == expected[market]
 
 
 @pytest.mark.parametrize("market,venue,vendor,currency", MERITZ_MARKETS[1:])
@@ -226,3 +230,113 @@ def test_meritz_opaque_suffix_requires_actual_today_venue_before_cancel(safety):
         broker.cancel_order(CancelRequest(order_id=placed.id, symbol=placed.symbol, market="JP_OSE",
                                          venue="OSE", quantity=1, client_key="cancel"))
     assert len([call for call in server.calls if call[0] == "POST"]) == 1
+
+
+@pytest.mark.parametrize("market,venue,vendor,currency", MERITZ_MARKETS)
+@pytest.mark.parametrize("kind,native,condition", [("limit", "01", "0"), ("loo", "31", "2"), ("loc", "32", "7")])
+def test_meritz_amend_preserves_original_kind(safety, market, venue, vendor, currency, kind, native, condition):
+    server, broker = meritz(safety, market, venue)
+    placed = broker.place_order(req(market, venue, order_type=kind))
+    server.calls.clear()
+    broker.amend_order(AmendRequest(order_id=placed.id, symbol=placed.symbol, market=market, venue=venue,
+                                   side="buy", quantity=1, price="101", client_key="amend"))
+    writes = [c for c in server.calls if c[0] == "POST"]
+    assert len(writes) == 1 and writes[0][1].endswith("/modify")
+    body = writes[0][3]
+    assert (body["oder_cls_code"], body["oder_cond_cls_code"], body["ovrs_stck_oder_prc"]) == (native, condition, "101")
+    assert any(c[1].endswith("/today") for c in server.calls)
+
+
+@pytest.mark.parametrize("kind", ["market", "moo", "moc"])
+def test_meritz_unpriced_original_amend_never_sends(safety, kind):
+    server, broker = meritz(safety, "US", "NASDAQ")
+    placed = broker.place_order(req("US", "NASDAQ", order_type=kind, price=None))
+    server.calls.clear()
+    with pytest.raises(NotSupportedError):
+        broker.amend_order(AmendRequest(order_id=placed.id, symbol=placed.symbol, market="US", venue="NASDAQ",
+                                       side="buy", quantity=1, price="101", client_key="amend"))
+    assert not [c for c in server.calls if c[0] == "POST"]
+
+
+@pytest.mark.parametrize("damage", ["missing", "kind", "venue", "side", "continuation"])
+def test_meritz_amend_requires_today_evidence(safety, damage):
+    server, broker = meritz(safety, "US", "NASDAQ")
+    placed = broker.place_order(req("US", "NASDAQ", order_type="loc"))
+    if damage == "missing":
+        server.today.clear()
+    elif damage == "continuation":
+        server.overrides["/trading/v1/overseas/orders/today"] = {
+            "rsp_cd": "5766", "tr_cont": "1", "data": list(server.today.values())}
+    else:
+        field, value = {"kind": ("aspr_type_code", "2"), "venue": ("ovrs_exch_vndr_idno", "0321"),
+                        "side": ("seln_byov_clcd", "1")}[damage]
+        server.today[placed.id][field] = value
+    server.calls.clear()
+    with pytest.raises(InvalidResponseError):
+        broker.amend_order(AmendRequest(order_id=placed.id, symbol=placed.symbol, market="US", venue="NASDAQ",
+                                       side="buy", quantity=1, price="101", client_key="amend"))
+    assert not [c for c in server.calls if c[0] == "POST"]
+
+
+@pytest.mark.parametrize("kind", ["ioc", "fok"])
+def test_after_session_alias_never_sends(safety, kind):
+    server, broker = meritz(safety, "KR", "KRX")
+    with pytest.raises(ValidationError):
+        broker.place_order(req("KR", "KRX", symbol="005930", order_type=kind, session="after"))
+    assert server.calls == []
+
+
+@pytest.mark.parametrize("market,venue,vendor,currency", MERITZ_MARKETS[4:])
+def test_meritz_sibling_exchange_orders_and_holdings_are_excluded(safety, market, venue, vendor, currency):
+    server, broker = meritz(safety, market, venue)
+    siblings = MERITZ_MARKETS[4:7] if currency == "JPY" else MERITZ_MARKETS[7:]
+    expected_id = None
+    for index, (other_market, other_venue, other_vendor, _) in enumerate(siblings):
+        _, other = meritz(safety, other_market, other_venue)
+        other._client = server
+        placed = other.place_order(req(other_market, other_venue, client_key=f"sibling-{index}"))
+        if other_market == market:
+            expected_id = placed.id
+        holding = server.example("GET", "/accounts/v1/me/overseas/holdings")["data"][0]
+        holding.update(ovrs_stck_mrkt_tr_cls_code="05" if currency == "JPY" else "24", crcd=currency,
+                       ovrs_stck_symb_iscd="0700", ovrs_exch_vndr_idno=other_vendor,
+                       rmnd_dqty=str(index + 1), seln_able_dqty=str(index + 1))
+        server.holdings["US"].append(holding)
+    assert [o.id for o in broker.list_orders()] == [expected_id]
+    [holding] = broker.get_positions()
+    expected_qty = next(i + 1 for i, row in enumerate(siblings) if row[0] == market)
+    assert holding.quantity == holding.sellable == broker.available_qty("0700") == expected_qty
+    server.today.pop(expected_id)
+    assert broker.list_orders() == []  # No exchange evidence cannot become this market's order.
+    for holding in server.holdings["US"]:
+        holding.pop("ovrs_exch_vndr_idno")
+    assert broker.get_positions() == []
+
+
+@pytest.mark.parametrize("factory,markets", [(meritz, MERITZ_MARKETS[4:]), (kis_broker, KIS_MARKETS[3:])])
+@pytest.mark.parametrize("field", ["price", "stop_price"])
+def test_integer_currency_price_never_sends(safety, factory, markets, field):
+    for market, venue, *_ in markets:
+        if factory is meritz:
+            server, broker = factory(safety, market, venue)
+        else:
+            broker, scope = factory(safety, market, venue)
+        kw = {field: "1500.5"}
+        if field == "stop_price":
+            kw["order_type"] = "stop_limit"
+        with pytest.raises(ConfigurationError, match="prices must be whole"):
+            broker.place_order(req(market, venue, **kw))
+        if factory is meritz:
+            assert server.calls == []
+        else:
+            scope.client.request.assert_not_called()
+
+
+@pytest.mark.parametrize("kind", ["moc", "stop_limit"])
+def test_kiwoom_us_sell_only_kind_buy_never_sends(safety, kind):
+    broker, client = make({"ust20000": [{"return_code": 0, "ord_no": "123456789"}]},
+                          safety=safety, market="US", venue="NASDAQ")
+    with pytest.raises(NotSupportedError):
+        broker.place_order(req("US", "NASDAQ", order_type=kind, price=None if kind == "moc" else "100",
+                               **({"stop_price": "99"} if kind == "stop_limit" else {})))
+    assert client.calls == []

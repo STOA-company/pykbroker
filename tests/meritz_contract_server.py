@@ -171,6 +171,7 @@ class ContractServer:
             current = self.example("GET", "/trading/v1/overseas/orders/today")["data"][0]
             current.update(oder_date=row["oder_date"], oder_no=row["oder_no"], iscd=row["iscd"],
                            seln_byov_clcd=row["seln_byov_clcd"], odqt=body["odqt"], cntg_qty=0,
+                           aspr_type_code=row["aspr_type_code"], oder_cond_cls_code=body["oder_cond_cls_code"],
                            ovrs_exch_vndr_idno=body["ovrs_exch_vndr_idno"],
                            ncnt_qty=body["odqt"], oder_able_qty=body["odqt"],
                            cncl_cnfr_qty=0, rctf_cnfr_qty=0)

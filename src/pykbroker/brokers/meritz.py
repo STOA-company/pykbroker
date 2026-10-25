@@ -46,6 +46,7 @@ MARKET_VENUES = {"US": US_VENUES, "HK": {"HKEX": ("0104", "HK")},
                  "VN_HOSE": {"HOSE": ("0770", None)}, "VN_HNX": {"HNX": ("0771", None)}}
 MARKET_CODES = {"US": "01", "HK": "02", "CN_SH": "03", "CN_SZ": "04",
                 "JP_TSE": "05", "JP_OSE": "05", "JP_JASDAQ": "05", "VN_HOSE": "24", "VN_HNX": "24"}
+SHARED_MARKETS = {market for market, code in MARKET_CODES.items() if list(MARKET_CODES.values()).count(code) > 1}
 US_ASPR = {"1": "market", "2": "limit", "4": "loo", "5": "loc", "6": "moo", "7": "moc"}
 DATA_SUCCESS_PATHS = {"/market/v1/prices"}  # corrections.json: market_prices degraded rsp_cd
 SUCCESS = {"0000", "0001", "5762", "5766", "5820", "5822"}
@@ -327,6 +328,20 @@ class Meritz(BaseBroker):
             raise ConfigurationError("Amendment side differs from the original order")
         body = self._body(request)
         if self.market != "KR":
+            page = self._response("GET", self._prefix() + "today",
+                                  params={"cntg_cls_code": "0", "seln_byov_clcd": "0"})
+            matches = [r for r in page.get("data", []) if r["oder_no"] == original["oder_no"]
+                       and r["oder_date"] == original["oder_date"] and r["iscd"] == original["iscd"]]
+            if (page.get("tr_cont") != "0" or len(matches) != 1
+                    or matches[0]["ovrs_exch_vndr_idno"] != MARKET_VENUES[self.market][self.venue][0]
+                    or matches[0]["seln_byov_clcd"] != original["seln_byov_clcd"]
+                    or matches[0]["aspr_type_code"] != original["aspr_type_code"]):
+                raise InvalidResponseError("Original order kind lacks matching today evidence")
+            kind = US_ASPR.get(matches[0]["aspr_type_code"])
+            if kind not in {"limit", "loo", "loc"}:
+                raise NotSupportedError("Meritz price amendment requires an original priced order")
+            body["oder_cls_code"] = US_KINDS[kind]
+            body["oder_cond_cls_code"] = OVERSEAS_CONDITIONS[kind]
             body.pop("ovrs_stck_symb_iscd")
             body.pop("ovrs_exch_vndr_idno")
             body["oder_date"] = self._day()
@@ -412,6 +427,11 @@ class Meritz(BaseBroker):
             for r in ledger:
                 if self.market != "KR" and r["ovrs_stck_mrkt_tr_cls_code"] != MARKET_CODES[self.market]:
                     continue
+                if self.market in SHARED_MARKETS:
+                    evidence = today.get((r["oder_date"], _number_id(r["oder_no"])))
+                    if (evidence is None or evidence.get("ovrs_exch_vndr_idno")
+                            != MARKET_VENUES[self.market][self.venue][0]):
+                        continue
                 code = self._ledger_symbol(r)
                 ident = _number_id(r["oder_no"])
                 if ident in seen:
@@ -484,6 +504,9 @@ class Meritz(BaseBroker):
                         raise SpecUnverifiedError("Meritz KR sellable quantity is undocumented in holdings")
                     continue
                 if row["ovrs_stck_mrkt_tr_cls_code"] != MARKET_CODES[self.market]:
+                    continue
+                if (self.market in SHARED_MARKETS and row.get("ovrs_exch_vndr_idno")
+                        != MARKET_VENUES[self.market][self.venue][0]):
                     continue
                 if row["crcd"] != CURRENCIES[self.market]:
                     raise InvalidResponseError("Meritz holding currency inconsistent")

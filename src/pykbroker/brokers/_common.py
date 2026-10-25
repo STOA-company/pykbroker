@@ -28,7 +28,7 @@ from pykbroker.models import (
     Quote,
     Rules,
 )
-from pykbroker.models.markets import CURRENCIES, TIMEZONES
+from pykbroker.models.markets import CURRENCIES, INTEGER_PRICE_CURRENCIES, TIMEZONES
 from pykbroker.reject_codes import definitive_rejection
 from pykbroker.rules.kr import LOT, equity_rules, normalize_symbol
 from pykbroker.safety.gate import OrderSafety
@@ -270,9 +270,14 @@ class BaseBroker:
                 raise NotSupportedError("Order venue must match the configured venue")
         if isinstance(request, CancelRequest) and not capabilities.supports_single_order_cancel:
             raise NotSupportedError("Single-order cancellation is not supported")
-        if isinstance(request, OrderRequest) and request.price is not None:
-            if self.market == "KR" and request.price != request.price.to_integral_value():
-                raise ConfigurationError("KR prices must be whole won; round explicitly before submission")
+        if isinstance(request, OrderRequest):
+            currency = capabilities.currency.get(request.market)
+            if currency in INTEGER_PRICE_CURRENCIES:
+                for price in (request.price, request.stop_price):
+                    if price is not None and price != price.to_integral_value():
+                        unit = ("KR prices must be whole won" if currency == "KRW"
+                                else f"{currency} prices must be whole")
+                        raise ConfigurationError(unit + "; round explicitly before submission")
         if isinstance(request, AmendRequest):
             if request.time_in_force not in capabilities.amend_time_in_force:
                 raise NotSupportedError("This amendment time in force is not supported")
@@ -306,7 +311,7 @@ class BaseBroker:
             BaseBroker._validate_order(self, request)
             updates = ({"order_type": aliases[request.order_type]} if request.order_type in aliases else
                        {"order_type": "limit", "time_in_force": request.order_type})
-            return request.model_copy(update=updates)
+            return OrderRequest.model_validate(request.model_dump() | updates)
         return request
 
     def place_order(self, request: OrderRequest) -> Order:

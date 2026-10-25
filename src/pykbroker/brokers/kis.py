@@ -702,7 +702,7 @@ class KIS(BaseBroker):
                 "ORD_QTY": str(request.quantity), "OVRS_ORD_UNPR": format(request.price or 0, "f"),
                 "CTAC_TLNO": "", "MGCO_APTM_ODNO": "", "ORD_SVR_DVSN_CD": "0",
                 "SLL_TYPE": "00" if request.side == "sell" else ""}
-        if self.market in {"US", "HK"}:
+        if self.market == "US" or (self.market == "HK" and request.side == "sell"):
             body["ORD_DVSN"] = US_KINDS[request.order_type]
         with self._single_attempt():
             response = scope.client.request("post", "/uapi/overseas-stock/v1/trading/order",
