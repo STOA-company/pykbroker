@@ -69,7 +69,8 @@ def test_support_lists_are_data_on_every_broker_and_never_wider_than_what_is_imp
     assert (base.order_kinds, base.time_in_force, base.sessions) == (("limit", "market"), ("day",), ("regular",))
     assert Capabilities(supports_limit_order=False).order_kinds == ()
     kiwoom = World().broker(virtual=False).capabilities()
-    assert kiwoom.order_kinds == ("limit", "market", "close", "conditional_limit", "best", "priority", "midpoint")
+    assert kiwoom.kinds_for("KR") == ("limit", "market", "close", "conditional_limit", "best", "priority",
+                                        "midpoint", "best_limit", "priority_limit", "mid", "ioc", "fok")
     assert kiwoom.time_in_force == ("day", "ioc", "fok")
     assert kiwoom.sessions == ("regular", "pre", "after", "single_price")
     assert kiwoom.venues == ("KRX", "NXT", "SOR")

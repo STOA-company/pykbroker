@@ -153,16 +153,25 @@ class ContractServer:
                        orgl_oder_no=0, rctf_cncl_cls_code="1", oder_rfus_reas_code="0000")
         else:
             # openapi.json overseas holdings: ovrs_exch_vndr_idno description maps these codes.
-            suffix = {"0537": "OQ", "0321": "NY", "0066": "AX"}[body["ovrs_exch_vndr_idno"]]
-            assert body["oder_cls_code"] in {"01", "05"} and body["oder_cond_cls_code"] == "0"
+            suffix, native_market = {"0537": ("OQ", "01"), "0321": ("NY", "01"), "0066": ("AX", "01"),
+                                     "0104": ("HK", "02"), "0215": ("SH", "03"), "0214": ("SZ", "04"),
+                                     "0106": ("JP", "05"), "0107": ("fixtureOSE", "05"),
+                                     "0112": ("fixtureJAS", "05"), "0770": ("fixtureHOSE", "24"),
+                                     "0771": ("fixtureHNX", "24")}[body["ovrs_exch_vndr_idno"]]
+            assert body["oder_cls_code"] in {"01", "05", "31", "32", "33", "34"}
+            assert body["oder_cond_cls_code"] == {"01": "0", "05": "0", "31": "2", "32": "7",
+                                                  "33": "2", "34": "7"}[body["oder_cls_code"]]
             row.update(iscd=body["ovrs_stck_symb_iscd"] + "." + suffix, oder_dqty=str(body["odqt"]),
                        cntg_dqty="0", ncnt_odqt=0, ovrs_stck_oder_prc=body["ovrs_stck_oder_prc"],
-                       cntg_crnc_prc="0", cntg_camt="0", aspr_type_code="2" if body["oder_cls_code"] == "01" else "1",
+                       cntg_crnc_prc="0", cntg_camt="0",
+                       aspr_type_code={"01": "2", "05": "1", "31": "4", "32": "5", "33": "6", "34": "7"}[
+                           body["oder_cls_code"]], ovrs_stck_mrkt_tr_cls_code=native_market,
                        seln_byov_clcd="2" if side == "buy" else "1", oder_date="20261025",
                        ovrs_stck_oder_stat_cls_code="0", oder_rctf_cncl_cls_code="0", orgl_oder_no=0)
             current = self.example("GET", "/trading/v1/overseas/orders/today")["data"][0]
             current.update(oder_date=row["oder_date"], oder_no=row["oder_no"], iscd=row["iscd"],
                            seln_byov_clcd=row["seln_byov_clcd"], odqt=body["odqt"], cntg_qty=0,
+                           ovrs_exch_vndr_idno=body["ovrs_exch_vndr_idno"],
                            ncnt_qty=body["odqt"], oder_able_qty=body["odqt"],
                            cncl_cnfr_qty=0, rctf_cnfr_qty=0)
             self.today[str(row["oder_no"])] = current

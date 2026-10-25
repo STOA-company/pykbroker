@@ -1,5 +1,6 @@
 from .balance import Balance
 from .capabilities import Capabilities
+from .markets import Market
 from .order import (
     AmendRequest,
     CancelRequest,
@@ -20,6 +21,7 @@ __all__ = [
     "Balance",
     "Capabilities",
     "CancelRequest",
+    "Market",
     "Order",
     "OrderRequest",
     "OrderStatus",

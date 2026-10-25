@@ -4,7 +4,7 @@ import inspect
 import threading
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from importlib import import_module
 from types import SimpleNamespace
@@ -19,6 +19,7 @@ from pykbroker.exceptions import (
     NotSupportedError,
 )
 from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
+from pykbroker.models.markets import CURRENCIES
 from pykbroker.rules.kr import equity_rules
 from pykbroker.safety.gate import OrderSafety
 
@@ -33,6 +34,19 @@ KR_TRADING_CODES = {"00"}
 YES_NO = {"Y": True, "N": False}
 
 VENUES = {"NASDAQ": ("NAS", "NASD"), "NYSE": ("NYS", "NYSE"), "AMEX": ("AMS", "AMEX")}
+
+# Official examples_llm/overseas_stock/{order,price_detail,inquire_present_balance}; pinned fixture SOURCE.
+MARKET_VENUES = {"US": VENUES, "HK": {"HKEX": ("HKS", "SEHK")},
+                 "CN_SH": {"SSE": ("SHS", "SHAA")}, "CN_SZ": {"SZSE": ("SZS", "SZAA")},
+                 "JP_TSE": {"TSE": ("TSE", "TKSE")}, "VN_HOSE": {"HOSE": ("HSX", "VNSE")},
+                 "VN_HNX": {"HNX": ("HNX", "HASE")}}
+NATIONS = {"US": ("840", "00"), "HK": ("344", "01"), "CN_SH": ("156", "03"),
+           "CN_SZ": ("156", "04"), "JP_TSE": ("392", "01"), "VN_HOSE": ("704", "02"), "VN_HNX": ("704", "01")}
+ORDER_TRS = {"US": ("TTTT1002U", "TTTT1006U"), "HK": ("TTTS1002U", "TTTS1001U"),
+             "CN_SH": ("TTTS0202U", "TTTS1005U"), "CN_SZ": ("TTTS0305U", "TTTS0304U"),
+             "JP_TSE": ("TTTS0308U", "TTTS0307U"),
+             "VN_HOSE": ("TTTS0311U", "TTTS0310U"), "VN_HNX": ("TTTS0311U", "TTTS0310U")}
+US_KINDS = {"limit": "00", "loo": "32", "loc": "34", "moo": "31", "moc": "33"}
 
 KST = ZoneInfo("Asia/Seoul")
 # A mock account cannot read open orders the way a real one does: the vendor's
@@ -147,6 +161,7 @@ def _kis_more(flag: Any) -> bool:
 
 class KIS(BaseBroker):
     broker_code = "kis"
+    supported_markets = ("KR", *MARKET_VENUES)
     supports_virtual = True
     us_class_separator = "/"  # KIS master spells class shares BRK/B
 
@@ -167,8 +182,8 @@ class KIS(BaseBroker):
         halt_provider: Callable[[str], bool] | None = None,
     ) -> None:
         super().__init__(account=account, safety=safety, market=market, virtual=virtual, halt_provider=halt_provider)
-        if market == "US" and venue not in VENUES:
-            raise ConfigurationError("US KIS requires NASDAQ, NYSE, or AMEX venue")
+        if market != "KR" and venue not in MARKET_VENUES[market]:
+            raise ConfigurationError("KIS requires a documented venue for this market")
         if not isinstance(is_integrated, bool):
             raise ConfigurationError("is_integrated must be a boolean")
         self.is_integrated = is_integrated
@@ -220,16 +235,17 @@ class KIS(BaseBroker):
             supports_spot=True,
             # KIS overseas has no market order; the executor must plan a limit price itself.
             supports_market_order=self.market == "KR",
-            # 장후 시간외 (`close`) is the KR dvsn; US is limit only.
-            order_kinds=("limit", "market", "close") if self.market == "KR" else ("limit",),
-            supports_single_order_cancel=not (self.market == "US" and self.virtual),
+            # Domestic close is not LOC. Overseas auction types are explicit, with side checks below.
+            order_kinds=("limit", "market", "close") if self.market == "KR"
+            else tuple(US_KINDS) if self.market == "US" and not self.virtual else ("limit",),
+            supports_single_order_cancel=not (self.market != "KR" and self.virtual),
             supports_virtual_account=True,
             virtual=self.virtual,
             # A US mock account has no open-order TR; a KR one has the delayed daily ledger.
-            supports_order_history=not (self.market == "US" and self.virtual),
+            supports_order_history=not (self.market != "KR" and self.virtual),
             realtime_open_orders=not self.virtual,
-            requires_venue=self.market == "US",
-            venues=tuple(VENUES) if self.market == "US" else ("KRX",),
+            requires_venue=self.market != "KR",
+            venues=tuple(MARKET_VENUES[self.market]) if self.market != "KR" else ("KRX",),
             markets=(self.market,),
         )
 
@@ -242,7 +258,7 @@ class KIS(BaseBroker):
     ) -> Rules:
         """KR rules come from the live price row: tick, the daily band, and the halt flag."""
         if self.market != "KR":
-            code = self._symbol(symbol, "US")
+            code = self._symbol(symbol, self.market)
             key = (self.venue, code)
             rules = super().get_rules(code, now=now, trading_day=trading_day)
             if rules.halted is True:
@@ -252,7 +268,7 @@ class KIS(BaseBroker):
                 def read_native() -> bool | None:
                     scope, api = self._connect()
                     output = check_response(api.get_price_overseas_detail(
-                        kis_account=scope, excd=VENUES[self.venue][0], code=code), "kis")["output"]
+                        kis_account=scope, excd=MARKET_VENUES[self.market][self.venue][0], code=code), "kis")["output"]
                     return self._us_orderability(output)
                 self._us_native_orderability[key] = self._call(read_native)
             orderable = self._us_native_orderability.pop(key)
@@ -326,12 +342,12 @@ class KIS(BaseBroker):
                     ask=optional_price(book["askp1"]),
                     prev_close=optional_price(price.get("stck_sdpr")),
                 )
-            kwargs = dict(kis_account=scope, excd=VENUES[self.venue][0], code=symbol)
+            kwargs = dict(kis_account=scope, excd=MARKET_VENUES[self.market][self.venue][0], code=symbol)
             price = check_response(api.get_price_overseas_detail(**kwargs), "kis")["output"]
             book = check_response(api.get_quote_overseas(**kwargs), "kis")["output2"]
             quote = Quote(
                 symbol=self.canonical_symbol(symbol),
-                market="US",
+                market=self.market,
                 last=decimal(price["last"]),
                 bid=optional_price(book["pbid1"]),
                 ask=optional_price(book["pask1"]),
@@ -344,11 +360,11 @@ class KIS(BaseBroker):
     def get_balance(self) -> Balance:
         def read() -> Balance:
             scope, _ = self._connect()
-            if self.market == "US":
+            if self.market != "KR":
                 if self._cash_provider is None and self.virtual:
                     raise ConfigurationError("US mock cash requires a caller-supplied cash_provider")
                 return Balance(
-                    currency="USD",
+                    currency=CURRENCIES[self.market],
                     cash_available=(decimal(self._cash_provider(scope))
                                     if self._cash_provider else self._us_native_cash(scope)),
                     position_value=sum((p.market_value for p in self.get_positions()), Decimal(0)),
@@ -362,19 +378,23 @@ class KIS(BaseBroker):
         return self._call(read)
 
     def available_cash(self) -> Decimal:
+        if self.market not in {"KR", "US"}:
+            return self._call(lambda: decimal(self._cash_provider(self._connect()[0])) if self._cash_provider
+                              else self._us_native_cash(self._connect()[0]))
         if self.market == "US" or self.is_integrated:
             return self._call(lambda: self._us_cash(self._connect()[0]))
         return super().available_cash()
 
     def _us_native_cash(self, scope: Any) -> Decimal:
         _, api = self._connect()
-        data = check_response(api.get_balances(kis_account=scope, NATN_CD="840", TR_MKET_CD="00"), "kis")
+        data = check_response(api.get_balances(
+            kis_account=scope, NATN_CD=NATIONS[self.market][0], TR_MKET_CD=NATIONS[self.market][1]), "kis")
         rows = field(data, "output2")
         if not isinstance(rows, list):
             raise InvalidResponseError("KIS native cash block missing")
-        usd = [row for row in rows if field(row, "crcy_cd") == "USD"]
+        usd = [row for row in rows if field(row, "crcy_cd") == CURRENCIES[self.market]]
         if len(usd) != 1:
-            raise InvalidResponseError("KIS native cash requires one USD row")
+            raise InvalidResponseError("KIS native cash requires one matching currency row")
         return min(decimal(field(usd[0], "frcr_dncl_amt_2")), decimal(field(usd[0], "frcr_drwg_psbl_amt_1")))
 
     def _us_cash(self, scope: Any) -> Decimal:
@@ -411,7 +431,7 @@ class KIS(BaseBroker):
         KIS_MAX_PAGES is refused, never cut short: a missing later page would read a held symbol as 0.
         A row repeated on a later page counts once; a conflicting repeat is refused (PageRows).
         """
-        raw = api.get_balances(kis_account=scope, NATN_CD="840", TR_MKET_CD="00")
+        raw = api.get_balances(kis_account=scope, NATN_CD=NATIONS[self.market][0], TR_MKET_CD=NATIONS[self.market][1])
         rows = PageRows(KIS_US_ROW_KEY, "KIS US")
         for page in range(1, KIS_MAX_PAGES + 1):
             block = check_response(raw, "kis")["output1"]
@@ -424,14 +444,14 @@ class KIS(BaseBroker):
                 raw = self._us_present_balance_next(scope)
         raise InvalidResponseError("KIS US holdings exceeded the page limit; refusing a truncated result")
 
-    @staticmethod
-    def _us_present_balance_next(scope: Any) -> dict[str, Any]:
+    def _us_present_balance_next(self, scope: Any) -> dict[str, Any]:
         # Same TR and parameters as Pykis.base.overseas.get_balances, plus the continuation header.
         response = scope.client.request(
             "get", "/uapi/overseas-stock/v1/trading/inquire-present-balance",
             headers={"tr_id": "CTRP6504R", "tr_cont": "N"},
             params=scope.account.build_body({
-                "WCRC_FRCR_DVSN_CD": "02", "NATN_CD": "840", "TR_MKET_CD": "00", "INQR_DVSN_CD": "01",
+                "WCRC_FRCR_DVSN_CD": "02", "NATN_CD": NATIONS[self.market][0],
+                "TR_MKET_CD": NATIONS[self.market][1], "INQR_DVSN_CD": "01",
             }), response=None,
         )
         if field(response, "status_code") != 200:
@@ -442,13 +462,13 @@ class KIS(BaseBroker):
     def get_positions(self) -> list[Position]:
         def read() -> list[Position]:
             scope, api = self._connect()
-            if self.market == "US":
+            if self.market != "KR":
                 rows = self._us_holding_rows(scope, api)
                 return [
                     Position(
                         symbol=self.canonical_symbol(row["pdno"]),
                         name=row["prdt_name"],
-                        market="US",
+                        market=self.market,
                         quantity=whole(row["ccld_qty_smtl1"]),
                         sellable=whole(row["ord_psbl_qty1"]),
                         average_price=decimal(row["avg_unpr3"]),
@@ -482,14 +502,15 @@ class KIS(BaseBroker):
 
         def read() -> list[Order]:
             scope, api = self._connect()
-            if self.market == "US":
-                response = api.get_open_orders_overseas_all(kis_account=scope, market=VENUES[self.venue][1])
+            if self.market != "KR":
+                response = api.get_open_orders_overseas_all(
+                    kis_account=scope, market=MARKET_VENUES[self.market][self.venue][1])
                 rows = check_response(response, "kis")["output"]
                 return [
                     Order(
                         id=str(row["odno"]),
                         symbol=self.canonical_symbol(row["pdno"]),
-                        market="US",
+                        market=self.market,
                         status="unknown",
                         virtual=self.virtual,
                     )
@@ -551,7 +572,7 @@ class KIS(BaseBroker):
         symbol = self._symbol(order.symbol, order.market)
         if order.market != self.market:
             raise ConfigurationError("Order market disagrees with the adapter")
-        if self.market == "US" and self.virtual:
+        if self.market != "KR" and self.virtual:
             raise NotSupportedError("KIS has no verified US mock ledger helper")
 
         def read() -> Order:
@@ -559,8 +580,10 @@ class KIS(BaseBroker):
             if self.market == "KR":
                 today = datetime.now(KST)
                 rows = field(scope.daily_order_all(start_date=today, end_date=today, code=symbol), "orders")
-            else:
+            elif self.market == "US":
                 rows = check_response(api.get_orders_overseas_all(kis_account=scope, code=symbol), "kis")["output"]
+            else:
+                rows = self._expanded_overseas_ledger(scope, symbol)
             for row in rows:
                 if str(field(row, "odno")) != order.id or field(row, "pdno") != symbol:
                     continue
@@ -583,6 +606,33 @@ class KIS(BaseBroker):
 
         return self._call(read)
 
+    def _expanded_overseas_ledger(self, scope: Any, symbol: str) -> list[Any]:
+        # Existing SDK helper fixes OVRS_EXCG_CD=NASD; use the documented market field for other markets.
+        today = datetime.now(KST).date()
+        params = {"PDNO": symbol, "ORD_STRT_DT": (today - timedelta(days=30)).strftime("%Y%m%d"),
+                  "ORD_END_DT": today.strftime("%Y%m%d"), "SLL_BUY_DVSN": "00", "CCLD_NCCS_DVSN": "00",
+                  "OVRS_EXCG_CD": MARKET_VENUES[self.market][self.venue][1], "SORT_SQN": "DS",
+                  "ORD_DT": "", "ORD_GNO_BRNO": "", "ODNO": "", "CTX_AREA_FK200": "", "CTX_AREA_NK200": ""}
+        rows, seen = [], set()
+        for page in range(KIS_MAX_PAGES):
+            response = scope.client.request("get", "/uapi/overseas-stock/v1/trading/inquire-ccnl",
+                headers={"tr_id": "TTTS3035R", "tr_cont": "N" if page else ""},
+                params=scope.account.build_body(params), response=None)
+            envelope = check_response(response if isinstance(response, Mapping) else response.json(), "kis")
+            block = envelope["output"]
+            if not isinstance(block, list):
+                raise InvalidResponseError("KIS ledger rows missing")
+            rows.extend(block)
+            headers = field(response, "headers", {})
+            if not _kis_more(headers.get("tr_cont")):
+                return rows
+            key = (envelope.get("ctx_area_fk200"), envelope.get("ctx_area_nk200"))
+            if not all(isinstance(v, str) for v in key) or not any(key) or key in seen:
+                raise InvalidResponseError("KIS ledger continuation missing or repeated")
+            seen.add(key)
+            params.update(CTX_AREA_FK200=key[0], CTX_AREA_NK200=key[1])
+        raise InvalidResponseError("KIS ledger pages incomplete")
+
     def _cancel_order(self, request: CancelRequest) -> Order:
         """Resolve one ID and symbol, then cancel precisely that order and requested quantity once."""
         scope, api = self._connect()
@@ -596,7 +646,7 @@ class KIS(BaseBroker):
                 rows = field(api.get_open_orders_domestic(kis_account=scope), "orders")
         else:
             rows = check_response(api.get_open_orders_overseas_all(
-                kis_account=scope, market=VENUES[self.venue][1]), "kis")["output"]
+                kis_account=scope, market=MARKET_VENUES[self.market][self.venue][1]), "kis")["output"]
         matches = [row for row in rows if str(field(row, "odno")) == request.order_id
                    and field(row, "pdno") == symbol]
         if len(matches) != 1:
@@ -614,7 +664,7 @@ class KIS(BaseBroker):
             if self.market == "KR":
                 response = scope.cancel(order=ref, qty=request.quantity)
             else:
-                response = scope.overseas_cancel(market=VENUES[self.venue][1], code=symbol,
+                response = scope.overseas_cancel(market=MARKET_VENUES[self.market][self.venue][1], code=symbol,
                                                 order=ref, qty=request.quantity)
         envelope = check_response(response, "kis")
         if isinstance(response, Mapping) and str(field(envelope, "rt_cd")) != "0":
@@ -638,6 +688,30 @@ class KIS(BaseBroker):
         finally:
             _SINGLE_ATTEMPT.active = previous
 
+    def _validate_order(self, request: OrderRequest | CancelRequest) -> None:
+        super()._validate_order(request)
+        if (isinstance(request, OrderRequest) and self.market == "US"
+                and request.order_type in {"moo", "moc"} and request.side != "sell"):
+            raise NotSupportedError("KIS opening/closing market orders are sell-only")
+
+    def _expanded_overseas_order(self, scope: Any, request: OrderRequest, symbol: str) -> Any:
+        tr_id = ORDER_TRS[self.market][0 if request.side == "buy" else 1]
+        if self.virtual:
+            tr_id = "V" + tr_id[1:]
+        body = {"OVRS_EXCG_CD": MARKET_VENUES[self.market][self.venue][1], "PDNO": symbol,
+                "ORD_QTY": str(request.quantity), "OVRS_ORD_UNPR": format(request.price or 0, "f"),
+                "CTAC_TLNO": "", "MGCO_APTM_ODNO": "", "ORD_SVR_DVSN_CD": "0",
+                "SLL_TYPE": "00" if request.side == "sell" else ""}
+        if self.market in {"US", "HK"}:
+            body["ORD_DVSN"] = US_KINDS[request.order_type]
+        with self._single_attempt():
+            response = scope.client.request("post", "/uapi/overseas-stock/v1/trading/order",
+                                            headers={"tr_id": tr_id}, body=scope.account.build_body(body),
+                                            response=None)
+        if not isinstance(response, Mapping):
+            response = response.json()
+        return response
+
     def _place_order(self, request: OrderRequest) -> Order:
         if request.fractional:
             # KIS has no fractional-share order TR (overseas_stock order(): ORD_QTY whole). Refuse; never int().
@@ -654,16 +728,16 @@ class KIS(BaseBroker):
                     order_price=int(request.price) if request.order_type == "limit" else 0,
                     dvsn={"limit": "지정가", "market": "시장가", "close": "장후 시간외"}[request.order_type],
                 )
+        elif self.market != "US" or request.order_type != "limit":
+            response = self._expanded_overseas_order(scope, request, symbol)
         else:
-            if request.order_type != "limit":
-                raise NotSupportedError("US KIS only implements limit orders")
             if request.venue not in (None, self.venue):
                 raise NotSupportedError("Order venue must match the configured US venue")
             with self._single_attempt():
                 response = api.post_order_overseas(
                     kis_account=scope,
                     ticker=symbol,
-                    market=VENUES[self.venue][1],
+                    market=MARKET_VENUES[self.market][self.venue][1],
                     order_type=request.side,
                     order_qty=request.quantity,
                     order_price=float(request.price),

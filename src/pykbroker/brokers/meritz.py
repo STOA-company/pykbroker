@@ -23,6 +23,7 @@ from pykbroker.exceptions import (
     TransportError,
 )
 from pykbroker.models import AmendRequest, Balance, CancelRequest, Capabilities, Order, Position, Quote
+from pykbroker.models.markets import CURRENCIES
 from pykbroker.reject_codes import rejection_for_code
 from pykbroker.safety.rate_limit import credential_rate_limiter
 
@@ -35,8 +36,17 @@ KR_KINDS = {"limit": "01", "market": "05", "conditional_limit": "06", "best": "1
 KR_VENUES = {"KRX": "01", "NXT": "02", "SOR": "03"}
 US_VENUES = {"NASDAQ": ("0537", "OQ"), "NYSE": ("0321", "NY"), "AMEX": ("0066", "AX")}
 TIF = {"day": "0", "ioc": "3", "fok": "4"}
-US_KINDS = {"limit": "01", "market": "05"}
-US_ASPR = {"1": "market", "2": "limit"}
+US_KINDS = {"limit": "01", "market": "05", "loo": "31", "loc": "32", "moo": "33", "moc": "34"}
+OVERSEAS_CONDITIONS = {"limit": "0", "market": "0", "loo": "2", "loc": "7", "moo": "2", "moc": "7"}
+# Official sell request ovrs_exch_vndr_idno; quote suffixes only where documented.
+MARKET_VENUES = {"US": US_VENUES, "HK": {"HKEX": ("0104", "HK")},
+                 "CN_SH": {"SSE": ("0215", "SH")}, "CN_SZ": {"SZSE": ("0214", "SZ")},
+                 "JP_TSE": {"TSE": ("0106", "JP")}, "JP_OSE": {"OSE": ("0107", None)},
+                 "JP_JASDAQ": {"JASDAQ": ("0112", None)},
+                 "VN_HOSE": {"HOSE": ("0770", None)}, "VN_HNX": {"HNX": ("0771", None)}}
+MARKET_CODES = {"US": "01", "HK": "02", "CN_SH": "03", "CN_SZ": "04",
+                "JP_TSE": "05", "JP_OSE": "05", "JP_JASDAQ": "05", "VN_HOSE": "24", "VN_HNX": "24"}
+US_ASPR = {"1": "market", "2": "limit", "4": "loo", "5": "loc", "6": "moo", "7": "moc"}
 DATA_SUCCESS_PATHS = {"/market/v1/prices"}  # corrections.json: market_prices degraded rsp_cd
 SUCCESS = {"0000", "0001", "5762", "5766", "5820", "5822"}
 
@@ -85,6 +95,7 @@ class _MeritzRestClient:
 
 class Meritz(BaseBroker):
     broker_code = "meritz"
+    supported_markets = ("KR", *MARKET_VENUES)
     us_venues = tuple(US_VENUES)
     mock_base_url = MERITZ_MOCK_BASE_URL
 
@@ -104,8 +115,8 @@ class Meritz(BaseBroker):
         if len(self._mac) != 12 or any(c not in "0123456789ABCDEF" for c in self._mac):
             raise ConfigurationError("Meritz MAC must be twelve uppercase hexadecimal characters")
         self.venue = venue if venue is not None else options.get("venue")
-        if market == "US" and self.venue not in US_VENUES:
-            raise ConfigurationError("Supply a verified US venue")
+        if market != "KR" and self.venue not in MARKET_VENUES[market]:
+            raise ConfigurationError("Supply a documented venue for this market")
         if type(writes_enabled) is not bool or (order_date is not None and type(order_date) is not date):
             raise ConfigurationError("Invalid Meritz write flag or order date")
         self._writes_enabled, self._order_date = writes_enabled, order_date
@@ -151,7 +162,7 @@ class Meritz(BaseBroker):
         return Capabilities(supports_spot=True, supports_market_order=True, supports_single_order_cancel=True,
                             supports_amend=True, supports_order_history=True, markets=(self.market,),
                             supports_nxt=kr, requires_venue=not kr,
-                            venues=tuple(KR_VENUES) if kr else tuple(US_VENUES),
+                            venues=tuple(KR_VENUES) if kr else tuple(MARKET_VENUES[self.market]),
                             order_kinds=tuple(KR_KINDS) if kr else tuple(US_KINDS),
                             time_in_force=tuple(TIF) if kr else ("day",),
                             sessions=("regular", "pre", "after") if kr else ("regular",))
@@ -215,7 +226,7 @@ class Meritz(BaseBroker):
                     raise ValueError
             except (InvalidResponseError, ValueError):
                 raise ConfigurationError("Meritz order id must be a canonical positive integer") from None
-        if self.market == "US":
+        if self.market != "KR":
             if isinstance(request, (CancelRequest, AmendRequest)) and self._order_date is None:
                 raise ConfigurationError("Supply the original broker order_date for US modify/cancel")
             if len(request.symbol) > 12:
@@ -242,10 +253,11 @@ class Meritz(BaseBroker):
         return text.rstrip("0").rstrip(".") if "." in text else text
 
     def _body(self, request):
-        if self.market == "US":
+        if self.market != "KR":
             return {"ovrs_stck_symb_iscd": self._symbol(request.symbol, request.market),
-                    "ovrs_exch_vndr_idno": US_VENUES[request.venue][0],
-                    "oder_cls_code": US_KINDS[request.order_type], "oder_cond_cls_code": "0",
+                    "ovrs_exch_vndr_idno": MARKET_VENUES[self.market][request.venue][0],
+                    "oder_cls_code": US_KINDS[request.order_type],
+                    "oder_cond_cls_code": OVERSEAS_CONDITIONS[request.order_type],
                     "odqt": request.quantity, "ovrs_stck_oder_prc": self._us_price(request.price),
                     "warn_cnfr_yn": "N"}
         body = {"iscd": "A" + self._symbol(request.symbol, request.market),
@@ -270,7 +282,7 @@ class Meritz(BaseBroker):
         if len(rows) != 1 or self._ledger_symbol(rows[0]) != request.symbol:
             raise InvalidResponseError("Mutation requires one matching original ledger row")
         row = rows[0]
-        if self.market == "US":
+        if self.market != "KR":
             visited = set()
             while True:
                 ident = _number_id(row["oder_no"])
@@ -289,7 +301,16 @@ class Meritz(BaseBroker):
                     raise InvalidResponseError("Amended order symbol differs")
             if row["oder_date"] != self._day():
                 raise InvalidResponseError("Original order date differs from the configured trading date")
-            if not row["iscd"].endswith("." + US_VENUES[self.venue][1]):
+            suffix = MARKET_VENUES[self.market][self.venue][1]
+            if suffix is None:
+                current = self._response("GET", self._prefix() + "today",
+                                         params={"cntg_cls_code": "0", "seln_byov_clcd": "0"})
+                matches = [r for r in current.get("data", []) if r["oder_no"] == row["oder_no"]
+                           and r["oder_date"] == row["oder_date"] and r["iscd"] == row["iscd"]]
+                if (current.get("tr_cont") != "0" or len(matches) != 1
+                        or matches[0]["ovrs_exch_vndr_idno"] != MARKET_VENUES[self.market][self.venue][0]):
+                    raise InvalidResponseError("Original order venue lacks matching today evidence")
+            elif not row["iscd"].endswith("." + suffix):
                 raise InvalidResponseError("Original order exchange differs from the configured venue")
         return row
 
@@ -305,7 +326,7 @@ class Meritz(BaseBroker):
         if original[side_key] != {"buy": "2", "sell": "1"}[request.side]:
             raise ConfigurationError("Amendment side differs from the original order")
         body = self._body(request)
-        if self.market == "US":
+        if self.market != "KR":
             body.pop("ovrs_stck_symb_iscd")
             body.pop("ovrs_exch_vndr_idno")
             body["oder_date"] = self._day()
@@ -350,7 +371,7 @@ class Meritz(BaseBroker):
 
     def _ledger(self):
         params = {"oder_date": self._day(), "deal_cls_code": "0", "cntg_cls_code": "0"}
-        if self.market == "US":
+        if self.market != "KR":
             params = {"oder_sta_date": self._day(), "oder_fin_date": self._day(), "cntg_cls_code": "0"}
         return list(self._pages(self._prefix() + "history", params))
 
@@ -361,7 +382,8 @@ class Meritz(BaseBroker):
                 raise InvalidResponseError("Meritz native KR symbol missing prefix")
             return self._symbol(native[1:], "KR")
         root, sep, suffix = native.rpartition(".")
-        if not sep or suffix not in {v[1] for v in US_VENUES.values()}:
+        known_suffixes = {v[1] for v in MARKET_VENUES[self.market].values()} - {None}
+        if not sep or not suffix or (known_suffixes and suffix not in known_suffixes):
             raise InvalidResponseError("Meritz US ledger symbol has unknown exchange suffix")
         return self.canonical_symbol(root)
 
@@ -371,7 +393,7 @@ class Meritz(BaseBroker):
             result, seen = [], set()
             ledger = self._ledger()
             today = {}
-            if self.market == "US":
+            if self.market != "KR":
                 page = self._response("GET", self._prefix() + "today",
                                       params={"cntg_cls_code": "0", "seln_byov_clcd": "0"})
                 if page.get("tr_cont") != "0" or not isinstance(page.get("data"), list):
@@ -382,13 +404,13 @@ class Meritz(BaseBroker):
                         raise InvalidResponseError("Meritz duplicate today identity")
                     today[key] = row
             replaced = {str(r["orgl_oder_no"]) for r in ledger
-                        if self.market == "US" and r["oder_rctf_cncl_cls_code"] in {"1", "2"}}
+                        if self.market != "KR" and r["oder_rctf_cncl_cls_code"] in {"1", "2"}}
             kr_amended = {str(r["orgl_oder_no"]) for r in ledger
                           if self.market == "KR" and r["rctf_cncl_cls_code"] == "2"}
             kr_uncertain = {str(r["orgl_oder_no"]) for r in ledger
                             if self.market == "KR" and r["rctf_cncl_cls_code"] == "3"} & kr_amended
             for r in ledger:
-                if self.market == "US" and r["ovrs_stck_mrkt_tr_cls_code"] != "01":
+                if self.market != "KR" and r["ovrs_stck_mrkt_tr_cls_code"] != MARKET_CODES[self.market]:
                     continue
                 code = self._ledger_symbol(r)
                 ident = _number_id(r["oder_no"])
@@ -461,13 +483,13 @@ class Meritz(BaseBroker):
                     if whole(row["rmnd_qty"]):
                         raise SpecUnverifiedError("Meritz KR sellable quantity is undocumented in holdings")
                     continue
-                if row["ovrs_stck_mrkt_tr_cls_code"] != "01":
+                if row["ovrs_stck_mrkt_tr_cls_code"] != MARKET_CODES[self.market]:
                     continue
-                if row["crcd"] != "USD":
-                    raise InvalidResponseError("Meritz US holding currency inconsistent")
+                if row["crcd"] != CURRENCIES[self.market]:
+                    raise InvalidResponseError("Meritz holding currency inconsistent")
                 q, sell = decimal(row["rmnd_dqty"]), decimal(row["seln_able_dqty"])
                 result.append(Position(symbol=self.canonical_symbol(row["ovrs_stck_symb_iscd"]),
-                                       name=row["isnm"], market="US", quantity=int(q), sellable=int(sell),
+                                       name=row["isnm"], market=self.market, quantity=int(q), sellable=int(sell),
                                        quantity_exact=q, sellable_exact=sell, average_price=decimal(row["avrg_unpr"]),
                                        last=decimal(row["psnt_prc"]), market_value=decimal(row["frcr_vltn_amt"])))
             return result
@@ -480,9 +502,9 @@ class Meritz(BaseBroker):
             data = self._response("GET", self._prefix() + "estimate", params={"intg_marg_iqry_yn": "N"})
             if data.get("tr_cont") != "0":
                 raise InvalidResponseError("Meritz funding continuation is unsupported")
-            rows = [r for r in data["data"] if r["crcd"] == "USD"]
+            rows = [r for r in data["data"] if r["crcd"] == CURRENCIES[self.market]]
             if len(rows) != 1:
-                raise InvalidResponseError("Meritz funding requires one USD row")
+                raise InvalidResponseError("Meritz funding requires one matching currency row")
             return decimal(rows[0]["oder_crnc_oder_able_camt"])
         return self._call(read)
 
@@ -494,16 +516,19 @@ class Meritz(BaseBroker):
                 value = sum((decimal(r["vltn_amt"]) for r in rows if r["pros_trgt_cls_code"] == "1"), Decimal(0))
             else:
                 value = sum((p.market_value for p in self.get_positions()), Decimal(0))
-            return Balance(currency="KRW" if self.market == "KR" else "USD", cash_available=cash, position_value=value)
+            return Balance(currency=CURRENCIES[self.market], cash_available=cash, position_value=value)
         return self._call(read)
 
     def get_quote(self, symbol, *, market="KR"):
         symbol = self._symbol(symbol, market)
         def read():
             path, params = "/market/v1/prices", {"mrkt_div_code": "J", "iscd": symbol}
-            if self.market == "US":
+            if self.market != "KR":
+                if MARKET_VENUES[self.market][self.venue][1] is None:
+                    raise SpecUnverifiedError("Quote market code is not documented for this venue")
                 path, params = "/market/v1/overseas/prices", {"mrkt_div_code": "OV", "iscd": symbol,
-                                "mrkt_cls_code": US_VENUES[self.venue][1], "dely_rltm_cls_code": "0"}
+                                "mrkt_cls_code": MARKET_VENUES[self.market][self.venue][1],
+                                "dely_rltm_cls_code": "1" if self.market in {"HK", "CN_SH"} else "0"}
             row = self._response("GET", path, params=params)["data"]
             key, price = ("shrn_iscd", "stck_prpr") if self.market == "KR" else ("iscd", "prpr")
             if row[key] != symbol:

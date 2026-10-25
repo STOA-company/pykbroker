@@ -1,17 +1,20 @@
+from datetime import time
 from decimal import Decimal
 from typing import Literal, Self
 
 from pydantic import Field, model_validator
 
 from ._base import FractionalQuantity, Model, Money, PositiveMoney, PositiveQuantity, Quantity
+from .markets import Market
 
 Side = Literal["buy", "sell"]
 # limit/market/close are the shared kinds (close = after-hours close session: KIS 장후 시간외, DB "81", Toss CLS).
 # The rest are priced-by-venue kinds an adapter must declare in Capabilities.order_kinds before any HTTP.
-OrderType = Literal["limit", "market", "close", "conditional_limit", "best", "priority", "midpoint", "stop_limit"]
+OrderType = Literal["limit", "market", "close", "conditional_limit", "best", "priority", "midpoint", "stop_limit",
+                    "best_limit", "priority_limit", "mid", "ioc", "fok", "loo", "loc", "moo", "moc", "vwap", "twap"]
 TimeInForce = Literal["day", "ioc", "fok"]
 OrderSession = Literal["regular", "pre", "after", "single_price"]
-PRICED_TYPES = ("limit", "conditional_limit", "stop_limit")
+PRICED_TYPES = ("limit", "conditional_limit", "stop_limit", "loo", "loc", "ioc", "fok")
 OrderStatus = Literal["accepted", "open", "partial", "filled", "cancelled", "rejected", "unknown"]
 
 
@@ -25,13 +28,15 @@ class OrderRequest(Model):
     amount: PositiveMoney | None = None
     order_type: OrderType = "limit"
     price: PositiveMoney | None = None
-    market: Literal["KR", "US"] = "KR"
+    market: Market = "KR"
     venue: str | None = None
     # Defaults are the plain day order in the regular session; anything else must be declared by the adapter.
     time_in_force: TimeInForce = "day"
     session: OrderSession = "regular"
     # Trigger price of a stop_limit order only.
     stop_price: PositiveMoney | None = None
+    algo_start: time | None = None
+    algo_end: time | None = None
     client_key: str = Field(min_length=1, max_length=128, pattern=r"\S", repr=False)
 
     @property
@@ -65,7 +70,8 @@ class OrderRequest(Model):
     def valid_price(self) -> Self:
         if self.order_type in PRICED_TYPES and self.price is None:
             raise ValueError("A limit order requires a positive price")
-        if self.order_type in ("market", "best", "priority", "midpoint") and self.price is not None:
+        if (self.order_type in ("market", "best", "priority", "midpoint", "best_limit", "priority_limit",
+                               "mid", "moo", "moc") and self.price is not None):
             raise ValueError("A market-style order cannot carry a limit price")
         if (self.order_type == "stop_limit") != (self.stop_price is not None):
             raise ValueError("stop_price is required for, and only for, a stop_limit order")
@@ -73,6 +79,17 @@ class OrderRequest(Model):
             raise ValueError("A close-session order is a plain day order")
         if self.session != "regular" and self.time_in_force != "day":
             raise ValueError("An off-session order is a day order")
+        if self.order_type in {"vwap", "twap"}:
+            if self.algo_start is None or self.algo_end is None:
+                raise ValueError("Algorithm orders require algo_start and algo_end")
+            if self.algo_start.tzinfo is not None or self.algo_end.tzinfo is not None:
+                raise ValueError("Algorithm times use the exchange local clock")
+            if self.algo_start >= self.algo_end:
+                raise ValueError("algo_start must precede algo_end")
+        elif self.algo_start is not None or self.algo_end is not None:
+            raise ValueError("Algorithm times are only valid for vwap/twap")
+        if self.order_type in {"ioc", "fok"} and self.time_in_force not in {"day", self.order_type}:
+            raise ValueError("Order kind and time_in_force conflict")
         if not self.client_key.strip():
             raise ValueError("client_key cannot be blank")
         return self
@@ -122,5 +139,5 @@ class CancelRequest(Model):
     symbol: str = Field(min_length=1)
     quantity: PositiveQuantity
     client_key: str = Field(min_length=1, max_length=128, pattern=r"\S", repr=False)
-    market: Literal["KR", "US"] = "KR"
+    market: Market = "KR"
     venue: str | None = None

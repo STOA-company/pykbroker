@@ -77,6 +77,7 @@ _EXPIRES_DT = re.compile(r"\d{14}")
 # Spec: ord_no is «7자리» (the kt10000 sample shows 5), and 0000000 is the «no original order» filler, never an order.
 _ORDER_NO = re.compile(r"[0-9]{1,7}")
 _US_ORDER_NO = re.compile(r"[0-9]{1,9}")
+_US_KINDS = {"limit": "00", "market": "03", "loc": "30", "moc": "33", "stop_limit": "34"}
 _US_VENUES = {"NASDAQ": "ND", "NYSE": "NY", "AMEX": "NA"}
 _UNEXPECTED_ERROR_CODE = 1999
 # trde_tp 0 (보통) and 3 (시장가) are documented; ka10075/kt00007 spell types in Korean, and any
@@ -383,12 +384,12 @@ class Kiwoom(BaseBroker):
         return Capabilities(
             supports_spot=True,
             supports_limit_order=True,
-            supports_market_order=self.market == "KR",
+            supports_market_order=True,
             supports_nxt=self.market == "KR" and not self.virtual,
             # Official mock info (2026-10-24): domestic mock trades and queries KRX only.
             order_kinds=_KR_KINDS + (("stop_limit",) if KIWOOM_STOP_LIMIT_VERIFIED else ())
             if self.market == "KR"
-            else ("limit",),
+            else tuple(_US_KINDS),
             time_in_force=("day", "ioc", "fok") if self.market == "KR" else ("day",),
             sessions=("regular", "pre", "after", "single_price") if self.market == "KR" else ("regular",),
             supports_single_order_cancel=True,
@@ -516,8 +517,8 @@ class Kiwoom(BaseBroker):
         if isinstance(request, OrderRequest):
             if self.market == "KR":
                 _trde_tp(request)  # raises NotSupportedError for a combination the spec does not list
-            elif request.order_type != "limit" or request.time_in_force != "day" or request.session != "regular":
-                raise NotSupportedError("Kiwoom US supports plain day limit orders only")
+            elif request.order_type in {"moc", "stop_limit"} and request.side != "sell":
+                raise NotSupportedError("Kiwoom US MOC/stop-limit orders are sell-only")
         pattern = _US_ORDER_NO if self.market == "US" else _ORDER_NO
         if isinstance(request, CancelRequest) and not (pattern.fullmatch(request.order_id) and int(request.order_id)):
             # all zeros is the «no original order» filler, never a real order number
@@ -809,8 +810,9 @@ class Kiwoom(BaseBroker):
             {
                 **self._us_body(code),
                 "ord_qty": str(request.quantity),
-                "ord_uv": format(request.price, "f"),
-                "trde_tp": "00",
+                "ord_uv": format(request.price, "f") if request.price is not None else "",
+                "trde_tp": _US_KINDS[request.order_type],
+                **({"stop_pric": format(request.stop_price, "f")} if request.stop_price is not None else {}),
             },
         )
         return Order(

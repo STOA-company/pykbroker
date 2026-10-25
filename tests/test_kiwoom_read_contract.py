@@ -708,7 +708,7 @@ def test_us_capabilities_and_explicit_account_configuration():
     caps = broker.capabilities()
     assert caps.markets == ("US",) and caps.requires_venue and caps.supports_single_order_cancel
     assert caps.venues == ("NASDAQ", "NYSE", "AMEX")
-    assert not caps.supports_market_order
+    assert caps.supports_market_order
     for mode in (None, "yes", 1):
         with pytest.raises(ConfigurationError, match="explicit boolean"):
             us_read({}, is_integrated=mode)

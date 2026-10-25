@@ -218,7 +218,7 @@ def stop_req(key="st"):
 
 def test_stop_limit_is_listed_by_the_spec_but_refused_before_the_wire():
     world, broker = live_world()
-    assert "stop_limit" not in broker.capabilities().order_kinds
+    assert "stop_limit" not in broker.capabilities().kinds_for(broker.market)
     before = len(world.server.calls)
     with pytest.raises(NotSupportedError):
         broker.place_order(stop_req())
@@ -230,7 +230,7 @@ def test_stop_limit_slot_builds_trde_tp_28_with_cond_uv_once_verified(monkeypatc
 
     monkeypatch.setattr(module, "KIWOOM_STOP_LIMIT_VERIFIED", True)
     world, broker = live_world()
-    assert "stop_limit" in broker.capabilities().order_kinds
+    assert "stop_limit" in broker.capabilities().kinds_for(broker.market)
     order = broker.place_order(stop_req())
     body = next(b for _, b in world.server.calls if b.get("ord_qty"))
     assert (body["trde_tp"], body["ord_uv"], body["cond_uv"]) == ("28", "59000", "59500")
