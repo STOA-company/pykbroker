@@ -13,7 +13,6 @@ from unittest.mock import Mock
 import pytest
 
 from pykbroker.brokers import kis as kis_module
-from pykbroker.brokers import ls as ls_module
 from pykbroker.brokers._common import PageRows
 from pykbroker.brokers.kb import KB, KB_API_BASE_URL
 from pykbroker.exceptions import InvalidResponseError
