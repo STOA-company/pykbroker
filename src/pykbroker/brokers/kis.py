@@ -12,11 +12,11 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from pykbroker.exceptions import ConfigurationError, InvalidResponseError, MissingDependencyError, NotSupportedError
-from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
+from pykbroker.models import AmendRequest, Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
 from pykbroker.rules.kr import equity_rules
 from pykbroker.safety.gate import OrderSafety
 
-from ._common import BaseBroker, check_response, decimal, field, optional_price, whole
+from ._common import AmendMixin, BaseBroker, check_response, decimal, field, optional_price, whole
 
 # KIS 국내주식 현재가 시세 output — two independent halt signals, both on the price row
 # (_pykis/scope/stock/api/response/price.py:4 iscd_stat_cls_code, :16 temp_stop_yn).
@@ -27,6 +27,14 @@ KR_TRADING_CODES = {"00"}
 YES_NO = {"Y": True, "N": False}
 
 VENUES = {"NASDAQ": ("NAS", "NASD"), "NYSE": ("NYS", "NYSE"), "AMEX": ("AMS", "AMEX")}
+
+# 미국 주간거래(공식 예제 examples_llm/overseas_stock/daytime_order·daytime_order_rvsecncl): 전용 TR 과 경로.
+# 주간거래는 지정가(ORD_DVSN 00)만 — 시장가 코드가 없다. 정규장 TR(TTTT1002U/1006U)과 섞지 않는다.
+DAYTIME_ORDER_PATH = "/uapi/overseas-stock/v1/trading/daytime-order"
+DAYTIME_AMEND_PATH = "/uapi/overseas-stock/v1/trading/daytime-order-rvsecncl"
+DAYTIME_TR = {"buy": "TTTS6036U", "sell": "TTTS6037U", "amend": "TTTS6038U"}
+# 주간 시세 거래소 코드(공식 inquire_time_itemchartprice: BAY 뉴욕·BAQ 나스닥·BAA 아멕스).
+DAYTIME_QUOTE_EXCD = {"NASDAQ": "BAQ", "NYSE": "BAY", "AMEX": "BAA"}
 
 KST = ZoneInfo("Asia/Seoul")
 # A mock account cannot read open orders the way a real one does: the vendor's
@@ -119,7 +127,7 @@ def _ledger_status(cancelled: Any, filled: int, remaining: int) -> str:
     return "partial" if filled > 0 else "open"
 
 
-class KIS(BaseBroker):
+class KIS(AmendMixin, BaseBroker):
     broker_code = "kis"
     supports_virtual = True
 
@@ -202,6 +210,9 @@ class KIS(BaseBroker):
             requires_venue=self.market == "US",
             venues=tuple(VENUES) if self.market == "US" else ("KRX",),
             markets=(self.market,),
+            # 주간거래 TR 은 실계좌 전용(모의 TR 이 사양에 없다) — 모의는 선언하지 않는다.
+            sessions=("regular", "overnight") if self.market == "US" and not self.virtual else ("regular",),
+            supports_amend=self.market == "US" and not self.virtual,
         )
 
     def get_rules(
@@ -282,8 +293,12 @@ class KIS(BaseBroker):
         value = field(output, "e_ordyn")
         return True if type(value) is str and value == "매매 가능" else None
 
-    def get_quote(self, symbol: str, *, market: str = "KR") -> Quote:
+    def get_quote(self, symbol: str, *, market: str = "KR", session: str = "regular") -> Quote:
         symbol = self._symbol(symbol, market)
+        if session == "overnight" and not (market == "US" and not self.virtual):
+            raise NotSupportedError("KIS overnight quotes are US real-account only")
+        if session not in ("regular", "overnight"):
+            raise NotSupportedError("Unknown quote session")
 
         def read() -> Quote:
             scope, api = self._connect()
@@ -297,7 +312,8 @@ class KIS(BaseBroker):
                     ask=optional_price(book["askp1"]),
                     prev_close=optional_price(price.get("stck_sdpr")),
                 )
-            kwargs = dict(kis_account=scope, excd=VENUES[self.venue][0], code=symbol)
+            excd = DAYTIME_QUOTE_EXCD[self.venue] if session == "overnight" else VENUES[self.venue][0]
+            kwargs = dict(kis_account=scope, excd=excd, code=symbol)
             price = check_response(api.get_price_overseas_detail(**kwargs), "kis")["output"]
             book = check_response(api.get_quote_overseas(**kwargs), "kis")["output2"]
             quote = Quote(
@@ -537,6 +553,10 @@ class KIS(BaseBroker):
                           else field(row, "nccs_qty"))
         if request.quantity > remaining:
             raise ConfigurationError("Cancellation quantity exceeds the broker remaining quantity")
+        if request.session == "overnight":
+            # 주간거래 취소는 전용 TR(TTTS6038U, 02)로만. 정규장 취소 TR 로 보내지 않는다.
+            return self._daytime_write(scope, "amend", request.symbol, request.order_id, request.quantity,
+                                       Decimal(0), "02", request.market)
         branch = field(row, "krx_fwdg_ord_orgno", field(row, "ord_gno_brno"))
         if not isinstance(branch, str) or not branch.strip():
             raise InvalidResponseError("KIS cancellation branch identifier missing")
@@ -587,6 +607,8 @@ class KIS(BaseBroker):
                 raise NotSupportedError("US KIS only implements limit orders")
             if request.venue not in (None, self.venue):
                 raise NotSupportedError("Order venue must match the configured US venue")
+            if request.session == "overnight":
+                return self._daytime_place(scope, symbol, request)
             with self._single_attempt():
                 response = api.post_order_overseas(
                     kis_account=scope,
@@ -614,6 +636,73 @@ class KIS(BaseBroker):
             market=request.market,
             virtual=self.virtual,
         )
+
+    def _daytime_body(self, scope: Any, fields: Mapping[str, Any]) -> Any:
+        return scope.account.build_body({**fields, "CTAC_TLNO": "", "ORD_SVR_DVSN_CD": "0"})
+
+    def _daytime_ack(self, response: Any) -> str:
+        envelope = check_response(response, "kis")
+        if isinstance(response, Mapping) and str(field(envelope, "rt_cd")) != "0":
+            raise InvalidResponseError("KIS daytime response lacks a success status")
+        output = field(envelope, "output", envelope)
+        order_id = field(output, "ODNO", field(output, "odno"))
+        if order_id is None or not str(order_id).strip():
+            raise InvalidResponseError("KIS daytime response lacks an order identifier; reconcile before retrying")
+        return str(order_id)
+
+    def _daytime_place(self, scope: Any, symbol: str, request: OrderRequest) -> Order:
+        """미국 주간 주문(TTTS6036U 매수·6037U 매도). 한 번 보내고, 모르면 미확정으로 남긴다."""
+        body = self._daytime_body(scope, {
+            "OVRS_EXCG_CD": VENUES[self.venue][1],
+            "PDNO": symbol,
+            "ORD_QTY": request.quantity,
+            "OVRS_ORD_UNPR": float(request.price),
+            "MGCO_APTM_ODNO": "",
+            "ORD_DVSN": "00",
+        })
+        with self._single_attempt():
+            response = scope.client.request("post", DAYTIME_ORDER_PATH,
+                                            headers={"tr_id": DAYTIME_TR[request.side]}, body=body, response=None)
+        return Order(id=self._daytime_ack(response), symbol=symbol, side=request.side, order_type="limit",
+                     quantity=request.quantity, price=request.price, status="accepted",
+                     market=request.market, virtual=self.virtual)
+
+    def _daytime_write(self, scope: Any, kind: str, symbol: str, order_id: str, quantity: int,
+                       price: Decimal, dvsn: str, market: str) -> Order:
+        """정정(01)·취소(02) — 주간 전용 TTTS6038U. 수량은 남은 수량 그대로."""
+        body = self._daytime_body(scope, {
+            "OVRS_EXCG_CD": VENUES[self.venue][1],
+            "PDNO": symbol,
+            "ORGN_ODNO": order_id,
+            "RVSE_CNCL_DVSN_CD": dvsn,
+            "ORD_QTY": quantity,
+            "OVRS_ORD_UNPR": float(price),
+            "MGCO_APTM_ODNO": "",
+        })
+        with self._single_attempt():
+            response = scope.client.request("post", DAYTIME_AMEND_PATH,
+                                            headers={"tr_id": DAYTIME_TR[kind]}, body=body, response=None)
+        self._daytime_ack(response)
+        # An accepted amendment/cancellation is not proof of the final state; the ledger decides.
+        return Order(id=order_id, symbol=symbol, market=market, quantity=quantity, status="accepted",
+                     virtual=self.virtual)
+
+    def _amend_order(self, request: AmendRequest) -> Order:
+        if request.session != "overnight":
+            raise NotSupportedError("KIS amendment is implemented for the daytime session only")
+        scope, api = self._connect()
+        symbol = self._symbol(request.symbol, request.market)
+        rows = check_response(api.get_open_orders_overseas_all(
+            kis_account=scope, market=VENUES[self.venue][1]), "kis")["output"]
+        matches = [row for row in rows if str(field(row, "odno")) == request.order_id
+                   and field(row, "pdno") == symbol]
+        if len(matches) != 1:
+            raise NotSupportedError("KIS exact open order not found; reconcile before amendment")
+        remaining = whole(field(matches[0], "nccs_qty"))
+        if request.quantity != remaining:
+            raise ConfigurationError("Amendment quantity must equal the broker remaining quantity")
+        return self._daytime_write(scope, "amend", symbol, request.order_id, remaining, request.price, "01",
+                                   request.market)
 
     def close(self) -> None:
         if not self._closed and self._owns_client and self._client is not None:

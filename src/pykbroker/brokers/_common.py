@@ -16,7 +16,7 @@ from pykbroker.exceptions import (
     SpecUnverifiedError,
     TransportError,
 )
-from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
+from pykbroker.models import AmendRequest, Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
 from pykbroker.rules.kr import LOT, equity_rules, normalize_symbol
 from pykbroker.safety.gate import OrderSafety
 
@@ -171,9 +171,14 @@ class BaseBroker:
                 return position.sellable
         return 0
 
-    def _validate_order(self, request: OrderRequest | CancelRequest) -> None:
+    def _validate_order(self, request: OrderRequest | CancelRequest | AmendRequest) -> None:
         self._symbol(request.symbol, request.market)
         capabilities = self.capabilities()
+        # 세션은 어댑터가 선언한 것만 — 선언 없으면 정규장으로 바꿔 보내지 않고 HTTP 전에 거절한다.
+        if request.session not in capabilities.sessions:
+            raise NotSupportedError("This order session is not supported by this broker")
+        if isinstance(request, AmendRequest) and not capabilities.supports_amend:
+            raise NotSupportedError("Order amendment is not supported")
         # capabilities() is the plan the executor makes; validation must agree with it exactly.
         if request.venue == "NXT" and not capabilities.supports_nxt:
             raise NotSupportedError("NXT is not supported")
@@ -272,3 +277,18 @@ class BaseBroker:
 
     def __exit__(self, *args: Any) -> None:
         self.close()
+
+
+class AmendMixin:
+    """Price-only amendment, for the adapters whose vendor spec has one (KIS daytime, NH US, Toss US).
+    Other adapters do not carry `amend_order` at all."""
+
+    def amend_order(self: Any, request: AmendRequest) -> Order:
+        request = AmendRequest.model_validate(request.model_dump())
+        self._validate_order(request)
+        return self.safety.execute(
+            self.broker_code, self._account, request, lambda: self._call(lambda: self._amend_order(request))
+        )
+
+    def _amend_order(self, request: AmendRequest) -> Order:
+        raise NotSupportedError("Order amendment is not implemented")

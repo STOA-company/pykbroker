@@ -29,12 +29,12 @@ from pykbroker.exceptions import (
     SafetyError,
     TransportError,
 )
-from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
+from pykbroker.models import AmendRequest, Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
 from pykbroker.rules.kr import KST, equity_rules
 from pykbroker.safety.gate import OrderSafety
 from pykbroker.safety.rate_limit import RateLimiter, credential_rate_limiter
 
-from ._common import BaseBroker, decimal, optional_price, whole
+from ._common import AmendMixin, BaseBroker, decimal, optional_price, whole
 
 NH_API_BASE_URL = "https://api.nhplug.com:8443"
 NH_MOCK_BASE_URL = "https://moapi.nhplug.com:8443"
@@ -126,7 +126,11 @@ def _order_number(value: Any, *, max_digits: int = 10) -> str:
     return str(int(number))
 
 
-class NH(BaseBroker):
+# gbstock 호가유형 63 = 주간거래(지정가). 주간 시장가 코드는 사양에 없다.
+NH_US_DAYTIME_LIMIT = "63"
+
+
+class NH(AmendMixin, BaseBroker):
     broker_code = "nh"
     supports_virtual = True
 
@@ -383,6 +387,9 @@ class NH(BaseBroker):
             venues=(self.venue,),
             markets=(self.market,),
             supports_nxt=self.venue == "NXT",
+            # 해외 주식 주문 호가유형 63 = 주간거래(지정가) — gbstock 사양(nh/llms-full.txt:471·477). 미국만.
+            sessions=("regular", "overnight") if self.market == "US" else ("regular",),
+            supports_amend=self.market == "US",
         )
 
     def verify_account(self) -> str:
@@ -975,7 +982,8 @@ class NH(BaseBroker):
             "iem_cd": request.symbol,
             "orr_qty": request.quantity,
             "fc_orr_uit_pr": float(self._us_price(request.price)),
-            "ahi_nmn_pr_tp_cd": "00",
+            # 정규장 00, 주간거래(고객이 고른 overnight) 63 — 칸 값만 다르고 경로·나머지 칸은 같다.
+            "ahi_nmn_pr_tp_cd": NH_US_DAYTIME_LIMIT if request.session == "overnight" else "00",
             "wtm_cur_knd_cd": "1",
         }
         output = self._write("/gbstock/order/v1/" + request.side, payload, number_field="orr_no")
@@ -990,6 +998,25 @@ class NH(BaseBroker):
             status="accepted",
             virtual=self.virtual,
         )
+
+    def _amend_order(self, request: AmendRequest) -> Order:
+        if self.market != "US":
+            raise NotSupportedError("NH amendment is implemented for US orders only")
+        if not request.order_id.startswith("us:"):
+            raise ConfigurationError("NH US amendment requires the original US order number")
+        # modify 는 원주문번호와 새 단가만 받는다(수량·호가유형 칸 없음) — 가격만 바꾼다.
+        self._write(
+            "/gbstock/order/v1/modify",
+            {
+                "act_no": self._account,
+                "fc_sec_trd_nat_cd": "200",
+                "iem_cd": request.symbol,
+                "org_orr_no": int(_order_number(request.order_id[3:])),
+                "fc_orr_uit_pr": float(self._us_price(request.price)),
+            },
+            number_field="orr_no",
+        )
+        return Order(id=request.order_id, symbol=request.symbol, market="US", status="accepted", virtual=self.virtual)
 
     def _us_cancel_order(self, request: CancelRequest) -> Order:
         self._write(
@@ -1040,7 +1067,7 @@ class NH(BaseBroker):
                     symbol=symbol,
                     market="US",
                     side={"1": "sell", "2": "buy"}.get(str(row.get("oss_sby_dit_cd"))),
-                    order_type="limit" if row.get("ahi_nmn_pr_tp_cd") == "00" else None,
+                    order_type="limit" if row.get("ahi_nmn_pr_tp_cd") in ("00", NH_US_DAYTIME_LIMIT) else None,
                     quantity=quantity,
                     price=decimal(row["fc_orr_uit_pr"]),
                     filled=filled,

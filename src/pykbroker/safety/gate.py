@@ -9,7 +9,7 @@ from typing import TypeVar
 from zoneinfo import ZoneInfo
 
 from pykbroker.exceptions import BrokerError, CircuitOpenError, DuplicateOrderError, RiskCapError, SafetyError
-from pykbroker.models import CancelRequest, OrderRequest
+from pykbroker.models import AmendRequest, CancelRequest, OrderRequest
 
 from .dry_run import DryRun, mask_account
 from .idempotency import IdempotencyStore, scope_key
@@ -41,7 +41,7 @@ class OrderSafety:
         self.valuation, self.market_order_allowed = valuation, market_order_allowed
         self.clock = clock or (lambda: datetime.now(ZoneInfo("Asia/Seoul")))
 
-    def execute(self, broker: str, account: str, request: OrderRequest | CancelRequest, submit: Callable[[], T]) -> T:
+    def execute(self, broker: str, account: str, request: OrderRequest | CancelRequest | AmendRequest, submit: Callable[[], T]) -> T:
         try:
             return self._execute(broker, account, request, submit)
         except BrokerError:
@@ -49,14 +49,26 @@ class OrderSafety:
         except Exception:
             raise SafetyError("Safety provider failed; operation blocked, reconcile before retrying") from None
 
-    def _execute(self, broker: str, account: str, request: OrderRequest | CancelRequest, submit: Callable[[], T]) -> T:
+    def _execute(self, broker: str, account: str, request: OrderRequest | CancelRequest | AmendRequest, submit: Callable[[], T]) -> T:
         # The first three stages are invariant across submission and cancellation.
         self.dry_run.require_live()
         if self.limits is None or self.risk_ledger is None:
             raise RiskCapError("risk_caps: limits and usage ledger are required")
         DryRun(self.limits.dry_run).require_live()
         amount = Decimal(0)
-        action = "cancel" if isinstance(request, CancelRequest) else "place"
+        action = "cancel" if isinstance(request, CancelRequest) else "amend" if isinstance(request, AmendRequest) else "place"
+        if isinstance(request, AmendRequest):
+            # An amendment reserves the new price at full remaining quantity, like a fresh order
+            # (conservative: the original reservation stays). No valuation provider → no amendment.
+            priced = OrderRequest(symbol=request.symbol, side=request.side, quantity=request.quantity,
+                                  price=request.price, market=request.market, venue=request.venue,
+                                  session=request.session, client_key=request.client_key)
+            if self.valuation is None:
+                raise RiskCapError("risk_caps: a conservative KRW valuation is required")
+            estimate = self.valuation(priced)
+            if not isinstance(estimate, Decimal) or not estimate.is_finite() or estimate <= 0:
+                raise RiskCapError("risk_caps: invalid KRW valuation")
+            amount = estimate
         if isinstance(request, OrderRequest):
             if request.order_type == "market":
                 if self.market_order_allowed is None or self.market_order_allowed(request) is not True:
