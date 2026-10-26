@@ -153,6 +153,10 @@ def _json_object(value):
     return result
 
 
+#: Currency label of an LS PrexchOrdAbleAmt read until its unit is confirmed by a real order.
+PREXCH_UNIT_UNVERIFIED = "UNVERIFIED"
+
+
 class LS(RestBroker):
     broker_code = "ls"
     supports_virtual = True  # Accept explicit mode; missing mock contract still fails closed.
@@ -579,8 +583,10 @@ class LS(RestBroker):
     def krw_order_limit(self) -> OrderLimit:
         """US pre-exchange (가환전) order limit, COSOQ02701OutBlock3.PrexchOrdAbleAmt.
 
-        Basis: the column name 가환전주문가능금액 and the row's CrcyCode == USD only. The TR guide
-        gives no unit definition and no enrollment field -- 칸 이름 근거, 실주문 확정 대기.
+        The unit is NOT established: the TR guide (COSOQ02701OutBlock3) gives PrexchOrdAbleAmt length 21.4,
+        longer than the foreign-currency amounts beside it (FcurrOrdAbleAmt 17.4), so it may be a won amount.
+        The value is therefore labelled ``PREXCH_UNIT_UNVERIFIED`` -- never "USD" -- and a consumer must
+        treat the limit as unknown (refuse, send 0) until one real order fixes the unit. 실주문 확정 대기.
         Read-only; it never enrolls the account or exchanges currency.
         """
         if self.market != "US":
@@ -593,7 +599,7 @@ class LS(RestBroker):
             rows = [r for r in self._us_rows(response, "COSOQ02701OutBlock3") if r.get("CrcyCode") == "USD"]
             if len(rows) != 1:
                 raise InvalidResponseError("LS pre-exchange limit requires exactly one USD row")
-            return OrderLimit(decimal(rows[0]["PrexchOrdAbleAmt"]), "USD")
+            return OrderLimit(decimal(rows[0]["PrexchOrdAbleAmt"]), PREXCH_UNIT_UNVERIFIED)
 
         return self._call(read)
 

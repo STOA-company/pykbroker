@@ -266,8 +266,10 @@ class KB(BaseBroker):
 
         Global One Market enrollment must already belong to this owner-bound account.
         It cannot be inferred from a positive amount and is never changed here.
-        SKQM2106 lacks a documented returned currency/FX basis; consumers must not
-        treat its foreign amount as a verified USD budget.
+        SKQM2106 lacks a documented returned currency/FX basis. For a US KRW-settled buy the queue
+        uses the foreign-currency unified column (fcrncy_unty_ordr_psbl_amt_p2) as a USD budget on the
+        strength of its name only -- the column currency is unconfirmed, 실주문 확정 대기 (design
+        "실주문 확정 목록"). The broker re-checks every order, so a wrong guess is refused, not filled.
         """
         symbol = self._symbol(symbol, self.market)
         def read():

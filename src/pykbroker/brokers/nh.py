@@ -209,6 +209,7 @@ class NH(BaseBroker):
         virtual: bool = False,
         allow_live_orders: bool = False,
         is_integrated: bool = False,
+        krw_settlement: bool = False,
         client_factory: Callable[..., Any] | None = None,
         token_cache: MutableMapping[str, dict[str, str]] | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -222,6 +223,11 @@ class NH(BaseBroker):
         if type(is_integrated) is not bool:
             raise ConfigurationError("is_integrated must be a boolean")
         self.is_integrated = is_integrated
+        # Won settlement of a US buy: set ONLY for a customer-confirmed order (the queue request's
+        # is_integrated). The account/strategy integrated-margin policy (is_integrated) never turns it on.
+        if type(krw_settlement) is not bool:
+            raise ConfigurationError("krw_settlement must be a boolean")
+        self.krw_settlement = krw_settlement
         if type(allow_live_orders) is not bool:
             raise ConfigurationError("allow_live_orders must be a boolean")
         self._allow_live_orders = allow_live_orders
@@ -1050,15 +1056,14 @@ class NH(BaseBroker):
         )
 
     def _us_buying_power(self, code: str, kind: str, price: Decimal | None = None) -> Mapping[str, Any]:
-        # 4 explicitly excludes integrated-margin buying power. 1 includes it,
-        # and is selected only for an account already enrolled by its owner.
+        # wtm_cur_knd_cd: 4 excludes integrated-margin buying power; 1 includes it (is_integrated policy,
+        # an account already enrolled by its owner); 2 = won (krw_settlement, a customer-confirmed order only).
         payload = {
             "act_no": self._account,
             "pcs_dit": kind,
             "fc_sec_trd_nat_cd": "200",
             "iem_cd": code,
-            # KRW settlement (is_integrated): 2 = won. Otherwise 4 excludes integrated margin.
-            "wtm_cur_knd_cd": "2" if self.is_integrated else "4",
+            "wtm_cur_knd_cd": "2" if self.krw_settlement else ("1" if self.is_integrated else "4"),
             "oss_orr_knd_cd": "1",
             "ahi_nmn_pr_tp_cd": "00",
             "cfd_lon_cd": "00",
@@ -1068,7 +1073,7 @@ class NH(BaseBroker):
         row = self._read("/gbstock/inquiry/v1/buyableAmount", payload, "Output_0")["Output_0"]
         if not isinstance(row, Mapping):
             raise InvalidResponseError("NH US buying power block is invalid")
-        expected_currency = "KRW" if self.is_integrated else "USD"
+        expected_currency = "KRW" if self.krw_settlement else "USD"
         if kind in {"1", "2"} and row.get("wtm_cur_cd") != expected_currency:
             raise InvalidResponseError(f"NH US buying power currency is not {expected_currency}")
         return row
@@ -1088,7 +1093,7 @@ class NH(BaseBroker):
         code = self._symbol(symbol, "US")
 
         def read() -> OrderLimit:
-            if not self.is_integrated:
+            if not self.krw_settlement:
                 return OrderLimit(decimal(self._us_buying_power(code, "1", price)["orr_pbl_amt"]), "USD")
             amount = decimal(self._us_buying_power(code, "1", price)["orr_pbl_amt"])
             quantity = whole(self._us_buying_power(code, "2", price)["orr_pbl_qty"])
@@ -1185,9 +1190,9 @@ class NH(BaseBroker):
             "ahi_nmn_pr_tp_cd": "00",
         }
         # The official sell schema has no margin-currency field. Buy: 1 = same currency (USD),
-        # 2 = won (settled by the broker's automatic exchange); won only when is_integrated.
+        # 2 = won (settled by the broker's automatic exchange); won only when krw_settlement.
         if request.side == "buy":
-            payload["wtm_cur_knd_cd"] = "2" if self.is_integrated else "1"
+            payload["wtm_cur_knd_cd"] = "2" if self.krw_settlement else "1"
         output = self._write("/gbstock/order/v1/" + request.side, payload, number_field="orr_no")
         return Order(
             id="us:" + _order_number(output["orr_no"]),

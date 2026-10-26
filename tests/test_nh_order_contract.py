@@ -341,13 +341,13 @@ def test_us_limit_cancel_status_and_fill_share_documented_order_number(live_safe
     assert all(call[0] == NH_MOCK_BASE_URL for call in calls)
 
 
-@pytest.mark.parametrize("integrated,wire,currency", [(False, "4", "USD"), (True, "2", "KRW")])
-def test_us_buying_power_includes_integrated_only_for_explicit_existing_enrollment(integrated, wire, currency):
+@pytest.mark.parametrize("integrated,wire", [(False, "4"), (True, "1")])
+def test_us_buying_power_includes_integrated_only_for_explicit_existing_enrollment(integrated, wire):
     broker, calls = make(
         {
             US_POWER: [
-                reply({"orr_pbl_qty": 3, "orr_pbl_amt": "500.25", "wtm_cur_cd": currency}),
-                reply({"orr_pbl_amt": "500.25", "wtm_cur_cd": currency}),
+                reply({"orr_pbl_qty": 3, "orr_pbl_amt": "500.25", "wtm_cur_cd": "USD"}),
+                reply({"orr_pbl_amt": "500.25", "wtm_cur_cd": "USD"}),
             ]
         },
         market="US",

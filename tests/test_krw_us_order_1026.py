@@ -17,6 +17,7 @@ from pykbroker.exceptions import (
     InvalidResponseError,
     NotSupportedError,
 )
+from pykbroker.brokers.ls import PREXCH_UNIT_UNVERIFIED
 from pykbroker.models import OrderRequest
 
 from .test_ls_contract import us_make as ls_us_make
@@ -28,10 +29,11 @@ KRW_FIELDS = ("NH", "KIWOOM", "KB", "LS", "MERITZ")
 # NH ---------------------------------------------------------------------------------
 @pytest.mark.parametrize("integrated,wire", [(False, "1"), (True, "2")])
 def test_nh_buy_body_currency_code_follows_krw_flag_and_nothing_else_changes(integrated, wire, live_safety):
+    # `integrated` below is the krw_settlement option (customer-confirmed), not the account policy.
     live_safety.valuation = lambda request: Decimal(1000)
     broker, calls = nh_make(
         {"/gbstock/order/v1/buy": [reply({"orr_no": 7})]},
-        market="US", venue="US", virtual=True, safety=live_safety, is_integrated=integrated,
+        market="US", venue="US", virtual=True, safety=live_safety, krw_settlement=integrated,
     )
     broker.place_order(OrderRequest(symbol="AAPL", market="US", side="buy", quantity=2,
                                     price=Decimal("230.25"), client_key="k"))
@@ -47,7 +49,7 @@ def test_nh_sell_body_has_no_currency_field_in_either_mode(live_safety):
     for integrated in (False, True):
         broker, calls = nh_make(
             {"/gbstock/order/v1/sell": [reply({"orr_no": 8})]},
-            market="US", venue="US", virtual=True, safety=live_safety, is_integrated=integrated,
+            market="US", venue="US", virtual=True, safety=live_safety, krw_settlement=integrated,
         )
         broker.place_order(OrderRequest(symbol="AAPL", market="US", side="sell", quantity=1,
                                         price=Decimal("230.25"), client_key=f"s-{integrated}"))
@@ -58,7 +60,7 @@ def test_nh_krw_limit_is_quantity_labelled_krw_never_a_usd_amount():
     broker, calls = nh_make(
         {US_POWER: [reply({"orr_pbl_amt": "700000", "wtm_cur_cd": "KRW"}),
                     reply({"orr_pbl_qty": 4, "orr_pbl_amt": "700000", "wtm_cur_cd": "KRW"})]},
-        market="US", venue="US", is_integrated=True)
+        market="US", venue="US", krw_settlement=True)
     assert broker.buyable_limit("AAPL", price=Decimal("150")) == OrderLimit(Decimal(4), "KRW", "quantity")
     assert [c[3]["Input_0"]["wtm_cur_knd_cd"] for c in calls] == ["2", "2"]
     assert [c[3]["Input_0"]["pcs_dit"] for c in calls] == ["1", "2"]
@@ -75,9 +77,25 @@ def test_nh_cash_limit_is_usd_amount_and_krw_row_is_refused():
 
 def test_nh_krw_row_in_usd_mode_wrong_currency_in_krw_mode_refused():
     broker, _ = nh_make({US_POWER: [reply({"orr_pbl_amt": "5", "wtm_cur_cd": "USD"})]},
-                        market="US", venue="US", is_integrated=True)
+                        market="US", venue="US", krw_settlement=True)
     with pytest.raises(InvalidResponseError):
         broker.buyable_limit("AAPL", price=Decimal("150"))
+
+
+@pytest.mark.parametrize("policy_only", [True])
+def test_nh_integrated_margin_policy_alone_never_sends_won_settlement(policy_only, live_safety):
+    """P2-2: the account/strategy policy (is_integrated) keeps its old meaning — a lookup of integrated
+    margin (wtm 1). The order body stays 1 (same currency); only krw_settlement sends 2."""
+    live_safety.valuation = lambda request: Decimal(1000)
+    broker, calls = nh_make({"/gbstock/order/v1/buy": [reply({"orr_no": 7})]}, market="US", venue="US",
+                            virtual=True, safety=live_safety, is_integrated=policy_only)
+    broker.place_order(OrderRequest(symbol="AAPL", market="US", side="buy", quantity=2,
+                                    price=Decimal("230.25"), client_key="k"))
+    assert calls[0][3]["Input_0"]["wtm_cur_knd_cd"] == "1"
+    broker, calls = nh_make({US_POWER: [reply({"orr_pbl_amt": "9", "wtm_cur_cd": "USD"})]},
+                            market="US", venue="US", is_integrated=policy_only)
+    assert broker.buyable_limit("AAPL", price=Decimal("150")) == OrderLimit(Decimal("9"), "USD")
+    assert calls[0][3]["Input_0"]["wtm_cur_knd_cd"] == "1"
 
 
 # Kiwoom -----------------------------------------------------------------------------
@@ -145,7 +163,7 @@ def test_ls_pre_exchange_limit_reads_prexch_column_for_usd_row_only():
             {"CrcyCode": "JPY", "FcurrOrdAbleAmt": "1", "PrexchOrdAbleAmt": "9999"}]
     broker, client, _ = ls_us_make({"COSOQ02701": [{"rsp_cd": "00000", "COSOQ02701OutBlock3": rows}]},
                                    is_integrated=True)
-    assert broker.krw_order_limit() == OrderLimit(Decimal("321.5"), "USD")
+    assert broker.krw_order_limit() == OrderLimit(Decimal("321.5"), PREXCH_UNIT_UNVERIFIED)  # unit unconfirmed (len 21.4)
     assert len(client.calls) == 1
 
 
