@@ -25,6 +25,10 @@ class Capabilities(Model):
     supports_virtual_account: bool = False
     virtual: bool = False
     markets: tuple[str, ...] = ()
+    # Order sessions this adapter can route; "regular" is every adapter, "overnight" (US daytime)
+    # only where the vendor spec names it. Price-only amendment is declared separately.
+    sessions: tuple[str, ...] = ("regular",)
+    supports_amend: bool = False
 
     @model_validator(mode="after")
     def _venue_requirement_names_its_venues(self) -> "Capabilities":

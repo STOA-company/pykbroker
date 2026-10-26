@@ -24,12 +24,12 @@ from pykbroker.exceptions import (
     TossRejectedError,
     TransportError,
 )
-from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
+from pykbroker.models import AmendRequest, Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
 from pykbroker.safety.gate import OrderSafety
 from pykbroker.safety.idempotency import order_key
 from pykbroker.safety.rate_limit import RateLimiter, credential_rate_limiter
 
-from ._common import BaseBroker, decimal, optional_price, whole
+from ._common import AmendMixin, BaseBroker, decimal, optional_price, whole
 
 # SDK 호출 이름 → TOKEN_BUCKETS 그룹. 값은 toss_call_rates() 가 SDK 에서 읽는다.
 _METHOD_GROUPS = {
@@ -42,6 +42,7 @@ _METHOD_GROUPS = {
     "list_open_orders": "ORDER_HISTORY",
     "submit_order": "ORDER",
     "cancel_order": "ORDER",
+    "modify_order": "ORDER",
 }
 
 # toss-openapi 가 없을 때의 표. 설치돼 있으면 TOKEN_BUCKETS 가 이 값을 덮는다.
@@ -247,12 +248,25 @@ class _TossBridge:
         result = self._models.OrderOperationResponse.from_payload(payload)
         return {"submitted": True, "status": "CANCEL_SUBMITTED", "order_id": result.order_id}
 
+    async def modify_order(self, order_id, price):
+        if self._dry_run:
+            return {"submitted": False, "status": "DRY_RUN", "order_id": order_id}
+        self._guard.check_live_allowed(self._context)
+        try:
+            # US modify: price only — `quantity` makes the vendor answer 400 us-modify-quantity-not-supported.
+            payload = await self._post_once(f"/api/v1/orders/{order_id}/modify",
+                                            json_body={"orderType": "LIMIT", "price": price})
+        except self._api_error_type as exc:
+            self._raise_write_error(exc)
+        result = self._models.OrderOperationResponse.from_payload(payload)
+        return {"submitted": True, "status": "MODIFY_SUBMITTED", "order_id": result.order_id}
+
     async def aclose(self):
         await self._client.aclose()
         await self._transport.aclose()
 
 
-class Toss(BaseBroker):
+class Toss(AmendMixin, BaseBroker):
     broker_code = "toss"
 
     def _symbol(self, symbol: str, market: str) -> str:
@@ -354,6 +368,10 @@ class Toss(BaseBroker):
                 supports_order_history=True,
                 realtime_open_orders=True,
                 markets=("US",),
+                # 주문에 세션 칸이 없다(사양 v1.2.24) — 주간거래는 보내는 시각으로 갈리고 주문은 그대로다.
+                # 정정은 가격만(US modify 는 quantity 를 받지 않는다).
+                sessions=("regular", "overnight"),
+                supports_amend=True,
             )
         # 🚨 B′-0/B′2-1: 거래소 선언(`venues`)은 손으로 다시 적지 않고 base 에서 받아 확장한다.
         # 이 메서드가 base 를 통째로 대체하면서 `venues` 를 빠뜨렸고, A′ 2라운드가
@@ -667,6 +685,24 @@ class Toss(BaseBroker):
         if response.get("status") not in {"CANCELLED", "CANCELED", "CANCEL_SUBMITTED"}:
             raise BrokerRejectedError("Toss cancellation was not acknowledged")
         return Order(id=request.order_id, symbol=request.symbol, status="accepted", market=self.market)
+
+    def _amend_order(self, request: AmendRequest) -> Order:
+        if self._options["dry_run"]:
+            raise DryRunError("dry_run: Toss live amendment is disabled")
+        if self.market != "US":
+            raise NotSupportedError("Toss amendment is implemented for US orders only")
+        orders = self.list_orders(request.symbol)
+        matching = [order for order in orders if order.id == request.order_id]
+        if len(matching) != 1 or matching[0].quantity is None or matching[0].filled is None:
+            raise InvalidResponseError("Cannot establish the requested Toss order's remaining quantity")
+        if request.quantity != matching[0].quantity - matching[0].filled:
+            raise ConfigurationError("Toss amendment requires the full remaining quantity")
+        response = self._run("modify_order", request.order_id, format(request.price, "f"))
+        if response.get("status") != "MODIFY_SUBMITTED":
+            raise BrokerRejectedError("Toss amendment was not acknowledged")
+        # The vendor may answer a new order id for the amended order; the ledger decides what is open.
+        return Order(id=response.get("order_id") or request.order_id, symbol=request.symbol,
+                     status="accepted", market=self.market)
 
     def close(self) -> None:
         with self._lock:
