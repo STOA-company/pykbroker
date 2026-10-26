@@ -19,6 +19,7 @@ from pykbroker.exceptions import (
     BrokerError,
     BrokerRejectedError,
     ConfigurationError,
+    IntegratedNotSubscribedError,
     InvalidResponseError,
     NotSupportedError,
     SpecUnverifiedError,
@@ -41,7 +42,7 @@ from pykbroker.rules.kr import KST, equity_rules
 from pykbroker.safety.gate import OrderSafety
 from pykbroker.safety.rate_limit import RateLimiter, credential_rate_limiter
 
-from ._common import BaseBroker, decimal, whole
+from ._common import BaseBroker, OrderLimit, decimal, whole
 
 # Hosts are copied from trader quantus_backend/traders/kiwoom_order.py and match the spec. The mock host is
 # spelled here once so that `virtual` alone picks it.
@@ -797,9 +798,29 @@ class Kiwoom(BaseBroker):
             key = "min_ord_alowq"
             if self.is_integrated:
                 if row.get("krw_ord_rqst_yn") != "Y":
-                    raise NotSupportedError("The broker has not enabled KRW orders for this account")
+                    raise IntegratedNotSubscribedError("The broker has not enabled KRW orders for this account")
                 key = "min_krw_ord_alowq"
             return whole(row[key])
+
+        return self._call(read)
+
+    def krw_order_limit(self, symbol: str, price: Decimal) -> OrderLimit:
+        """ust31490 min_krw_ord_alowa (no-debt KRW-order amount), labelled KRW, only when the broker
+        confirms krw_ord_rqst_yn == "Y". Consumers compare quantity (orderable_quantity), not this."""
+        if self.market != "US":
+            raise NotSupportedError("Kiwoom KRW order limit is read for US")
+        code = self._symbol(symbol, "US")
+        price = decimal(price)
+        if not price:
+            raise ConfigurationError("Supply a positive order price")
+
+        def read() -> OrderLimit:
+            row = self._post("/api/us/ordr", "ust31490", {**self._us_body(code), "uv": format(price, "f")})[0]
+            if row.get("crnc_code") != "USD":
+                raise InvalidResponseError("Kiwoom orderability currency is not USD")
+            if row.get("krw_ord_rqst_yn") != "Y":
+                raise IntegratedNotSubscribedError("The broker has not enabled KRW orders for this account")
+            return OrderLimit(decimal(row["min_krw_ord_alowa"]), "KRW")
 
         return self._call(read)
 

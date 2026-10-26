@@ -19,10 +19,11 @@ from typing import Any
 from urllib.parse import urlencode
 
 from pykbroker._http import urlopen
-from pykbroker.brokers._common import BaseBroker, PageRows, decimal, optional_price, whole
+from pykbroker.brokers._common import BaseBroker, OrderLimit, PageRows, decimal, optional_price, whole
 from pykbroker.exceptions import (
     BrokerRejectedError,
     ConfigurationError,
+    IntegratedNotSubscribedError,
     InvalidResponseError,
     NotSupportedError,
     SpecUnverifiedError,
@@ -176,8 +177,7 @@ class LS(RestBroker):
             raise ConfigurationError("LS verification and margin flags must be booleans")
         if type(allow_live_orders) is not bool:
             raise ConfigurationError("allow_live_orders must be a boolean")
-        if is_integrated:
-            raise SpecUnverifiedError("LS unified margin enrollment/settlement contract is unverified")
+        self.is_integrated = is_integrated
         if market == "US" and venue not in LS_US_VENUES:
             raise ConfigurationError("LS US venue must be NYSE or NASDAQ")
         if order_date is not None and type(order_date) is not date:
@@ -575,6 +575,27 @@ class LS(RestBroker):
         return Rules(symbol=symbol, market="US", currency="USD", timezone="America/New_York",
                      lot=1, regular_open="09:30", regular_close="16:00",
                      halted=self._us_native_halts[symbol])
+
+    def krw_order_limit(self) -> OrderLimit:
+        """US pre-exchange (가환전) order limit, COSOQ02701OutBlock3.PrexchOrdAbleAmt.
+
+        Basis: the column name 가환전주문가능금액 and the row's CrcyCode == USD only. The TR guide
+        gives no unit definition and no enrollment field -- 칸 이름 근거, 실주문 확정 대기.
+        Read-only; it never enrolls the account or exchanges currency.
+        """
+        if self.market != "US":
+            raise NotSupportedError("LS pre-exchange limit is read for US")
+
+        def read() -> OrderLimit:
+            response = self._response(
+                "/overseas-stock/accno", "COSOQ02701", {"COSOQ02701InBlock1": {"RecCnt": 1, "CrcyCode": "USD"}}
+            )
+            rows = [r for r in self._us_rows(response, "COSOQ02701OutBlock3") if r.get("CrcyCode") == "USD"]
+            if len(rows) != 1:
+                raise InvalidResponseError("LS pre-exchange limit requires exactly one USD row")
+            return OrderLimit(decimal(rows[0]["PrexchOrdAbleAmt"]), "USD")
+
+        return self._call(read)
 
     def get_balance(self) -> Balance:
         if self.market == "US":

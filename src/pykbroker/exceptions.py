@@ -21,6 +21,10 @@ class SpecUnverifiedError(NotSupportedError):
     """A specification lock prevents this operation."""
 
 
+class IntegratedNotSubscribedError(SpecUnverifiedError):
+    """The account has not applied for the broker's KRW/integrated-margin service; nothing is sent."""
+
+
 class FractionalNotSupportedError(NotSupportedError):
     """Fractional shares (amount buy / decimal sell) are not an API feature of this broker/market.
 

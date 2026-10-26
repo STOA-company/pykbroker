@@ -759,9 +759,11 @@ def test_us_live_write_remains_locked_even_when_spec_flag_is_true(monkeypatch, l
     assert client.calls == []
 
 
-def test_ls_margin_requires_documented_enrollment_contract():
-    with pytest.raises(SpecUnverifiedError):
-        us_make(is_integrated=True)
+def test_ls_pre_exchange_krw_path_is_constructible_and_flag_is_boolean():
+    broker, _, _ = us_make(is_integrated=True)
+    assert broker.is_integrated is True
+    with pytest.raises(ConfigurationError):
+        us_make(is_integrated="yes")
 
 
 def test_us_order_and_exact_id_cancel_use_official_tr_template():

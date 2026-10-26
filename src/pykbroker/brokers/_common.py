@@ -3,7 +3,7 @@
 from collections.abc import Callable, Mapping
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any, TypeVar
+from typing import Any, NamedTuple, TypeVar
 
 from pydantic import ValidationError
 
@@ -34,6 +34,18 @@ from pykbroker.rules.kr import LOT, equity_rules, normalize_symbol
 from pykbroker.safety.gate import OrderSafety
 
 T = TypeVar("T")
+
+
+class OrderLimit(NamedTuple):
+    """A broker buying-power read with its unit made explicit.
+
+    ``currency`` is the currency label of ``amount`` ("USD" or "KRW"); ``unit`` is "amount" or
+    "quantity". Consumers must never compare a KRW amount against a USD notional.
+    """
+
+    amount: Decimal
+    currency: str
+    unit: str = "amount"
 
 
 def field(value: Any, name: str, default: Any = None) -> Any:

@@ -132,8 +132,9 @@ def test_dbfi_us_cash_explicit_margin_selection(integrated, expected):
         region="overseas", stock_code="TEST", order_type="2", price=120.5, won_fcurr_type="2")
 
 
-@pytest.mark.parametrize("flag", ["N", None])
-def test_dbfi_us_integrated_margin_requires_broker_confirmation(flag):
+@pytest.mark.parametrize("flag,error", [("N", "IntegratedNotSubscribedError"), (None, "InvalidResponseError")])
+def test_dbfi_us_integrated_margin_requires_broker_confirmation(flag, error):
+    import pykbroker.exceptions as exceptions
     from unittest.mock import Mock
 
     from pykbroker.brokers.dbfi import DBFI
@@ -141,7 +142,7 @@ def test_dbfi_us_integrated_margin_requires_broker_confirmation(flag):
     client.get_able_order_quantity.return_value = {"rsp_cd": "00000", "Out": {
         "AstkOrdAbleAmt0": "300", "CsldtMgnUseYn": flag}}
     broker = DBFI(account="fixture", market="US", venue="NASDAQ", client=client, is_integrated=True)
-    with pytest.raises(InvalidResponseError, match="not confirmed"):
+    with pytest.raises(getattr(exceptions, error)):
         broker.available_cash()
 
 

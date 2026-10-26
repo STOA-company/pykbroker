@@ -46,7 +46,7 @@ from pykbroker.rules.kr import KST, equity_rules
 from pykbroker.safety.gate import OrderSafety
 from pykbroker.safety.rate_limit import RateLimiter, credential_rate_limiter
 
-from ._common import BaseBroker, decimal, optional_price, whole
+from ._common import BaseBroker, OrderLimit, decimal, optional_price, whole
 
 NH_API_BASE_URL = "https://api.nhplug.com:8443"
 NH_MOCK_BASE_URL = "https://moapi.nhplug.com:8443"
@@ -1057,7 +1057,8 @@ class NH(BaseBroker):
             "pcs_dit": kind,
             "fc_sec_trd_nat_cd": "200",
             "iem_cd": code,
-            "wtm_cur_knd_cd": "1" if self.is_integrated else "4",
+            # KRW settlement (is_integrated): 2 = won. Otherwise 4 excludes integrated margin.
+            "wtm_cur_knd_cd": "2" if self.is_integrated else "4",
             "oss_orr_knd_cd": "1",
             "ahi_nmn_pr_tp_cd": "00",
             "cfd_lon_cd": "00",
@@ -1067,8 +1068,9 @@ class NH(BaseBroker):
         row = self._read("/gbstock/inquiry/v1/buyableAmount", payload, "Output_0")["Output_0"]
         if not isinstance(row, Mapping):
             raise InvalidResponseError("NH US buying power block is invalid")
-        if kind in {"1", "2"} and row.get("wtm_cur_cd") != "USD":
-            raise InvalidResponseError("NH US buying power currency is not USD")
+        expected_currency = "KRW" if self.is_integrated else "USD"
+        if kind in {"1", "2"} and row.get("wtm_cur_cd") != expected_currency:
+            raise InvalidResponseError(f"NH US buying power currency is not {expected_currency}")
         return row
 
     def buyable_amount(self, symbol: str, *, price: Decimal | None = None) -> Decimal:
@@ -1077,6 +1079,24 @@ class NH(BaseBroker):
             raise NotSupportedError("NH symbol buying-power amount is implemented for US")
         code = self._symbol(symbol, "US")
         return self._call(lambda: decimal(self._us_buying_power(code, "1", price)["orr_pbl_amt"]))
+
+    def buyable_limit(self, symbol: str, *, price: Decimal) -> OrderLimit:
+        """Buying power with its currency label. KRW settlement returns the order quantity
+        (pcs_dit 2) so a consumer never mixes won with a USD notional."""
+        if self.market != "US":
+            raise NotSupportedError("NH symbol buying-power amount is implemented for US")
+        code = self._symbol(symbol, "US")
+
+        def read() -> OrderLimit:
+            if not self.is_integrated:
+                return OrderLimit(decimal(self._us_buying_power(code, "1", price)["orr_pbl_amt"]), "USD")
+            amount = decimal(self._us_buying_power(code, "1", price)["orr_pbl_amt"])
+            quantity = whole(self._us_buying_power(code, "2", price)["orr_pbl_qty"])
+            if amount < 0 or quantity < 0:
+                raise InvalidResponseError("NH KRW buying power is negative")
+            return OrderLimit(Decimal(quantity), "KRW", "quantity")
+
+        return self._call(read)
 
     def _us_pages(
         self, path: str, payload: Mapping[str, Any], block: str
@@ -1164,9 +1184,10 @@ class NH(BaseBroker):
             "fc_orr_uit_pr": float(self._us_price(request.price)),
             "ahi_nmn_pr_tp_cd": "00",
         }
-        # The official sell schema has no margin-currency field.
+        # The official sell schema has no margin-currency field. Buy: 1 = same currency (USD),
+        # 2 = won (settled by the broker's automatic exchange); won only when is_integrated.
         if request.side == "buy":
-            payload["wtm_cur_knd_cd"] = "1"
+            payload["wtm_cur_knd_cd"] = "2" if self.is_integrated else "1"
         output = self._write("/gbstock/order/v1/" + request.side, payload, number_field="orr_no")
         return Order(
             id="us:" + _order_number(output["orr_no"]),

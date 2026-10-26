@@ -9,6 +9,7 @@ from typing import Any
 from pykbroker.exceptions import (
     ConfigurationError,
     FractionalNotSupportedError,
+    IntegratedNotSubscribedError,
     InvalidResponseError,
     MissingDependencyError,
     NotSupportedError,
@@ -164,6 +165,8 @@ class DBFI(BaseBroker):
                 # CSPBQ00100: 100% margin amount excludes a credit/debit buying-power boost.
                 return decimal(output["MgnRat100pctOrdAbleAmt"])
             # CAZCQ01300: Amt0 is integrated margin, Amt1 includes debit and is never used.
+            if self.is_integrated and output.get("CsldtMgnUseYn") == "N":
+                raise IntegratedNotSubscribedError("DBFI integrated margin is not applied for this account")
             if self.is_integrated and output.get("CsldtMgnUseYn") != "Y":
                 raise InvalidResponseError("DBFI integrated margin is not confirmed by the broker")
             key = "AstkOrdAbleAmt0" if self.is_integrated else "AstkOrdAbleAmt"

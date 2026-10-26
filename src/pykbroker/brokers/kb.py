@@ -19,6 +19,7 @@ from pykbroker._http import urlopen
 from pykbroker.exceptions import (
     BrokerRejectedError,
     ConfigurationError,
+    IntegratedNotSubscribedError,
     InvalidResponseError,
     NotSupportedError,
     SpecUnverifiedError,
@@ -28,7 +29,7 @@ from pykbroker.models import AmendRequest, Balance, CancelRequest, Capabilities,
 from pykbroker.reject_codes import rejection_for_code
 from pykbroker.safety.rate_limit import credential_rate_limiter
 
-from ._common import BaseBroker, PageRows, decimal, optional_price, whole
+from ._common import BaseBroker, OrderLimit, PageRows, decimal, optional_price, whole
 
 KB_API_BASE_URL = "https://developer.kbsec.com:32484"
 # SSAM1801/1802 input `ordr_ccd` (official XLSX sheets25/26 row15, 2026-10-24): 00 지정가, 03 시장가,
@@ -277,6 +278,25 @@ class KB(BaseBroker):
                 raise SpecUnverifiedError("KB US spending requires existing Global One Market enrollment")
             row = self._response("skqm2106", {"stnd_is_cd": symbol})
             return decimal(row["fcrncy_unty_ordr_psbl_amt_p2"])
+        return self._call(read)
+
+    def krw_order_limit(self, symbol: str) -> OrderLimit:
+        """SKQM2106 krw_exch_unty_ordr_psbl_amt (원화환산통합주문가능금액), labelled KRW.
+
+        Global One Market has no enrollment field: a zero amount means "not enrolled / no limit"
+        and raises IntegratedNotSubscribedError. A KRW amount is never a USD budget.
+        """
+        if self.market != "US":
+            raise NotSupportedError("KB KRW-converted limit is read for US")
+        symbol = self._symbol(symbol, "US")
+
+        def read() -> OrderLimit:
+            row = self._response("skqm2106", {"stnd_is_cd": symbol})
+            amount = decimal(row["krw_exch_unty_ordr_psbl_amt"])
+            if amount <= 0:
+                raise IntegratedNotSubscribedError("KB Global One Market limit is zero")
+            return OrderLimit(amount, "KRW")
+
         return self._call(read)
 
     def _validate_order(self, request):

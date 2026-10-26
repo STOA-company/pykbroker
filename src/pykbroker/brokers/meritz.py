@@ -17,6 +17,7 @@ from pykbroker._http import urlopen
 from pykbroker.exceptions import (
     BrokerRejectedError,
     ConfigurationError,
+    IntegratedNotSubscribedError,
     InvalidResponseError,
     NotSupportedError,
     SpecUnverifiedError,
@@ -27,7 +28,7 @@ from pykbroker.models.markets import CURRENCIES
 from pykbroker.reject_codes import rejection_for_code
 from pykbroker.safety.rate_limit import credential_rate_limiter
 
-from ._common import BaseBroker, decimal, optional_price, whole
+from ._common import BaseBroker, OrderLimit, decimal, optional_price, whole
 
 MERITZ_API_BASE_URL = "https://openapi.imeritz.com:9443"
 MERITZ_MOCK_BASE_URL = None
@@ -102,10 +103,13 @@ class Meritz(BaseBroker):
 
     def __init__(self, *, account, bound_account=None, app_key=None, token=None, mac_address=None,
                  market="KR", venue=None, client=None, order_date=None, writes_enabled=False,
-                 client_options=None, **kwargs):
+                 client_options=None, is_integrated=False, **kwargs):
         options = dict(client_options or {})
         if options.keys() - {"bound_account", "app_key", "token", "mac_address", "venue"}:
             raise ConfigurationError("Unknown Meritz client_options field")
+        if type(is_integrated) is not bool:
+            raise ConfigurationError("is_integrated must be an explicit boolean")
+        self.is_integrated = is_integrated
         super().__init__(account=account, market=market, **kwargs)
         bound_account = bound_account if bound_account is not None else options.get("bound_account")
         if bound_account != account:
@@ -530,7 +534,7 @@ class Meritz(BaseBroker):
         def read():
             if self.market == "KR":
                 return decimal(self._response("GET", "/accounts/v1/me/deposit")["data"]["oder_able_cash_amt"])
-            data = self._response("GET", self._prefix() + "estimate", params={"intg_marg_iqry_yn": "N"})
+            data = self._response("GET", self._prefix() + "estimate", params={"intg_marg_iqry_yn": "Y" if self.is_integrated else "N"})
             if data.get("tr_cont") != "0":
                 raise InvalidResponseError("Meritz funding continuation is unsupported")
             rows = [r for r in data["data"] if r["crcd"] == CURRENCIES[self.market]]
