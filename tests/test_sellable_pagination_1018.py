@@ -139,19 +139,20 @@ def test_ls_kr_symbol_on_second_page_is_sellable():
 
 
 def test_ls_kr_repeated_cursor_is_refused():
-    broker, _ = _ls([(_t0424([("000660", "1", "1")], "005930"), {})] * 2)
-    with pytest.raises(InvalidResponseError, match="repeated"):
+    broker, _ = _ls([(_t0424([("000660", "1", "1")], "005930"), {"tr_cont": "Y", "tr_cont_key": "k"})] * 2)
+    with pytest.raises(InvalidResponseError, match="(?i)repeated"):
         broker.get_positions()
 
 
 def test_ls_kr_header_more_without_cursor_is_refused():
     broker, _ = _ls([(_t0424([("000660", "1", "1")], ""), {"tr_cont": "Y", "tr_cont_key": "k"})])
-    with pytest.raises(InvalidResponseError, match="conflict"):
+    with pytest.raises(InvalidResponseError, match="Inconsistent"):
         broker.get_positions()
 
 
 def test_ls_kr_page_bound_is_unknown_not_truncated():
-    pages = [(_t0424([("000660", "1", "1")], f"{index:06d}"), {}) for index in range(ls_module.LS_MAX_PAGES)]
+    pages = [(_t0424([("000660", "1", "1")], f"{index:06d}"), {"tr_cont": "Y", "tr_cont_key": f"k{index}"})
+             for index in range(ls_module.LS_MAX_PAGES)]
     broker, client = _ls(pages)
     with pytest.raises(InvalidResponseError, match="page limit"):
         broker.get_positions()
@@ -188,7 +189,7 @@ def test_ls_us_unreadable_continuation_is_refused(headers):
 
 def test_ls_us_missing_headers_stay_unverified():
     broker, _ = _ls([(_cosoq("MSFT", 1, 1), None)], market="US", venue="NASDAQ")
-    with pytest.raises(SpecUnverifiedError):
+    with pytest.raises(InvalidResponseError, match="continuation headers"):
         broker.get_positions()
 
 

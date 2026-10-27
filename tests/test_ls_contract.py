@@ -249,15 +249,10 @@ def test_unverified_body_cursor_only_empty_account_pages_are_empty_lists(tr, met
 )
 def test_unverified_or_unreadable_pagination_never_returns_partial_data(tr, method, block, cursor, meta, expected):
     pages = [page(tr, **{block: {cursor: meta}})]
-    followed = tr == "t0424" and meta == "more"
-    if followed:
-        # t0424 holdings now follow the official cts_expcode; the same cursor twice is refused.
-        pages.append(page(tr, **{block: {cursor: meta}}))
-        expected = InvalidResponseError
     broker, client, _ = make({tr: pages})
     with pytest.raises(expected):
         getattr(broker, method)()
-    assert len(client.calls) == (2 if followed else 1)
+    assert len(client.calls) == 1
 
 
 @pytest.mark.parametrize(

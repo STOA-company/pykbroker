@@ -164,7 +164,7 @@ def test_ls_kr_empty_next_page_and_cursor_loop():
     assert _sellable(broker.get_positions(), "005930") == 2
     loop = (_t0424([("005930", "2", "2")], "005930"), {"tr_cont": "Y", "tr_cont_key": "k1"})
     broker, _ = _ls([loop, loop, loop])
-    with pytest.raises(InvalidResponseError, match="repeated"):
+    with pytest.raises(InvalidResponseError, match="(?i)repeated"):
         broker.get_positions()
 
 
