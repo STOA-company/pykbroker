@@ -248,7 +248,8 @@ def test_unverified_body_cursor_only_empty_account_pages_are_empty_lists(tr, met
     ],
 )
 def test_unverified_or_unreadable_pagination_never_returns_partial_data(tr, method, block, cursor, meta, expected):
-    broker, client, _ = make({tr: [page(tr, **{block: {cursor: meta}})]})
+    pages = [page(tr, **{block: {cursor: meta}})]
+    broker, client, _ = make({tr: pages})
     with pytest.raises(expected):
         getattr(broker, method)()
     assert len(client.calls) == 1

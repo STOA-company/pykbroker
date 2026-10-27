@@ -16,7 +16,7 @@ from collections.abc import Mapping
 from datetime import date
 
 from pykbroker._http import urlopen
-from pykbroker.brokers._common import BaseBroker, decimal, optional_price, whole
+from pykbroker.brokers._common import BaseBroker, PageRows, decimal, optional_price, whole
 from pykbroker.exceptions import (
     BrokerRejectedError,
     ConfigurationError,
@@ -33,6 +33,9 @@ from pykbroker.safety.rate_limit import credential_rate_limiter
 # https://openapi.ls-sec.co.kr/api/apis/public/tr-guides.json?download=true
 LS_READ_SUCCESS = {"COSAQ00102": {"00136"}, "COSOQ00201": {"00001"}}
 LS_MAX_PAGES = 20
+LS_KR_ROW_KEY = ("expcode", "jangb", "loandt", "lastdt")
+LS_US_ROW_KEY = ("ShtnIsuNo", "IsuNo", "CrcyCode", "AstkBalTpCode", "FcurrMktCode", "LoanDt",
+                 "LoanDtlClssCode", "DueDt")
 LS_RATES = {
     "t1102": 10,
     "CSPAQ12200": 1,
@@ -457,7 +460,7 @@ class LS(RestBroker):
                         last=decimal(row["OvrsScrtsCurpri"]),
                         market_value=decimal(row["FcurrEvalAmt"]),
                     )
-                    for row in self._us_rows(self._us_balance(), "COSOQ00201OutBlock4")
+                    for row in self._us_holdings()
                     if row["CrcyCode"] == "USD"
                 ]
 
@@ -466,6 +469,12 @@ class LS(RestBroker):
         def read():
             body = {key: self._code(key) for key in ("prcgb", "chegb", "dangb", "charge")}
             body["cts_expcode"] = ""
+            # A row repeated on the next page counts once (2 held never reads as 4); same-key rows that
+            # disagree are refused (PageRows, #49 d50c783).
+            rows = PageRows(LS_KR_ROW_KEY, "LS KR")
+            for response in self._pages("/stock/accno", "t0424", {"t0424InBlock": body},
+                                        block="t0424OutBlock", cursor="cts_expcode"):
+                rows.add(self._rows(response, "t0424OutBlock1"))
             return [
                 Position(
                     symbol=self._response_symbol(row["expcode"]),
@@ -476,9 +485,7 @@ class LS(RestBroker):
                     last=decimal(row["price"]),
                     market_value=decimal(row["appamt"]),
                 )
-                for response in self._pages("/stock/accno", "t0424", {"t0424InBlock": body},
-                                            block="t0424OutBlock", cursor="cts_expcode")
-                for row in self._rows(response, "t0424OutBlock1")
+                for row in rows.rows
             ]
 
         return self._call(read)
@@ -618,6 +625,15 @@ class LS(RestBroker):
         )
         self._us_complete()
         return response
+
+    def _us_holdings(self):
+        # Follow header continuation to the last page; a row repeated on a later page counts once
+        # (PageRows, #49 839c3df/d50c783). Balance (OutBlock3) still reads page one only.
+        rows = PageRows(LS_US_ROW_KEY, "LS US")
+        body = {"COSOQ00201InBlock1": {"RecCnt": 1, "BaseDt": "", "CrcyCode": "USD", "AstkBalTpCode": "10"}}
+        for response in self._pages("/overseas-stock/accno", "COSOQ00201", body):
+            rows.add(self._us_rows(response, "COSOQ00201OutBlock4"))
+        return rows.rows
 
     def _us_orders(self, symbol):
         if self._order_date is None:

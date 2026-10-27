@@ -11,11 +11,13 @@ from pykbroker.exceptions import (
     BrokerError,
     BrokerRejectedError,
     ConfigurationError,
+    FractionalNotSupportedError,
     InvalidResponseError,
     NotSupportedError,
     SpecUnverifiedError,
     TransportError,
 )
+from pykbroker.reject_codes import definitive_rejection
 from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
 from pykbroker.rules.kr import LOT, equity_rules, normalize_symbol
 from pykbroker.safety.gate import OrderSafety
@@ -44,6 +46,52 @@ def whole(value: Any) -> int:
     if number != number.to_integral_value():
         raise InvalidResponseError("Fractional stock quantity in response")
     return int(number)
+
+
+def _same_row(left: Any, right: Any) -> bool:
+    if isinstance(left, Mapping) and isinstance(right, Mapping):
+        return dict(left) == dict(right)
+    return left == right
+
+
+class PageRows:
+    """One holdings list read across vendor pages, each vendor row counted once.
+
+    ``key`` names the fields that identify one position row in that vendor's documented response
+    (symbol plus the balance-type / venue / loan fields it carries). A row on a later page whose key
+    was already listed on an earlier page is either the identical row again (overlapping or repeated
+    page: skipped, so 2 held never reads as 4) or a different row for the same position (the pages
+    disagree: refused, so the caller reads «holdings unknown» and sends nothing). Rows within one
+    page are kept exactly as the vendor sent them. A duplicate is only ever the identical vendor
+    row, never a guess from equal quantities.
+    """
+
+    def __init__(self, key: tuple[str, ...], vendor: str) -> None:
+        self._key = tuple(key)
+        self._vendor = vendor
+        self._earlier: dict[tuple[Any, ...], list[Any]] = {}
+        self.rows: list[Any] = []
+
+    def add(self, page: Any) -> list[Any]:
+        """Rows of this page not already listed on an earlier page (also kept in ``rows``)."""
+        fresh: list[Any] = []
+        current: dict[tuple[Any, ...], list[Any]] = {}
+        for row in page:
+            identity = tuple(field(row, name) for name in self._key)
+            earlier = self._earlier.get(identity)
+            if earlier is not None:
+                if any(_same_row(row, seen) for seen in earlier):
+                    continue
+                raise InvalidResponseError(
+                    f"{self._vendor} holdings pages list one position twice with different values; "
+                    "refusing an unverifiable total"
+                )
+            current.setdefault(identity, []).append(row)
+            fresh.append(row)
+        for identity, rows in current.items():
+            self._earlier.setdefault(identity, []).extend(rows)
+        self.rows.extend(fresh)
+        return fresh
 
 
 def optional_price(value: Any) -> Decimal | None:
@@ -111,9 +159,16 @@ class BaseBroker:
             return function()
         except BrokerError:
             raise
-        except (KeyError, TypeError, ValueError, AttributeError, ValidationError):
+        except (KeyError, TypeError, ValueError, AttributeError, ValidationError) as exc:
+            # A vendor answer listed in reject_codes proves «not accepted»; anything else stays unknown.
+            definite = definitive_rejection(self.broker_code, exc)
+            if definite is not None:
+                raise definite from None
             raise InvalidResponseError("Vendor response or client contract is invalid") from None
-        except Exception:
+        except Exception as exc:
+            definite = definitive_rejection(self.broker_code, exc)
+            if definite is not None:
+                raise definite from None
             raise TransportError("Vendor call failed; reconcile uncertain orders before retrying") from None
 
     def _symbol(self, symbol: str, market: str) -> str:
@@ -191,7 +246,14 @@ class BaseBroker:
         if isinstance(request, OrderRequest) and request.price is not None:
             if self.market == "KR" and request.price != request.price.to_integral_value():
                 raise ConfigurationError("KR prices must be whole won; round explicitly before submission")
-        if isinstance(request, OrderRequest) and request.order_type == "market":
+        if isinstance(request, OrderRequest) and request.fractional:
+            # Fractional shares are refused here, before any vendor call, unless the
+            # capability table says this broker/market has the API for it. No rounding.
+            if request.amount is not None and not capabilities.supports_amount_market_buy:
+                raise FractionalNotSupportedError("amount-based buy")
+            if request.amount is None and not capabilities.supports_fractional_market_sell:
+                raise FractionalNotSupportedError("fractional quantity sell")
+        elif isinstance(request, OrderRequest) and request.order_type == "market":
             if not capabilities.supports_market_order:
                 raise NotSupportedError("Market orders are not supported")
         if isinstance(request, OrderRequest) and request.order_type == "limit":

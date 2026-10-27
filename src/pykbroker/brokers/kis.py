@@ -11,12 +11,12 @@ from types import SimpleNamespace
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from pykbroker.exceptions import ConfigurationError, InvalidResponseError, MissingDependencyError, NotSupportedError
+from pykbroker.exceptions import ConfigurationError, FractionalNotSupportedError, InvalidResponseError, MissingDependencyError, NotSupportedError
 from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
 from pykbroker.rules.kr import equity_rules
 from pykbroker.safety.gate import OrderSafety
 
-from ._common import BaseBroker, check_response, decimal, field, optional_price, whole
+from ._common import BaseBroker, PageRows, check_response, decimal, field, optional_price, whole
 
 # KIS 국내주식 현재가 시세 output — two independent halt signals, both on the price row
 # (_pykis/scope/stock/api/response/price.py:4 iscd_stat_cls_code, :16 temp_stop_yn).
@@ -117,6 +117,26 @@ def _ledger_status(cancelled: Any, filled: int, remaining: int) -> str:
     if remaining == 0:
         return "filled" if filled > 0 else "unknown"
     return "partial" if filled > 0 else "open"
+
+
+# Official continuation: page count is unstated, so a list that does not end within this many pages is refused.
+KIS_MAX_PAGES = 20
+# CTRP6504R output1 row identity: product, exchange, product type, currency, loan date.
+KIS_US_ROW_KEY = ("pdno", "ovrs_excg_cd", "prdt_type_cd", "buy_crcy_cd", "loan_dt")
+
+
+def _kis_more(flag: Any) -> bool:
+    """KIS response header tr_cont: F/M = more pages, D/E = last page. Anything else is unreadable."""
+    if flag is None:
+        return False
+    if not isinstance(flag, str):
+        raise InvalidResponseError("KIS continuation flag is invalid")
+    flag = flag.strip()
+    if flag in ("F", "M"):
+        return True
+    if flag in ("", "D", "E"):
+        return False
+    raise InvalidResponseError("KIS continuation flag is invalid")
 
 
 class KIS(BaseBroker):
@@ -374,13 +394,47 @@ class KIS(BaseBroker):
                else "usd_itgr_ord_psbl_amt" if self.is_integrated else "usd_gnrl_ord_psbl_amt")
         return decimal(field(output, key))
 
+    def _us_holding_rows(self, scope: Any, api: Any) -> list[Any]:
+        """Every page of CTRP6504R output1 (official overseas_stock/inquire_present_balance example).
+
+        Response header tr_cont F/M means more rows follow: the same request is repeated with the
+        request header tr_cont=N. D/E (or no flag) ends the list. A list that does not end within
+        KIS_MAX_PAGES is refused, never cut short: a missing later page would read a held symbol as 0.
+        A row repeated on a later page counts once; a conflicting repeat is refused (PageRows).
+        """
+        raw = api.get_balances(kis_account=scope, NATN_CD="840", TR_MKET_CD="00")
+        rows = PageRows(KIS_US_ROW_KEY, "KIS US")
+        for page in range(1, KIS_MAX_PAGES + 1):
+            block = check_response(raw, "kis")["output1"]
+            if not isinstance(block, list):
+                raise InvalidResponseError("KIS US holdings block missing")
+            rows.add(block)
+            if not _kis_more(field(raw, "tr_cont")):
+                return rows.rows
+            if page < KIS_MAX_PAGES:
+                raw = self._us_present_balance_next(scope)
+        raise InvalidResponseError("KIS US holdings exceeded the page limit; refusing a truncated result")
+
+    @staticmethod
+    def _us_present_balance_next(scope: Any) -> dict[str, Any]:
+        # Same TR and parameters as Pykis.base.overseas.get_balances, plus the continuation header.
+        response = scope.client.request(
+            "get", "/uapi/overseas-stock/v1/trading/inquire-present-balance",
+            headers={"tr_id": "CTRP6504R", "tr_cont": "N"},
+            params=scope.account.build_body({
+                "WCRC_FRCR_DVSN_CD": "02", "NATN_CD": "840", "TR_MKET_CD": "00", "INQR_DVSN_CD": "01",
+            }), response=None,
+        )
+        if field(response, "status_code") != 200:
+            raise InvalidResponseError("KIS holdings continuation request failed")
+        headers = field(response, "headers") or {}
+        return {"json_data": response.json(), "tr_cont": headers.get("tr_cont")}
+
     def get_positions(self) -> list[Position]:
         def read() -> list[Position]:
             scope, api = self._connect()
             if self.market == "US":
-                rows = check_response(api.get_balances(kis_account=scope, NATN_CD="840", TR_MKET_CD="00"), "kis")[
-                    "output1"
-                ]
+                rows = self._us_holding_rows(scope, api)
                 return [
                     Position(
                         symbol=row["pdno"],
@@ -570,6 +624,9 @@ class KIS(BaseBroker):
             _SINGLE_ATTEMPT.active = previous
 
     def _place_order(self, request: OrderRequest) -> Order:
+        if request.fractional:
+            # KIS has no fractional-share order TR (overseas_stock order(): ORD_QTY whole). Refuse; never int().
+            raise FractionalNotSupportedError("KIS orders are whole shares")
         scope, api = self._connect()
         symbol = self._symbol(request.symbol, request.market)
         if self.market == "KR":
