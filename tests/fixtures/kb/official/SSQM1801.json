@@ -1,0 +1,41 @@
+{
+    "input" : {
+        "dataBody" : {
+            "mkt_tm_ccd" : "1",
+            "nxt_key" : "",
+            "inq_clsf" : "0",
+            "is_no" : ""
+        },
+        "dataHeader" : {
+            "ipAddr" : "{아이피주소}",
+            "macAddr" : "{MAC주소}"
+        }
+    },
+    "output" : {
+        "dataHeader" : {
+            "resultCode" : "200",
+            "resultMessage" : "성공",
+            "processFlag" : "A",
+            "processMessage" : "",
+            "processCode" : "0011",
+            "processTime" : "20260622162220155"
+        },
+        "dataBody" : {
+            "gnrl_q" : "000000000000000000",
+            "o_msg" : "정상적으로 조회되었습니다.",
+            "nxt_key" : "            ",
+            "grid_cnt1" : "0001",
+            "o_lngth" : "00202",
+            "ordr_psbl_q" : "000000000000000000",
+            "o_clsf" : "SC",
+            "Record1" : [
+                {
+                    "gnrl_q" : "000000000000000000",
+                    "is_nm" : "삼성전자",
+                    "is_no" : "A005930",
+                    "ordr_psbl_q" : "000000000000000001"
+                }
+            ]
+        }
+    }
+}

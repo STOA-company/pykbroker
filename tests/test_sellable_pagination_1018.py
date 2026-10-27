@@ -216,6 +216,7 @@ def _kb_envelope(body):
 def _ssqm2952(rows, total):
     return _kb_envelope({"tl_data_cnt": str(total), "grid_cnt1": str(len(rows)), "Record1": [
         {"crncy_cd": "KRW", "is_cd": "A" + code, "is_nm": "fixture", "hld_q": held, "ordr_psbl_q": sellable,
+         "nstmt_s_q": "0", "nstmt_b_q": "0", "ec_q": sellable,
          "byng_avr_prc": "100", "now_prc": "110", "val_amt": "330"} for code, held, sellable in rows]})
 
 
@@ -233,10 +234,33 @@ def _kb(responses):
     return broker, client
 
 
-def test_kb_kr_complete_snapshot_gives_exact_sellable():
-    broker, client = _kb([_ssqm2952([("005930", "3", "2")], 1)])
-    assert broker.sellable_quantity("005930") == Decimal(2)
+def test_kb_kr_complete_snapshot_with_unverified_quantities_is_refused_like_positions():
+    # Same complete SSQM2952 response: get_positions and sellable_quantity must both refuse.
+    body = _ssqm2952([("005930", "3", "2")], 1)
+    broker, _ = _kb([body])
+    with pytest.raises(SpecUnverifiedError, match="확인 필요"):
+        broker.get_positions()
+    broker, client = _kb([body])
+    with pytest.raises(SpecUnverifiedError, match="확인 필요"):
+        broker.sellable_quantity("005930")
     assert client.post.call_count == 1
+
+
+def test_kb_kr_complete_snapshot_passing_guard_gives_same_quantity_for_both_paths():
+    body = _ssqm2952([("005930", "0", "0")], 1)
+    body["dataBody"]["Record1"][0]["val_amt"] = "0"
+    broker, _ = _kb([body])
+    assert broker.get_positions() == []
+    broker, _ = _kb([body])
+    assert broker.sellable_quantity("005930") == Decimal(0)
+
+
+def test_kb_kr_official_ssqm1801_sample_row_definition_is_read():
+    import json
+    from pathlib import Path
+    sample = json.loads((Path(__file__).parent / "fixtures/kb/official/SSQM1801.json").read_text())["output"]
+    broker, _ = _kb([_ssqm2952([], 21), sample])
+    assert broker.sellable_quantity("005930") == Decimal(1)
 
 
 def test_kb_kr_truncated_snapshot_reads_paged_sellable_listing():

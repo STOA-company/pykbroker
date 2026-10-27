@@ -23,6 +23,7 @@ All fixture identities are fake. Mutated test cases are synthetic, not additiona
 | SKAM2101.json | 4d5e051eb49be7f45fd0b00d33cee6d388622dd1b09ef72985c26b834b56d4f3 | 28e4c99319853490ef50b2a7122576c7fc83a0339b16e5e0e088671fa36cea78 |
 | SKAM2102.json | 76d7c7220c96271a33968c85c4e45c6f45ab3a32732d9e4f3753a70ca97114c9 | 2b0288cd22475f12ad4660055d4bb69f65c4a1a11cf03d5195369375f9d8841c |
 | SPQM2204.json | 97760587c65a2e49c5cceedf858daa51b4cd3b0d59d675889086b173d0ec7377 | d8d8d78cfb9fdd41ef384153f65ea94a49921611f2e2f6505a7d53e2d2b631e1 |
+| SSQM1801.json | 7259d688e583ef9b0654e24cd7f4877fc1b235056b043c448c7b15c8262dd76a | unchanged (no identity values; ipAddr/macAddr are the guide's own placeholders) |
 | token.json | 9b0df5092de10eec26874f8cb7d5d18b58e6ba131918f7c913e77f8bd79e7bc9 | 7ec07a5f0284fca12ffc07535916f2d87ce42ef3fd4622448dc5feb19ac6f4a3 |
 
 SPQM2226 is inconsistent: grid_cnt2=1, Record2=[], positive securities valuation; Record1 exceeds its schema capacity of 5 and contains displaced TSLA text. It cannot establish an empty account or justify dropping a missing holding.
@@ -39,3 +40,5 @@ The official XLSX and ZIP are regenerated on every download: the XLSX carries an
 - ZIP re-downloaded: container sha256 differs from the 2026-10-04 value, but every one of the ten original member hashes in the table above is identical in the new ZIP, so the sanitized fixtures remain valid.
 - Every sheet/row citation above (sheet42:51-55,68-72; sheet28:13; sheet63:15; sheet64:14; sheet71:11-12) still points at the same field and text, and every field name and length limit used by brokers/kb.py exists with the same length in the new XLSX.
 - The 2026-10-04 XLSX bytes were not retained, so a byte-level diff against ba4db891 is not possible; fixtures were not replaced.
+
+SSQM1801.json (KR 보유주식조회, sellable listing) added 2026-10-27 18:17 UTC (2026-10-28 03:17 KST) from https://openapi.kbsec.com/api/kbs/guide/json/b2c (ZIP member, re-downloaded; ZIP differs from the 2026-10-04 download above, which lacked this fixture). The sample shows only an empty nxt_key (single page, grid_cnt1=0001); it does not show a nonblank continuation response, so nxt_key continuation rests on the XLSX statement above plus synthetic tests.
