@@ -257,3 +257,70 @@ def test_amend_is_optional_on_base():
     assert isinstance(make(Fake()), AmendableBroker)
     for cls in (KIS, DBFI):
         assert not hasattr(cls, "amend_order")  # optional: existing adapters are untouched
+
+
+# ---------------------------------------------------------------- cancel / status close only on the order activity
+ACK = _Reply(200, {"Orders": [{"OrderId": "1"}]}, {})
+EMPTY = _Reply(200, {"Data": []}, {})
+
+
+def activity(status, sub="Confirmed", **kw):
+    row = {"OrderId": "1", "Uic": 9001, "AssetType": "Stock", "BuySell": "Buy", "Amount": 10, "Status": status,
+           "SubStatus": sub, "LogId": "7"}
+    row.update(kw)
+    return _Reply(200, {"Data": [row]}, {})
+
+
+def cancel(fake):
+    return make(fake).cancel_order(CancelRequest(order_id="1", symbol="AAPL", quantity=10, market="US",
+                                                 client_key="cc-unit"))
+
+
+@pytest.mark.parametrize("last, expect", [
+    # A fill that raced the acknowledged cancel: absent from the order list, the activity says FinalFill.
+    (activity("FinalFill", FilledAmount=10, AveragePrice=190.5), ("filled", 10, 0, Decimal("190.5"))),
+    # Partial fill then cancel: the 3 filled shares stay on the result.
+    (activity("Cancelled", FilledAmount=3, AveragePrice=190.0), ("cancelled", 3, 7, Decimal("190.0"))),
+    (activity("Cancelled", FilledAmount=0), ("cancelled", 0, 10, None)),
+    (activity("Expired", FilledAmount=0), ("cancelled", 0, 10, None)),
+])
+def test_cancel_outcome_comes_from_the_last_order_activity(last, expect):
+    fake = Fake(ACK, EMPTY, last)
+    out = cancel(fake)
+    assert (out.status, out.filled, out.remaining, out.fill_price) == expect and out.id == "1"
+    path = fake.sent[2][1]
+    assert "/cs/v1/audit/orderactivities?" in path and "OrderId=1" in path and "EntryType=Last" in path
+    assert [m for m, *_ in fake.sent].count("DELETE") == 1
+
+
+@pytest.mark.parametrize("last", [
+    EMPTY,                                               # not logged yet
+    activity("Cancelled", sub="Requested", FilledAmount=0),  # cancel asked, not confirmed
+    activity("Cancelled"),                               # no FilledAmount: a partial fill could hide
+    activity("Fill", FilledAmount=4),                    # not final
+    activity("FinalFill", FilledAmount=4),               # final fill that does not fill the order: inconsistent
+    activity("Cancelled", FilledAmount=11),              # fills more than it holds
+    _Reply(503, None, {}),                               # read failed
+])
+def test_cancel_absent_from_list_without_a_final_activity_is_unknown(last):
+    out = cancel(Fake(ACK, EMPTY, last))
+    assert out.status == "unknown" and out.filled is None
+
+
+def test_cancel_still_listed_is_unknown_and_keeps_the_filled_part():
+    working = _Reply(200, {"Data": [{"OrderId": "1", "Uic": 9001, "AssetType": "Stock", "Amount": 10,
+                                     "FilledAmount": 3, "Status": "WorkingLockedCancelPending"}]}, {})
+    fake = Fake(ACK, working)
+    out = cancel(fake)
+    assert (out.status, out.filled, out.remaining) == ("unknown", 3, 7) and len(fake.sent) == 2
+
+
+def test_status_of_an_order_gone_from_the_lists_reads_its_activity():
+    from pykbroker.models import Order
+
+    placed = Order(id="1", symbol="AAPL", market="US", side="buy", order_type="limit", quantity=10,
+                   price=Decimal("190"), status="accepted", external_reference="ck-unit-1")
+    done = make(Fake(EMPTY, EMPTY, activity("FinalFill", FilledAmount=10, AveragePrice=189.9))).status(placed)
+    assert (done.status, done.filled, done.remaining, done.fill_price) == ("filled", 10, 0, Decimal("189.9"))
+    assert (done.order_type, done.price, done.external_reference) == ("limit", Decimal("190"), "ck-unit-1")
+    assert make(Fake(EMPTY, EMPTY, EMPTY)).status(placed).status == "unknown"
