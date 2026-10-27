@@ -25,6 +25,17 @@ class Capabilities(Model):
     supports_virtual_account: bool = False
     virtual: bool = False
     markets: tuple[str, ...] = ()
+    # Optional order shapes. Defaults refuse: a broker opts in by declaring them.
+    supports_stop_order: bool = False
+    supports_stop_limit_order: bool = False
+    time_in_force: tuple[str, ...] = ()
+    supports_amend: bool = False
+    # Asset classes the order path is open for (Saxo AssetType names); empty = not asset-typed.
+    asset_types: tuple[str, ...] = ()
+    # Asset classes the broker sells that this build keeps closed (capability column only).
+    asset_types_closed: tuple[str, ...] = ()
+    # Order currency per market, e.g. {"US": "USD", "SG": "SGD"} (data, not a branch).
+    currency: tuple[tuple[str, str], ...] = ()
 
     @model_validator(mode="after")
     def _venue_requirement_names_its_venues(self) -> "Capabilities":

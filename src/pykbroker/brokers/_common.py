@@ -259,6 +259,14 @@ class BaseBroker:
         if isinstance(request, OrderRequest) and request.order_type == "limit":
             if not capabilities.supports_limit_order:
                 raise NotSupportedError("Limit orders are not supported")
+        if isinstance(request, OrderRequest):
+            # Optional shapes are opt-in data on Capabilities; the defaults refuse before any HTTP.
+            if request.order_type == "stop" and not capabilities.supports_stop_order:
+                raise NotSupportedError("Stop orders are not supported")
+            if request.order_type == "stop_limit" and not capabilities.supports_stop_limit_order:
+                raise NotSupportedError("Stop-limit orders are not supported")
+            if request.time_in_force is not None and request.time_in_force not in capabilities.time_in_force:
+                raise NotSupportedError("This order duration is not supported")
 
     def place_order(self, request: OrderRequest) -> Order:
         # Revalidate even models constructed with model_construct/model_copy.
