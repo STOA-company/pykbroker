@@ -185,6 +185,7 @@ def test_nh_market_number_order_fully_filled_is_filled():
     [{**NH_ROW, "sby_dit_cd_nm": "매도"}],  # another side
     [{**NH_ROW, "rmt_mkt_cd": "NXT"}],  # another venue
     [{**NH_ROW, "org_itg_orr_no": 455}],  # a correction/cancel row is not the order
+    [{k: v for k, v in NH_ROW.items() if k != "rmt_mkt_cd"}],  # #63 review P3-1: no venue column → not a candidate
     [],
 ])
 def test_nh_market_number_order_without_exactly_one_original_row_is_unknown(rows):
@@ -247,3 +248,14 @@ def test_ls_every_quote_and_rules_tr_has_a_rate_in_the_real_limiter():
     broker = LS(account="fixture-account", client=client, codes=CODES, rate_limiter=RateLimiter(LS_RATES))
     assert broker.get_quote("005930").bid == Decimal(70000)
     assert broker.get_rules("005930").limit_up == Decimal(91000)
+
+
+def test_nh_terms_cannot_tell_an_earlier_same_terms_order_caller_must_withhold_terms():
+    """#63 review P1-1 — the venue row of an EARLIER same-terms order (ours not on the ledger yet) is read as this
+    order. The adapter cannot tell them apart, so the caller (trader fills.mark_terms_shared) withholds the terms
+    when another of its own same-day orders shares them; without terms the status stays unknown and nothing is read."""
+    earlier_filled = {**NH_ROW, "tot_cns_qty": 3, "ny_cns_qty": 0}
+    assert nh({DAILY: [_nh_daily(earlier_filled)]})[0].status(placed()).status == "filled"  # the hazard, documented
+    broker, calls = nh({DAILY: [_nh_daily(earlier_filled)]})
+    withheld = placed(side=None, quantity=None, price=None)
+    assert broker.status(withheld).status == "unknown" and calls == []

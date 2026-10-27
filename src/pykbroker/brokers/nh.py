@@ -858,7 +858,15 @@ class NH(BaseBroker):
         found by its own terms — the one original row (no org_itg_orr_no) of this symbol, side, quantity, limit
         price and requested venue. The caller must supply side, quantity and price; zero or several such rows,
         or a row a correction/cancellation points at, stay unknown. The id stays the market number so a later
-        cancel still names the order the venue acknowledged."""
+        cancel still names the order the venue acknowledged.
+
+        Caller contract (#63 review P1-1): the venue row cannot tell this order from an EARLIER order with the same
+        terms when this one is not on the ledger yet — one earlier filled row would be read as this order filled.
+        The caller must therefore supply side/quantity/price only when no other of its own same-day orders shares
+        these terms (TWAP slices, a repeated sentence); otherwise it leaves them empty and the status stays unknown.
+        A manual HTS order with the same terms remains a residual risk until `orr_mdi` values are confirmed.
+        ASSUMED (#63 review P2-2): sby_dit_cd_nm «매수»/«매도» has no published enum; another value matches nothing
+        (unknown)."""
         if order.side is None or order.quantity is None or order.price is None:
             return order.model_copy(update={"status": "unknown"})
         side = {"buy": "매수", "sell": "매도"}[order.side]
@@ -870,7 +878,8 @@ class NH(BaseBroker):
             and str(row.get("sby_dit_cd_nm", "")).strip() == side
             and whole(row["orr_qty"]) == order.quantity
             and decimal(row["orr_pr"]) == order.price
-            and str(row.get("rmt_mkt_cd") or self.venue).strip() == self.venue
+            # #63 review P3-1: rmt_mkt_cd is in the official schema — a row without it is not a candidate.
+            and str(row.get("rmt_mkt_cd") or "").strip() == self.venue
             and not str(row.get("org_itg_orr_no") or "").strip("0 ")
         ]
         if len(candidates) != 1:

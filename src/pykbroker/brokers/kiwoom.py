@@ -540,7 +540,10 @@ class Kiwoom(BaseBroker):
         """The unfilled rest is cancelled only when every row pointing at the order is a cancel and their quantities
         cover exactly that rest. Official kt00007 (spec 953e5db, 계좌별주문체결내역상세요청): ori_ord=원주문,
         mdfy_cncl=정정취소, ord_qty=주문수량, cnfm_qty=확인수량. An amend ("정정") moves the rest to a new order,
-        so any non-cancel pointer, a confirmed quantity that disagrees, or a sum that differs stays unknown."""
+        so any non-cancel pointer, a confirmed quantity that disagrees, or a sum that differs stays unknown.
+        ASSUMED (#63 review P2-1): the official kt00007 leaves mdfy_cncl's description blank and its example value "";
+        «취소»/«취소확인» are not in the spec. Another real value keeps the order unknown (never a false cancel); confirm
+        with one company test-account cancel."""
         if not pointers or any(str(row.get("mdfy_cncl")).strip() not in {"취소", "취소확인"} for row in pointers):
             return False
         asked = sum(whole(row["ord_qty"]) for row in pointers)
