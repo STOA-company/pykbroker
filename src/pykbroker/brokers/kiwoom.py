@@ -125,7 +125,10 @@ def _unpack(reply: Any, *, write: bool = False) -> tuple[Mapping[str, Any], Mapp
     if write and body["return_code"] == _UNEXPECTED_ERROR_CODE:
         raise InvalidResponseError("Kiwoom reported an unexpected error (1999); reconcile before retrying")
     if type(body["return_code"]) is not int or body["return_code"] != 0:
-        raise BrokerRejectedError("Kiwoom rejected the request")
+        error = BrokerRejectedError("Kiwoom rejected the request")
+        # The integer vendor code only (never the message): callers classify e.g. 8001 앱키/시크릿 오류 by it.
+        error.return_code = body["return_code"] if type(body["return_code"]) is int else None
+        raise error
     return body, {str(key).lower(): value for key, value in headers.items()}
 
 

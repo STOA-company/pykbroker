@@ -287,7 +287,9 @@ class NH(BaseBroker):
             form,
         )
         if status in (400, 401):
-            raise ConfigurationError("NH token credentials were rejected")
+            error = ConfigurationError("NH token credentials were rejected")
+            error.status_code = status  # the HTTP status only, for key-check classification
+            raise error
         if status == 429:
             raise TransportError("NH token rate limit")
         if status != 200:

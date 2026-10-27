@@ -201,3 +201,31 @@ def test_nh_market_number_order_without_its_terms_is_unknown_without_a_read(miss
     broker, calls = nh({DAILY: [_nh_daily(NH_ROW)]})
     assert broker.status(placed(**{missing: None})).status == "unknown"
     assert calls == []
+
+
+# --- 키 검증 분류 칸 (T /stock_trade/account-verify) ---
+
+
+def test_kiwoom_refusal_carries_the_integer_vendor_code_only():
+    from pykbroker.brokers.kiwoom import _unpack
+    from pykbroker.exceptions import BrokerRejectedError
+
+    with pytest.raises(BrokerRejectedError) as caught:
+        _unpack(({"return_code": 8001, "return_msg": "fixture"}, {}))
+    assert caught.value.return_code == 8001 and "fixture" not in str(caught.value)
+    with pytest.raises(BrokerRejectedError) as caught:
+        _unpack(({"return_code": "8001"}, {}))
+    assert caught.value.return_code is None
+
+
+@pytest.mark.parametrize("status", [400, 401])
+def test_nh_token_refusal_carries_the_http_status(status):
+    from pykbroker.exceptions import ConfigurationError
+    from tests.test_nh_review_fixes import KEY, SECRET
+    from tests.test_nh_review_fixes import make as nh_auth
+
+    broker, _ = nh_auth({"/oauth2/token": (status, {}, {})}, options={"app_key": KEY, "app_secret": SECRET,
+                                                                      "acct_type": "01"})
+    with pytest.raises(ConfigurationError) as caught:
+        broker.issue_token()
+    assert caught.value.status_code == status
