@@ -324,3 +324,45 @@ def test_status_of_an_order_gone_from_the_lists_reads_its_activity():
     assert (done.status, done.filled, done.remaining, done.fill_price) == ("filled", 10, 0, Decimal("189.9"))
     assert (done.order_type, done.price, done.external_reference) == ("limit", Decimal("190"), "ck-unit-1")
     assert make(Fake(EMPTY, EMPTY, EMPTY)).status(placed).status == "unknown"
+
+
+# ---------------------------------------------------------------- token refresh (rotating refresh token)
+def refreshed(access="a1", refresh="r1", life=1200):
+    body = {"access_token": access, "expires_in": life}
+    if refresh is not None:
+        body["refresh_token"] = refresh
+    return _Reply(200, body, {})
+
+
+def test_refresh_without_a_new_refresh_token_keeps_the_current_one():
+    seen = []
+    broker = make(Fake(refreshed(refresh=None)), refresh_token="r0", on_token_refresh=seen.append)
+    broker._refresh()
+    assert broker._refresh_token == "r0" and seen[-1].refresh_token == "r0" and seen[-1].token == "a1"
+
+
+def test_refresh_refused_retries_once_with_the_owners_newer_refresh_token():
+    fake = Fake(_Reply(400, {"error": "invalid_grant"}, {}), refreshed(refresh="r2"))
+    seen = []
+    broker = make(fake, refresh_token="r0", on_token_refresh=seen.append, reload_refresh_token=lambda: "r1")
+    broker._refresh()
+    assert [s[4]["refresh_token"] for s in fake.sent] == ["r0", "r1"]
+    assert broker._refresh_token == "r2" and seen[-1].refresh_token == "r2"
+
+
+@pytest.mark.parametrize("reload", [None, lambda: "r0", lambda: None, lambda: "", lambda: 1 / 0])
+def test_refresh_refused_without_a_different_stored_token_is_not_retried(reload):
+    fake = Fake(_Reply(400, {"error": "invalid_grant"}, {}), refreshed())
+    broker = make(fake, refresh_token="r0", reload_refresh_token=reload)
+    with pytest.raises(BrokerRejectedError):
+        broker._refresh()
+    assert len(fake.sent) == 1
+
+
+def test_refresh_retry_happens_at_most_once():
+    fake = Fake(_Reply(400, {}, {}), _Reply(400, {}, {}), refreshed())
+    tokens = iter(["r1", "r2"])
+    broker = make(fake, refresh_token="r0", reload_refresh_token=lambda: next(tokens))
+    with pytest.raises(BrokerRejectedError):
+        broker._refresh()
+    assert [s[4]["refresh_token"] for s in fake.sent] == ["r0", "r1"]
