@@ -50,7 +50,7 @@ def test_factory_without_client_is_configuration_error():
 
 @pytest.mark.parametrize(
     "method,tr",
-    [("get_quote", "t1102"), ("get_balance", "CSPAQ12200"), ("get_positions", "t0424"), ("list_orders", "t0425")],
+    [("get_quote", "t1101"), ("get_balance", "CSPAQ12200"), ("get_positions", "t0424"), ("list_orders", "t0425")],
 )
 def test_unverified_error_code_rejects_even_a_normal_read_block(method, tr):
     """UNVERIFIED success mapping 00000/0000/0; error + valid block cannot succeed (L27)."""
@@ -64,7 +64,7 @@ def test_unverified_error_code_rejects_even_a_normal_read_block(method, tr):
 
 @pytest.mark.parametrize(
     "method,tr",
-    [("get_quote", "t1102"), ("get_balance", "CSPAQ12200"), ("get_positions", "t0424"), ("list_orders", "t0425")],
+    [("get_quote", "t1101"), ("get_balance", "CSPAQ12200"), ("get_positions", "t0424"), ("list_orders", "t0425")],
 )
 def test_read_response_without_rsp_cd_is_invalid(method, tr):
     body = page(tr)
@@ -216,7 +216,7 @@ def test_zero_fill_quantity_with_cheprice_keeps_average_price_unknown(verified_m
 @pytest.mark.parametrize("code", ["00000", "0000", "0"])
 def test_unverified_legacy_success_codes_with_valid_read_block(code):
     """UNVERIFIED: these codes are candidate legacy values, not official contract evidence."""
-    broker, _ = build({"t1102": [page("t1102", rsp_cd=code)]}, rate_limiter=Mock(spec=RateLimiter))
+    broker, _ = build({"t1101": [page("t1101", rsp_cd=code)]}, rate_limiter=Mock(spec=RateLimiter))
     assert broker.get_quote("005930").last == 70000
 
 

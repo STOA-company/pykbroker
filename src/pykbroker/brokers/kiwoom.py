@@ -509,12 +509,17 @@ class Kiwoom(BaseBroker):
             if len(mine) != 1 or self._symbol(mine[0]["stk_cd"], "KR") != code:
                 return order.model_copy(update={"status": "unknown"})
             quantity, filled, remaining = (whole(mine[0][name]) for name in ("ord_qty", "cntr_qty", "ord_remnq"))
-            touched = any(row.get("ori_ord") == order.id and str(row.get("mdfy_cncl") or "").strip() for row in rows)
+            pointers = [
+                row for row in rows if row.get("ori_ord") == order.id and str(row.get("mdfy_cncl") or "").strip()
+            ]
+            touched = bool(pointers)
             status = "unknown"
             if filled and filled == quantity and not remaining:
                 status = "filled"
             elif remaining and not touched and filled + remaining == quantity:
                 status = "partial" if filled else "open"
+            elif not remaining and filled < quantity and self._cancelled_rest(pointers, quantity - filled):
+                status = "cancelled"
             return order.model_copy(
                 update={
                     "status": status,
@@ -526,6 +531,20 @@ class Kiwoom(BaseBroker):
             )
 
         return self._call(read)
+
+    @staticmethod
+    def _cancelled_rest(pointers: list[Mapping[str, Any]], rest: int) -> bool:
+        """The unfilled rest is cancelled only when every row pointing at the order is a cancel and their quantities
+        cover exactly that rest. Official kt00007 (spec 953e5db, 계좌별주문체결내역상세요청): ori_ord=원주문,
+        mdfy_cncl=정정취소, ord_qty=주문수량, cnfm_qty=확인수량. An amend ("정정") moves the rest to a new order,
+        so any non-cancel pointer, a confirmed quantity that disagrees, or a sum that differs stays unknown."""
+        if not pointers or any(str(row.get("mdfy_cncl")).strip() not in {"취소", "취소확인"} for row in pointers):
+            return False
+        asked = sum(whole(row["ord_qty"]) for row in pointers)
+        confirmed = [whole(row["cnfm_qty"]) for row in pointers if row.get("cnfm_qty") not in (None, "")]
+        if confirmed and (len(confirmed) != len(pointers) or sum(confirmed) != asked):
+            return False
+        return asked == rest
 
     def _us_body(self, code: str) -> dict[str, str]:
         return {"stex_tp": _US_VENUES[self.venue], "stk_cd": code}

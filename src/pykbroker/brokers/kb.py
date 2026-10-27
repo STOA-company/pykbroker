@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 from pykbroker._http import urlopen
 from pykbroker.exceptions import ConfigurationError, InvalidResponseError, NotSupportedError, SpecUnverifiedError
 from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote
+from pykbroker.rules.kr import equity_rules
 from pykbroker.safety.rate_limit import credential_rate_limiter
 
 from ._common import BaseBroker, PageRows, decimal, optional_price, whole
@@ -134,12 +135,27 @@ class KB(BaseBroker):
         return self._call(read)
 
     def get_rules(self, symbol: str, *, now=None, trading_day=None):
-        rules = super().get_rules(symbol, now=now, trading_day=trading_day)
         if self.market == "US":
+            rules = super().get_rules(symbol, now=now, trading_day=trading_day)
             # Official GSS10030 dl_spsn_ccd has no documented normal enum.
             # Preserve a caller's stop veto; False cannot establish native permission.
             return rules.model_copy(update={"halted": True if rules.halted is True else None})
-        return rules
+        code = self._symbol(symbol, "KR")
+
+        def read():
+            # Official IVU10140 output (guide/excel/b2c, re-read 2026-10-28): ulmt_prc=상한가, llmt_prc=하한가.
+            # Missing/zero sides stay unknown; never derive a band from 전일종가 or 기준가.
+            row = self._response("ivu10140", {"excg_clsf": "1", "shrt_cd": code})
+            last = decimal(row["now_prc"])
+            upper, lower = optional_price(row.get("ulmt_prc")), optional_price(row.get("llmt_prc"))
+            if upper is None or lower is None:
+                upper = lower = None
+            elif not lower <= last <= upper:
+                raise InvalidResponseError("KB daily band does not contain the last price")
+            return equity_rules(code, last, halted=self._halt_from_provider(code), now=now,
+                                trading_day=trading_day, limit_up=upper, limit_down=lower)
+
+        return self._call(read)
 
     def orderable_cash(self, symbol: str) -> Decimal:
         """Symbol-specific broker spending power in KRW or native foreign currency.
