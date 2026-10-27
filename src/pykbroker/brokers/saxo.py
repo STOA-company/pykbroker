@@ -223,6 +223,7 @@ class Saxo(BaseBroker):
         base_url: str | None = None,
         token_url: str | None = None,
         on_token_refresh: Callable[[SaxoTokenState], None] | None = None,
+        reload_refresh_token: Callable[[], str | None] | None = None,
         clock: Callable[[], float] = time.time,
         limiter: RateLimiter | None = None,
         timeout: float = 20.0,
@@ -270,6 +271,7 @@ class Saxo(BaseBroker):
         self._timeout, self._order_timeout = timeout, order_timeout
         self._clock = clock
         self._on_refresh = on_token_refresh
+        self._reload_refresh = reload_refresh_token
         self._http = client if client is not None else _Http()
         self._token, self._refresh_token, self._expires_at = token, refresh_token, expires_at
         self._app_key, self._app_secret, self._redirect_uri = app_key, app_secret, redirect_uri
@@ -348,22 +350,40 @@ class Saxo(BaseBroker):
             raise BrokerRejectedError("Saxo token expired; reconnect the account", code="HTTP401",
                                       kind="token_expired", reason="token_expired")
         basic = "Basic " + base64.b64encode(f"{self._app_key}:{self._app_secret}".encode()).decode()
-        form = {"grant_type": "refresh_token", "refresh_token": self._refresh_token}
-        if self._redirect_uri:
-            form["redirect_uri"] = self._redirect_uri
-        reply = self._http.send("POST", self._token_url, headers={"Authorization": basic}, form=form,
-                                timeout=self._timeout)
-        body = reply.body
-        if reply.status != 200 or not isinstance(body, Mapping) or not isinstance(body.get("access_token"), str):
-            raise BrokerRejectedError("Saxo refused the token refresh; reconnect the account", code="invalid_grant",
-                                      kind="token_expired", reason="token_expired")
+        body = None
+        for attempt in range(2):
+            form = {"grant_type": "refresh_token", "refresh_token": self._refresh_token}
+            if self._redirect_uri:
+                form["redirect_uri"] = self._redirect_uri
+            reply = self._http.send("POST", self._token_url, headers={"Authorization": basic}, form=form,
+                                    timeout=self._timeout)
+            body = reply.body
+            if reply.status == 200 and isinstance(body, Mapping) and isinstance(body.get("access_token"), str):
+                break
+            # Another process may have rotated the refresh token first (ours is now void): retry once with the
+            # owner's stored value when it differs. Never a second retry, never with the same token.
+            stored = self._stored_refresh_token() if attempt == 0 else None
+            if not stored or stored == self._refresh_token:
+                raise BrokerRejectedError("Saxo refused the token refresh; reconnect the account",
+                                          code="invalid_grant", kind="token_expired", reason="token_expired")
+            self._refresh_token = stored
         self._token = body["access_token"]
         life = body.get("expires_in")
         self._expires_at = self._clock() + float(life) if isinstance(life, (int, float)) else None
         new_refresh = body.get("refresh_token")
-        self._refresh_token = new_refresh if isinstance(new_refresh, str) else None
+        if isinstance(new_refresh, str) and new_refresh:
+            self._refresh_token = new_refresh  # no new one issued: the current refresh token stays valid (RFC 6749 §6)
         if self._on_refresh is not None:
             self._on_refresh(SaxoTokenState(self._token, self._expires_at, self._refresh_token))
+
+    def _stored_refresh_token(self) -> str | None:
+        if self._reload_refresh is None:
+            return None
+        try:
+            value = self._reload_refresh()
+        except Exception:  # a failed owner read leaves the refusal as it is
+            return None
+        return value if isinstance(value, str) and value else None
 
     def _try_refresh(self) -> bool:
         try:
