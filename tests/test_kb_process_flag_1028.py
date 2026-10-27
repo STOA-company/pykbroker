@@ -1,8 +1,7 @@
-"""KB processFlag follows each TR's official success example (trader #651 cross review P1-3).
+"""KB processFlag: "A" is the completed business result, "B" is a business error (D6393).
 
-Official B2C JSON examples: SSAM1801 (KR sell), SSQM2341 (KR order list), SKAM2102 (US cancel) carry
-processFlag "B" with resultCode "200"/"성공"; SSAM1802 (KR buy) and the rest carry "A". The guide never
-defines the flag (ASSUMED), so a TR accepts only its own example's flag — the other one stays unknown.
+In the official B2C JSON examples every "B" response carries an error o_msg (e.g. SSAM1801 "제권리 수량이 없습니다.",
+SKAM2102 "미접수주문은 정정/취소주문이 불가능합니다."); normal completions are "A". Anything else is unknown - reconcile.
 """
 from unittest.mock import Mock
 
@@ -23,37 +22,38 @@ def _accepted(flag):
             "dataBody": {"ordr_no": "123", "is_cd": "005930", "ordr_q": "1"}}
 
 
-def test_kr_sell_succeeds_with_documented_flag_b(live_safety):
+def test_kr_sell_flag_a_succeeds(live_safety):
     client = Mock(base_url=KB_API_BASE_URL)
-    client.post.return_value = _accepted("B")
+    client.post.return_value = _accepted("A")
     order = _broker(client, live_safety).place_order(
-        OrderRequest(symbol="005930", side="sell", quantity=1, price="70000", client_key="kb-sell-b"))
+        OrderRequest(symbol="005930", side="sell", quantity=1, price="70000", client_key="kb-sell-a"))
     assert order.id == "123" and order.status == "accepted"
     assert client.post.call_args.args == ("/api/v1/ssam1801",)
 
 
-def test_kr_sell_flag_a_is_not_the_documented_success(live_safety):
+@pytest.mark.parametrize("flag", ["B", "C", "", None])
+def test_kr_sell_non_a_flag_is_unknown(live_safety, flag):
     client = Mock(base_url=KB_API_BASE_URL)
-    client.post.return_value = _accepted("A")
+    client.post.return_value = _accepted(flag)
     with pytest.raises(InvalidResponseError):
         _broker(client, live_safety).place_order(
-            OrderRequest(symbol="005930", side="sell", quantity=1, price="70000", client_key="kb-sell-a"))
+            OrderRequest(symbol="005930", side="sell", quantity=1, price="70000", client_key="kb-sell-b"))
     assert client.post.call_count == 1
 
 
-def test_kr_buy_keeps_documented_flag_a(request_order, live_safety):
+def test_kr_buy_flag_a(request_order, live_safety):
     client = Mock(base_url=KB_API_BASE_URL)
     client.post.return_value = _accepted("A")
     assert _broker(client, live_safety).place_order(request_order).id == "123"
 
 
-def test_kr_order_list_reads_with_documented_flag_b(live_safety):
+def test_kr_order_list_a_reads_b_fails(live_safety):
     client = Mock(base_url=KB_API_BASE_URL)
-    client.post.return_value = {"dataHeader": {"resultCode": "200", "processFlag": "B"},
+    client.post.return_value = {"dataHeader": {"resultCode": "200", "processFlag": "A"},
                                 "dataBody": {"Record1": [], "grid_cnt1": "0", "nxt_key": ""}}
     assert _broker(client, live_safety).list_orders() == []
     assert client.post.call_args.args == ("/api/v1/ssqm2341",)
-    client.post.return_value = {"dataHeader": {"resultCode": "200", "processFlag": "A"},
+    client.post.return_value = {"dataHeader": {"resultCode": "200", "processFlag": "B"},
                                 "dataBody": {"Record1": [], "grid_cnt1": "0", "nxt_key": ""}}
     with pytest.raises(InvalidResponseError):
         _broker(client, live_safety).list_orders()
