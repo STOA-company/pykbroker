@@ -436,17 +436,7 @@ class KB(BaseBroker):
                 if not complete:
                     raise SpecUnverifiedError("KB KR holdings are truncated; no continuation input is documented")
                 result = []
-                for row in rows:
-                    # sheet42:51-55,68-72 only name the ten quantity fields;
-                    # neither XLSX nor JSON defines their relationship. In
-                    # particular 0+1-0=1 cannot establish ec_q semantics.
-                    quantities = ("hld_q", "ordr_psbl_q", "nstmt_s_q", "nstmt_b_q", "ec_q")
-                    values = [decimal(row[key]) for key in quantities]
-                    values.extend(decimal(row.get(key + "_p6", 0)) for key in quantities)
-                    if any(value != 0 for value in values) or decimal(row["val_amt"]) > 0:
-                        raise SpecUnverifiedError(
-                            "KB KR holding quantity semantics require verification (확인 필요)"
-                        )
+                self._verify_kr_quantities(rows)
                 return result
             result, pages = [], PageRows(KB_US_ROW_KEY, "KB US")
             for page in self._pages("spqm2226", {"std_crncy_f": "1"}, "Record2", "grid_cnt2"):
@@ -467,6 +457,21 @@ class KB(BaseBroker):
             return result
         return self._call(read)
 
+    @staticmethod
+    def _verify_kr_quantities(rows):
+        """Single guard for SSQM2952 quantity semantics, shared by get_positions and sellable_quantity.
+
+        sheet42:51-55,68-72 only name the ten quantity fields; neither XLSX nor JSON defines their
+        relationship (0+1-0=1 cannot establish ec_q semantics). Any nonzero quantity or positive
+        valuation is refused until verified.
+        """
+        quantities = ("hld_q", "ordr_psbl_q", "nstmt_s_q", "nstmt_b_q", "ec_q")
+        for row in rows:
+            values = [decimal(row[key]) for key in quantities]
+            values.extend(decimal(row.get(key + "_p6", 0)) for key in quantities)
+            if any(value != 0 for value in values) or decimal(row["val_amt"]) > 0:
+                raise SpecUnverifiedError("KB KR holding quantity semantics require verification (확인 필요)")
+
     def _kr_snapshot(self):
         # SSQM2952 잔고현황 조회(체결기준): the official input has no nxt_key; complete when tl_data_cnt == rows.
         data = self._response("ssqm2952", {"excg_mktpr_ccd": "K"})
@@ -476,7 +481,8 @@ class KB(BaseBroker):
     def sellable_quantity(self, symbol: str) -> Decimal:
         """Broker sellable quantity of one holding (0 when not held), for pre-trade sell checks.
 
-        KR: when SSQM2952 is complete its ordr_psbl_q is used (same rows as get_positions). When it is
+        KR: when SSQM2952 is complete it must pass the same quantity guard as get_positions (else
+        SpecUnverifiedError), then ordr_psbl_q is used. When it is
         truncated, the official SSQM1801 보유주식조회 (inq_clsf 0 현금주식매도, mkt_tm_ccd 1 정규시장)
         is read through its documented nxt_key continuation (bounded `_pages`), never guessed.
         US: the paged SPQM2226 holdings.
@@ -488,6 +494,7 @@ class KB(BaseBroker):
         def read():
             rows, complete = self._kr_snapshot()
             if complete:
+                self._verify_kr_quantities(rows)
                 return Decimal(sum(p.sellable for p in self._kr_positions(rows) if p.symbol == code))
             total, pages = 0, PageRows(KB_KR_SELLABLE_ROW_KEY, "KB KR")
             for page in self._pages("ssqm1801", {"mkt_tm_ccd": "1", "inq_clsf": "0", "is_no": ""},
