@@ -297,7 +297,9 @@ class NH(BaseBroker):
             form,
         )
         if status in (400, 401):
-            raise ConfigurationError("NH token credentials were rejected")
+            error = ConfigurationError("NH token credentials were rejected")
+            error.status_code = status  # the HTTP status only, for key-check classification
+            raise error
         if status == 429:
             raise TransportError("NH token rate limit")
         if status != 200:
@@ -792,60 +794,68 @@ class NH(BaseBroker):
         def read() -> list[Order]:
             orders = []
             rows = self._daily_rows()
-            touched = {
-                _order_number(row[key], max_digits=11)
-                for row in rows
-                for key in ("org_itg_orr_no", "mo_itg_orr_no")
-                if row.get(key) is not None and str(row[key]).strip("0 ")
-            }
+            touched = self._touched(rows)
             for row in rows:
                 listed = self._symbol(row["iem_cd"], "KR")
                 if code is not None and listed != code:
                     continue
-                integrated = _order_number(row["itg_orr_no"], max_digits=11)
-                quantity = whole(row["orr_qty"])
-                filled = whole(row["tot_cns_qty"])
-                remaining = whole(row["ny_cns_qty"])
-                cancelled = whole(row["can_qty"]) if row.get("can_qty") not in (None, "") else 0
-                corrected = whole(row["cor_qty"]) if row.get("cor_qty") not in (None, "") else 0
-                changed = bool(str(row.get("cor_can_dit_cd_nm") or "").strip())
-                rejected = bool(str(row.get("orr_rjt_rsn_cd_nm") or "").strip())
-                state = "unknown"
-                if (
-                    quantity > 0
-                    and not (changed or rejected or cancelled or corrected or integrated in touched)
-                    and filled <= quantity
-                    and filled + remaining == quantity
-                ):
-                    if filled == quantity:
-                        state = "filled"
-                    elif remaining:
-                        state = "partial" if filled else "open"
-                side = {"매수": "buy", "매도": "sell"}.get(str(row.get("sby_dit_cd_nm", "")).strip())
-                order_type = "limit" if str(row.get("nmn_pr_tp_cd_nm", "")).strip() in {"보통가", "지정가"} else None
-                orders.append(
-                    Order(
-                        id=f"itg:{integrated}",
-                        symbol=listed,
-                        side=side,
-                        order_type=order_type,
-                        quantity=quantity,
-                        price=decimal(row["orr_pr"]),
-                        fill_price=optional_price(row.get("cns_avg_uit_pr")) if filled else None,
-                        filled=filled,
-                        remaining=remaining,
-                        status=state,
-                        virtual=self.virtual,
-                    )
-                )
+                orders.append(self._kr_order(row, touched))
             return orders
 
         return self._call(read)
 
+    @staticmethod
+    def _touched(rows: list[Mapping[str, Any]]) -> set[str]:
+        """Integrated numbers that a correction or cancellation row points at."""
+        return {
+            _order_number(row[key], max_digits=11)
+            for row in rows
+            for key in ("org_itg_orr_no", "mo_itg_orr_no")
+            if row.get(key) is not None and str(row[key]).strip("0 ")
+        }
+
+    def _kr_order(self, row: Mapping[str, Any], touched: set[str]) -> Order:
+        listed = self._symbol(row["iem_cd"], "KR")
+        integrated = _order_number(row["itg_orr_no"], max_digits=11)
+        quantity = whole(row["orr_qty"])
+        filled = whole(row["tot_cns_qty"])
+        remaining = whole(row["ny_cns_qty"])
+        cancelled = whole(row["can_qty"]) if row.get("can_qty") not in (None, "") else 0
+        corrected = whole(row["cor_qty"]) if row.get("cor_qty") not in (None, "") else 0
+        changed = bool(str(row.get("cor_can_dit_cd_nm") or "").strip())
+        rejected = bool(str(row.get("orr_rjt_rsn_cd_nm") or "").strip())
+        state = "unknown"
+        if (
+            quantity > 0
+            and not (changed or rejected or cancelled or corrected or integrated in touched)
+            and filled <= quantity
+            and filled + remaining == quantity
+        ):
+            if filled == quantity:
+                state = "filled"
+            elif remaining:
+                state = "partial" if filled else "open"
+        side = {"매수": "buy", "매도": "sell"}.get(str(row.get("sby_dit_cd_nm", "")).strip())
+        order_type = "limit" if str(row.get("nmn_pr_tp_cd_nm", "")).strip() in {"보통가", "지정가"} else None
+        return Order(
+            id=f"itg:{integrated}",
+            symbol=listed,
+            side=side,
+            order_type=order_type,
+            quantity=quantity,
+            price=decimal(row["orr_pr"]),
+            fill_price=optional_price(row.get("cns_avg_uit_pr")) if filled else None,
+            filled=filled,
+            remaining=remaining,
+            status=state,
+            virtual=self.virtual,
+        )
+
     def status(self, order: Order) -> Order:
         code = self._symbol(order.symbol, order.market)
+        if self.market == "KR" and order.id.startswith("mkt:"):
+            return self._call(lambda: self._kr_status_by_terms(order, code))
         if not order.id.startswith("us:" if self.market == "US" else "itg:"):
-            # The API documents no relation between mkt_orr_no and itg_orr_no.
             return order.model_copy(update={"status": "unknown"})
 
         def read() -> Order:
@@ -855,6 +865,42 @@ class NH(BaseBroker):
             return matches[0]
 
         return self._call(read)
+
+    def _kr_status_by_terms(self, order: Order, code: str) -> Order:
+        """A cashBuy/cashSell acknowledgement carries only mkt_orr_no, and the official day ledger
+        (krstock openapi.json /krstock/inquiry/v1/dailyOrderExecution, nhplug.com/openapi-docs, read 2026-10-28)
+        lists only itg_orr_no: the API documents no relation between the two numbers. The order is therefore
+        found by its own terms — the one original row (no org_itg_orr_no) of this symbol, side, quantity, limit
+        price and requested venue. The caller must supply side, quantity and price; zero or several such rows,
+        or a row a correction/cancellation points at, stay unknown. The id stays the market number so a later
+        cancel still names the order the venue acknowledged.
+
+        Caller contract (#63 review P1-1): the venue row cannot tell this order from an EARLIER order with the same
+        terms when this one is not on the ledger yet — one earlier filled row would be read as this order filled.
+        The caller must therefore supply side/quantity/price only when no other of its own same-day orders shares
+        these terms (TWAP slices, a repeated sentence); otherwise it leaves them empty and the status stays unknown.
+        A manual HTS order with the same terms remains a residual risk until `orr_mdi` values are confirmed.
+        ASSUMED (#63 review P2-2): sby_dit_cd_nm «매수»/«매도» has no published enum; another value matches nothing
+        (unknown)."""
+        if order.side is None or order.quantity is None or order.price is None:
+            return order.model_copy(update={"status": "unknown"})
+        side = {"buy": "매수", "sell": "매도"}[order.side]
+        rows = self._daily_rows()
+        candidates = [
+            row
+            for row in rows
+            if self._symbol(row["iem_cd"], "KR") == code
+            and str(row.get("sby_dit_cd_nm", "")).strip() == side
+            and whole(row["orr_qty"]) == order.quantity
+            and decimal(row["orr_pr"]) == order.price
+            # #63 review P3-1: rmt_mkt_cd is in the official schema — a row without it is not a candidate.
+            and str(row.get("rmt_mkt_cd") or "").strip() == self.venue
+            and not str(row.get("org_itg_orr_no") or "").strip("0 ")
+        ]
+        if len(candidates) != 1:
+            return order.model_copy(update={"status": "unknown"})
+        found = self._kr_order(candidates[0], self._touched(rows))
+        return found.model_copy(update={"id": order.id})
 
     @staticmethod
     def _us_price(price: Any) -> Decimal:

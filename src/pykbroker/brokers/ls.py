@@ -27,6 +27,7 @@ from pykbroker.exceptions import (
 )
 from pykbroker.experimental._rest import RestBroker
 from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
+from pykbroker.rules.kr import equity_rules
 from pykbroker.safety.rate_limit import credential_rate_limiter
 
 # Field contracts: tests/fixtures/ls/official, guide version 20261007070834325.
@@ -37,6 +38,7 @@ LS_KR_ROW_KEY = ("expcode", "jangb", "loandt", "lastdt")
 LS_US_ROW_KEY = ("ShtnIsuNo", "IsuNo", "CrcyCode", "AstkBalTpCode", "FcurrMktCode", "LoanDt",
                  "LoanDtlClssCode", "DueDt")
 LS_RATES = {
+    "t1101": 10,
     "t1102": 10,
     "CSPAQ12200": 1,
     "t0424": 2,
@@ -396,22 +398,42 @@ class LS(RestBroker):
                              prev_close=self._price(info.get("pcls")))
 
             return self._call(read_us)
-        return self._call(
-            lambda: Quote(
-                symbol=symbol,
-                last=decimal(
-                    self._response(
-                        "/stock/market-data",
-                        "t1102",
-                        {"t1102InBlock": {"shcode": symbol, "exchgubun": self._code("exchange")}},
-                    )["t1102OutBlock"]["price"]
-                ),
-            )
-        )
+
+        def read_kr():
+            # Official t1101 주식현재가호가조회 (TR guide 20261026021444748, /stock/market-data):
+            # offerho1=매도호가1, bidho1=매수호가1, jnilclose=전일종가. KRX book only (no exchgubun input).
+            row = self._response("/stock/market-data", "t1101", {"t1101InBlock": {"shcode": symbol}})["t1101OutBlock"]
+            if row.get("shcode") not in (None, symbol):
+                raise InvalidResponseError("LS quote symbol does not match request")
+            bid, ask = self._price(row.get("bidho1")), self._price(row.get("offerho1"))
+            if bid is not None and ask is not None and bid > ask:
+                bid = ask = None  # a crossed pair is no tradable spread
+            return Quote(symbol=symbol, last=decimal(row["price"]), bid=bid, ask=ask,
+                         prev_close=self._price(row.get("jnilclose")))
+
+        return self._call(read_kr)
 
     def get_rules(self, symbol, *, now=None, trading_day=None):
         if self.market != "US":
-            return super().get_rules(symbol, now=now, trading_day=trading_day)
+            code = self._symbol(symbol, "KR")
+
+            def read_kr():
+                # Official t1102 (TR guide 20261026021444748): uplmtprice=상한가, dnlmtprice=하한가.
+                # Missing/zero sides stay unknown; never derive a band from 기준가.
+                row = self._response(
+                    "/stock/market-data", "t1102",
+                    {"t1102InBlock": {"shcode": code, "exchgubun": self._code("exchange")}},
+                )["t1102OutBlock"]
+                last = decimal(row["price"])
+                upper, lower = self._price(row.get("uplmtprice")), self._price(row.get("dnlmtprice"))
+                if upper is None or lower is None:
+                    upper = lower = None
+                elif not lower <= last <= upper:
+                    raise InvalidResponseError("LS daily band does not contain the last price")
+                return equity_rules(code, last, halted=self._halt_from_provider(code), now=now,
+                                    trading_day=trading_day, limit_up=upper, limit_down=lower)
+
+            return self._call(read_kr)
         symbol = self._us_symbol(symbol)
         if symbol not in self._us_native_halts:
             self.get_quote(symbol, market="US")

@@ -23,6 +23,7 @@ from pykbroker.exceptions import (
     TransportError,
 )
 from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote
+from pykbroker.rules.kr import equity_rules
 from pykbroker.safety.rate_limit import credential_rate_limiter
 
 from ._common import BaseBroker, PageRows, decimal, optional_price, whole
@@ -32,6 +33,9 @@ KB_API_BASE_URL = "https://developer.kbsec.com:32484"
 KB_US_ROW_KEY = ("is_cd", "mkt_clsf", "crncy_clsf_nm", "ln_dt", "mtrt_dt")
 KB_KR_SELLABLE_ROW_KEY = ("is_no",)
 _US_VENUES = {"NASDAQ": "NAS", "NYSE": "NYS", "AMEX": "AMX"}
+# processFlag: only "A" is a completed business result (official examples: every "B" example carries a
+# business-error o_msg). Anything else stays "unknown - reconcile".
+
 # Official XLSX input tables: sheets25/26,28,63/64. Validate the serialized
 # fields at the final transport boundary; never truncate a financial request.
 _KR_ORDER_LENGTHS = {"mkt_tm_clsf": 1, "is_cd": 12, "ordr_q": 10,
@@ -226,12 +230,27 @@ class KB(BaseBroker):
         return self._call(read)
 
     def get_rules(self, symbol: str, *, now=None, trading_day=None):
-        rules = super().get_rules(symbol, now=now, trading_day=trading_day)
         if self.market == "US":
+            rules = super().get_rules(symbol, now=now, trading_day=trading_day)
             # Official GSS10030 dl_spsn_ccd has no documented normal enum.
             # Preserve a caller's stop veto; False cannot establish native permission.
             return rules.model_copy(update={"halted": True if rules.halted is True else None})
-        return rules
+        code = self._symbol(symbol, "KR")
+
+        def read():
+            # Official IVU10140 output (guide/excel/b2c, re-read 2026-10-28): ulmt_prc=상한가, llmt_prc=하한가.
+            # Missing/zero sides stay unknown; never derive a band from 전일종가 or 기준가.
+            row = self._response("ivu10140", {"excg_clsf": "1", "shrt_cd": code})
+            last = decimal(row["now_prc"])
+            upper, lower = optional_price(row.get("ulmt_prc")), optional_price(row.get("llmt_prc"))
+            if upper is None or lower is None:
+                upper = lower = None
+            elif not lower <= last <= upper:
+                raise InvalidResponseError("KB daily band does not contain the last price")
+            return equity_rules(code, last, halted=self._halt_from_provider(code), now=now,
+                                trading_day=trading_day, limit_up=upper, limit_down=lower)
+
+        return self._call(read)
 
     def orderable_cash(self, symbol: str) -> Decimal:
         """Symbol-specific broker spending power in KRW or native foreign currency.

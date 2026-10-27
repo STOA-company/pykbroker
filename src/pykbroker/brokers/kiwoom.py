@@ -124,7 +124,10 @@ def _unpack(reply: Any, *, write: bool = False) -> tuple[Mapping[str, Any], Mapp
     if write and body["return_code"] == _UNEXPECTED_ERROR_CODE:
         raise InvalidResponseError("Kiwoom reported an unexpected error (1999); reconcile before retrying")
     if type(body["return_code"]) is not int or body["return_code"] != 0:
-        raise BrokerRejectedError("Kiwoom rejected the request")
+        error = BrokerRejectedError("Kiwoom rejected the request")
+        # The integer vendor code only (never the message): callers classify e.g. 8001 앱키/시크릿 오류 by it.
+        error.return_code = body["return_code"] if type(body["return_code"]) is int else None
+        raise error
     return body, {str(key).lower(): value for key, value in headers.items()}
 
 
@@ -543,14 +546,25 @@ class Kiwoom(BaseBroker):
             else:
                 # kt00007 cnfm_qty is confirmed quantity, not the requested ord_qty.
                 cancel_ids = [row.get("ord_no") for row in changes]
+                # Merge of #49 (venue/symbol/own-id/unique-id checks) and #63 (ASSUMED: kt00007 leaves mdfy_cncl blank; «취소»/«취소확인» unspecified, other values stay unknown).
                 confirmed = all(
-                    row.get("mdfy_cncl") == "취소확인"
+                    str(row.get("mdfy_cncl")).strip() in {"취소", "취소확인"}
                     and self._symbol(row["stk_cd"], "KR") == code
                     and row.get("dmst_stex_tp") == "KRX"
                     and row.get("ord_no") != order.id
                     for row in changes
                 ) and len(set(cancel_ids)) == len(cancel_ids)
-                cancelled = sum(whole(row["cnfm_qty"]) for row in changes) if confirmed else 0
+                cancelled = 0
+                if confirmed and changes:
+                    # cnfm_qty is the cancelled quantity (#49); #63: absent on every row -> the rows' ord_qty;
+                    # present on only some rows -> unknown. Conservation below still has to close.
+                    given = [whole(row["cnfm_qty"]) for row in changes if row.get("cnfm_qty") not in (None, "")]
+                    if not given:
+                        cancelled = sum(whole(row["ord_qty"]) for row in changes)
+                    elif len(given) == len(changes):
+                        cancelled = sum(given)
+                    else:
+                        confirmed = False
                 if confirmed and quantity > 0 and filled + cancelled + remaining == quantity:
                     if cancelled and not remaining:
                         status = "cancelled"

@@ -182,13 +182,15 @@ def test_candidate_t0425_fields_keep_fill_price_separate_from_limit_price():
 def test_quote_balance_and_positions_reuse_existing_fields():
     broker, client, limiter = make(
         {
-            "t1102": [page("t1102")],
+            "t1101": [page("t1101")],
             "CSPAQ12200": [page("CSPAQ12200")],
             "t0424": [page("t0424")],
         }
     )
     quote = broker.get_quote("A005930")
-    assert (quote.symbol, quote.last, quote.bid, quote.ask) == ("005930", Decimal(70000), None, None)
+    assert (quote.symbol, quote.last, quote.bid, quote.ask) == (
+        "005930", Decimal(70000), Decimal(70000), Decimal(70100))
+    assert quote.prev_close == Decimal(69500)
     balance = broker.get_balance()
     assert (balance.currency, balance.cash_available, balance.position_value) == (
         "KRW",
@@ -198,8 +200,8 @@ def test_quote_balance_and_positions_reuse_existing_fields():
     (position,) = broker.get_positions()
     assert (position.symbol, position.quantity, position.sellable) == ("005930", 3, 2)
     assert position.average_price == Decimal("68000.25")
-    assert [call.args[0] for call in limiter.wait.call_args_list] == ["t1102", "CSPAQ12200", "t0424"]
-    assert client.calls[0][2] == {"t1102InBlock": {"shcode": "005930", "exchgubun": "fixture-exchange"}}
+    assert [call.args[0] for call in limiter.wait.call_args_list] == ["t1101", "CSPAQ12200", "t0424"]
+    assert client.calls[0][2] == {"t1101InBlock": {"shcode": "005930"}}
     assert client.calls[1][2] == {"CSPAQ12200InBlock1": {"BalCreTp": "fixture-balance_type"}}
     assert client.calls[2][2] == {
         "t0424InBlock": {
@@ -311,7 +313,7 @@ def test_invalid_holdings_cannot_become_sellable(field, value):
 @pytest.mark.parametrize("price", [None, 0, "NaN", "Infinity", "-1", "bad", True])
 def test_invalid_quotes_do_not_become_zero_prices(price):
     with pytest.raises(InvalidResponseError):
-        make({"t1102": [page("t1102", t1102OutBlock={"price": price})]})[0].get_quote("005930")
+        make({"t1101": [page("t1101", t1101OutBlock={"price": price})]})[0].get_quote("005930")
 
 
 @pytest.mark.parametrize("missing", ["qty", "cheqty", "cheprice", "price"])
@@ -457,7 +459,7 @@ def test_unusable_read_codes_never_reach_the_wire(code, value):
     broker, client, limiter = make()
     broker._codes[code] = value
     with pytest.raises(ConfigurationError):
-        broker.get_quote("005930")
+        broker.get_rules("005930")
     assert client.calls == []
     limiter.wait.assert_not_called()
 
@@ -592,7 +594,7 @@ def test_factory_never_infers_an_unlock_from_environment(monkeypatch, live_safet
 
 
 def test_close_blocks_reads_without_owning_the_injected_client():
-    broker, client, limiter = make({"t1102": [page("t1102")]})
+    broker, client, limiter = make({"t1101": [page("t1101")]})
     client.close = Mock()
     broker.close()
     broker.close()
