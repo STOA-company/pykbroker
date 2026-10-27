@@ -141,7 +141,8 @@ def test_kb_us_exact_cancel_ack_remains_unknown(live_safety):
     from pykbroker.brokers.kb import KB, KB_API_BASE_URL
     from pykbroker.models import Order
     client = Mock(base_url=KB_API_BASE_URL)
-    client.post.return_value = {"dataHeader": {"resultCode": "200", "processFlag": "A"},
+    # SKAM2102 official success example carries processFlag "B" (test_kb_process_flag_1028).
+    client.post.return_value = {"dataHeader": {"resultCode": "200", "processFlag": "B"},
                               "dataBody": {"ordr_no": "43"}}
     broker = KB(account="fixture", bound_account="fixture", app_key="fake-app", token="fake-token", market="US",
                 venue="NASDAQ", is_integrated=True, writes_enabled=True, client=client, safety=live_safety)

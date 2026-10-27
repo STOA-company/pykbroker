@@ -27,6 +27,12 @@ KB_API_BASE_URL = "https://developer.kbsec.com:32484"
 KB_US_ROW_KEY = ("is_cd", "mkt_clsf", "crncy_clsf_nm", "ln_dt", "mtrt_dt")
 KB_KR_SELLABLE_ROW_KEY = ("is_no",)
 _US_VENUES = {"NASDAQ": "NAS", "NYSE": "NYS", "AMEX": "AMX"}
+# Official B2C JSON response examples (openapi.kbsec.com guide, kb_b2c_json.zip) show resultCode "200" +
+# resultMessage "성공" with processFlag "B" for these TRs; every other TR's example shows "A".
+# ASSUMED: the guide never defines processFlag, so each TR accepts only the flag its own official success
+# example carries (anything else stays "unknown — reconcile"). Confirm on the test-account round (D6301).
+_SUCCESS_FLAG_B_TRS = frozenset({"ssam1801", "ssam1805", "ssam5762", "ssam5764", "ssqm0831", "ssqm2341",
+                                 "skam2102", "spqm2207", "spqm3390", "srqm3051"})
 
 
 class _KbRestClient:
@@ -111,7 +117,8 @@ class KB(BaseBroker):
         if not isinstance(result, Mapping):
             raise InvalidResponseError("KB response is not an object")
         header, data = result.get("dataHeader"), result.get("dataBody")
-        if not isinstance(header, Mapping) or header.get("resultCode") != "200" or header.get("processFlag") != "A":
+        success_flag = "B" if tr in _SUCCESS_FLAG_B_TRS else "A"
+        if not isinstance(header, Mapping) or header.get("resultCode") != "200" or header.get("processFlag") != success_flag:
             raise InvalidResponseError("KB business result is unsuccessful or unknown; reconcile before retrying")
         if not isinstance(data, Mapping):
             raise InvalidResponseError("KB response body is missing")
