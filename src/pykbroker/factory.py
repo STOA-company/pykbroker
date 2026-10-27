@@ -11,11 +11,12 @@ from .brokers.kis import KIS
 from .brokers.kiwoom import Kiwoom
 from .brokers.ls import LS
 from .brokers.nh import NH
+from .brokers.saxo import Saxo
 from .brokers.toss import Toss
 from .exceptions import ConfigurationError
 
 BROKERS: dict[str, type[BaseBroker]] = {
-    "kis": KIS, "dbfi": DBFI, "toss": Toss, "kiwoom": Kiwoom, "ls": LS, "nh": NH, "kb": KB
+    "kis": KIS, "dbfi": DBFI, "toss": Toss, "kiwoom": Kiwoom, "ls": LS, "nh": NH, "kb": KB, "saxo": Saxo
 }
 
 

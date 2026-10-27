@@ -5,7 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Protocol, runtime_checkable
 
-from .models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
+from .models import AmendRequest, Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
 
 
 @runtime_checkable
@@ -40,3 +40,11 @@ class BrokerAdapter(StockBroker, Protocol):
     def place(self, request: OrderRequest) -> Order: ...
     def cancel(self, request: CancelRequest) -> Order: ...
     def status(self, order: Order) -> Order: ...
+
+
+@runtime_checkable
+class AmendableBroker(StockBroker, Protocol):
+    """Optional extension: a separate Protocol so adapters without amend (kis, dbfi, toss) still satisfy
+    StockBroker unchanged. Check Capabilities.supports_amend before calling."""
+
+    def amend_order(self, request: AmendRequest) -> Order: ...
