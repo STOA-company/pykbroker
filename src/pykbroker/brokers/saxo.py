@@ -68,10 +68,17 @@ _REFRESH_MARGIN_SEC = 60.0
 SAXO_ASSUMPTIONS = (
     "StopLimit: OrderPrice = limit price, StopLimitPrice = stop trigger; Stop: OrderPrice = stop trigger",
     "OrderDuration.DurationType names: DayOrder GoodTillCancel GoodTillDate(+ExpirationDateTime) ImmediateOrCancel FillOrKill",
-    "GET /port/v1/orders/me?Status=All lists filled/cancelled-but-retained orders (OrderStatusFilter values); used only by status() and the post-cancel check",
+    "GET /port/v1/orders/me?Status=All may or may not list filled/cancelled orders (OrderStatusFilter values): a listed "
+    "row decides; an absent order is decided by its last order activity, never by the absence",
+    "202 with an OrderId and no ErrorInfo reads as accepted (the mock's 202 carries TradeNotCompleted ErrorInfo => unknown)",
+    "Amend reads FilledAmount before the PATCH; a fill between that read and the PATCH grows the total by that fill",
     "PATCH Amount = new TOTAL order amount (filled + remaining); amend reads the order to learn FilledAmount",
     "PATCH carries the order's existing OrderDuration (row Duration) unless the request names one",
-    "Cancel acknowledged (200, no ErrorInfo) + order absent from Status=All  => cancelled",
+    "Cancel acknowledged + order absent from /port/v1/orders/me => NOT a proof (the contract mock drops filled and cancelled "
+    "orders alike); the outcome is closed only by the order's last activity (/cs/v1/audit/orderactivities EntryType=Last)",
+    "Order activity row: Status FinalFill/Cancelled/Expired with SubStatus «Confirmed» is final; FilledAmount is carried "
+    "on the row (docs list Status/SubStatus/Amount in the example, not FilledAmount) — missing FilledAmount on a "
+    "cancel keeps it unknown",
     "Token endpoint host sim.logonvalidation.net / live.logonvalidation.net (mock serves /token on the gateway base)",
     "Account row account_number holds the Saxo AccountKey (opaque), not AccountId",
     "Balance.position_value = TotalValue - CashBalance (clamped at 0)",
@@ -116,6 +123,9 @@ _OPEN = {"Working", "WorkingLockedCancelPending", "WorkingLockedChangePending", 
 _TIMEZONE = {"US": "America/New_York", "SG": "Asia/Singapore", "FX": "UTC"}
 _CURRENCY = (("US", "USD"), ("SG", "SGD"))
 _PAGE = 100
+#: Final OrderLogStatus values (cs/v1/audit/orderactivities schema-orderlogstatus). Fill, Placed, Changed, Working and
+#: DoneForDay are not final: the order may still fill.
+_ACTIVITY_FINAL = {"FinalFill": "filled", "Cancelled": "cancelled", "Expired": "cancelled"}
 _MAX_PAGES = 50
 
 
@@ -517,18 +527,55 @@ class Saxo(BaseBroker):
             return self._paper(request, "cancelled").model_copy(update={"id": request.order_id})
         query = urllib.parse.urlencode({"AccountKey": self._account_key})
         self._write("DELETE", f"/trade/v2/orders/{urllib.parse.quote(request.order_id, safe='')}?{query}")
-        # Acknowledged. The cancel is only «cancelled» if a follow-up read agrees; a fill that raced the cancel
-        # shows as filled; a failed read keeps it unknown.
+        # Acknowledged is not cancelled: a fill can race the cancel, and an order missing from the order list may be
+        # filled or cancelled alike. Only a still-listed row or the order's last activity decides; else unknown.
+        unknown = Order(id=request.order_id, symbol=request.symbol, market=request.market, status="unknown",
+                        virtual=self.virtual)
         try:
             row = self._find_row(request.order_id, closed_too=True)
+            if row is not None:
+                seen = self._order_from_row(row)
+                if seen.status in {"filled", "cancelled", "rejected"}:
+                    return seen.model_copy(update={"symbol": request.symbol, "market": request.market})
+                # Cancel still pending at Saxo: keep what has filled so far, never close it.
+                return unknown.model_copy(update={"filled": seen.filled, "remaining": seen.remaining,
+                                                  "quantity": seen.quantity})
+            done = self._closed_by_activity(request.order_id)
         except (TransportError, InvalidResponseError):
-            return Order(id=request.order_id, symbol=request.symbol, market=request.market, status="unknown",
-                         virtual=self.virtual)
-        status = "cancelled" if row is None else self._order_from_row(row).status
-        if status in {"open", "accepted"}:
-            status = "unknown"  # cancel still pending at Saxo
-        return Order(id=request.order_id, symbol=request.symbol, market=request.market, status=status,
-                     virtual=self.virtual)
+            return unknown
+        if done is None:
+            return unknown
+        return done.model_copy(update={"symbol": request.symbol, "market": request.market})
+
+    def _closed_by_activity(self, order_id: str) -> Order | None:
+        """The order's last activity, when it is final (filled or cancelled with its FilledAmount); else None."""
+        query = urllib.parse.urlencode({"AccountKey": self._account_key, "OrderId": order_id, "EntryType": "Last"})
+        rows = [r for r in self._rows(f"/cs/v1/audit/orderactivities?{query}") if str(r.get("OrderId")) == order_id]
+        if len(rows) != 1:
+            return None  # none (not logged yet) or several «last» rows: neither closes the order
+        row = rows[0]
+        status = _ACTIVITY_FINAL.get(row.get("Status"))
+        if status is None or row.get("SubStatus") != "Confirmed":
+            return None
+        amount = decimal(row.get("Amount"))  # malformed numbers raise InvalidResponseError: the caller keeps unknown
+        raw_filled = row.get("FilledAmount")
+        if raw_filled in (None, ""):
+            if status != "filled":
+                return None  # a cancel without its filled amount could hide a partial fill
+            raw_filled = row["Amount"]
+        filled = decimal(raw_filled)
+        if filled > amount or (status == "filled" and filled != amount):
+            return None
+        whole = amount == amount.to_integral_value() and filled == filled.to_integral_value()
+        price = row.get("AveragePrice") if row.get("AveragePrice") not in (None, "", 0) else row.get("ExecutionPrice")
+        uic, asset = row.get("Uic"), row.get("AssetType")
+        return Order(
+            id=order_id, symbol=self._name(uic, asset), market=self._market_of(uic, asset),
+            side={"Buy": "buy", "Sell": "sell"}.get(row.get("BuySell")),
+            quantity=int(amount) if whole else None, quantity_exact=amount,
+            filled=int(filled) if whole else None, remaining=int(amount - filled) if whole else None,
+            fill_price=Decimal(str(price)) if price not in (None, "", 0) and filled > 0 else None,
+            status=status, virtual=self.virtual)
 
     # ------------------------------------------------------------------ reads
     def _rows(self, path: str) -> list[Mapping]:
@@ -622,8 +669,18 @@ class Saxo(BaseBroker):
                     row = self._find_row(order.id, closed_too=True)
                 except (InvalidResponseError, TransportError):
                     row = None
-            # Missing proves neither a fill nor a cancellation.
-            return self._order_from_row(row) if row is not None else order.model_copy(update={"status": "unknown"})
+            if row is not None:
+                return self._order_from_row(row)
+            # Missing from the order list proves neither a fill nor a cancellation: ask the order's last activity.
+            try:
+                done = self._closed_by_activity(order.id)
+            except (InvalidResponseError, TransportError):
+                done = None
+            if done is None:
+                return order.model_copy(update={"status": "unknown"})
+            return done.model_copy(update={"symbol": order.symbol or done.symbol, "market": order.market or done.market,
+                                           "order_type": order.order_type or done.order_type,
+                                           "price": order.price, "external_reference": order.external_reference})
         return self._call(read)
 
     def get_positions(self) -> list[Position]:
