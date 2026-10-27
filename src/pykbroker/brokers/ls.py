@@ -34,6 +34,7 @@ from pykbroker.safety.rate_limit import credential_rate_limiter
 # https://openapi.ls-sec.co.kr/api/apis/public/tr-guides.json?download=true
 LS_READ_SUCCESS = {"COSAQ00102": {"00136"}, "COSOQ00201": {"00001"}}
 LS_RATES = {
+    "t1101": 10,
     "t1102": 10,
     "CSPAQ12200": 1,
     "t0424": 2,

@@ -229,3 +229,21 @@ def test_nh_token_refusal_carries_the_http_status(status):
     with pytest.raises(ConfigurationError) as caught:
         broker.issue_token()
     assert caught.value.status_code == status
+
+
+def test_ls_every_quote_and_rules_tr_has_a_rate_in_the_real_limiter():
+    """A Mock limiter hides a missing TR rate; the real one refuses it (caught by trader #651 walk)."""
+    from pykbroker.brokers.ls import LS_RATES
+    from pykbroker.safety.rate_limit import RateLimiter
+
+    limiter = RateLimiter(LS_RATES)
+    for tr in ("t1101", "t1102", "g3101", "g3104"):
+        limiter.wait(tr)
+    body = ls_page("t1102", t1102OutBlock={"price": "70000", "uplmtprice": "91000", "dnlmtprice": "49000"})
+    from pykbroker.brokers.ls import LS
+    from tests.test_ls_contract import CODES, FakeClient
+
+    client = FakeClient({"t1101": [ls_page("t1101")], "t1102": [body]})
+    broker = LS(account="fixture-account", client=client, codes=CODES, rate_limiter=RateLimiter(LS_RATES))
+    assert broker.get_quote("005930").bid == Decimal(70000)
+    assert broker.get_rules("005930").limit_up == Decimal(91000)
