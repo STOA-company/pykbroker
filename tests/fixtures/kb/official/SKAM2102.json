@@ -1,0 +1,31 @@
+{
+  "input": {
+    "dataBody": {
+      "crct_cncl_clsf": "1",
+      "is_cd": "TSLA",
+      "orgn_ordr_no": "9000000003",
+      "frgn_ordr_prc_p4": "2"
+    },
+    "dataHeader": {
+      "ipAddr": "",
+      "macAddr": ""
+    }
+  },
+  "output": {
+    "dataHeader": {
+      "resultCode": "200",
+      "resultMessage": "성공",
+      "processFlag": "B",
+      "processMessage": "",
+      "processCode": "1295",
+      "processTime": "20260622172113186"
+    },
+    "dataBody": {
+      "o_msg": "미접수주문은 정정/취소주문이 불가능합니다.",
+      "o_lngth": "00142",
+      "ordr_no": "0000000000",
+      "cutn_mtr_err_cd": " ",
+      "o_clsf": "SC"
+    }
+  }
+}

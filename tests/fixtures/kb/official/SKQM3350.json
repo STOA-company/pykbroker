@@ -1,0 +1,113 @@
+{
+  "input": {
+    "dataBody": {},
+    "dataHeader": {
+      "ipAddr": "",
+      "macAddr": ""
+    }
+  },
+  "output": {
+    "dataHeader": {
+      "resultCode": "200",
+      "resultMessage": "성공",
+      "processFlag": "A",
+      "processMessage": "",
+      "processCode": "0011",
+      "processTime": "20260622165858714"
+    },
+    "dataBody": {
+      "frsk_ust_sum_krw_amt": "-00000000001219572",
+      "exch_mny_trgt_krw_ordr_mgn": "000000000001220366",
+      "o_msg": "정상적으로 조회되었습니다.",
+      "dmstc_orgn_ordr_psbl_amt": "000000000099119535",
+      "dmstc_ofr_use_psbl_krw_amt": "000000000099119535",
+      "grid_cnt": "006",
+      "o_lngth": "01063",
+      "dmstc_otr_crncy_use_amt": "000000000000000000",
+      "fcr_tfnd_krw_exch_amt": "-00000000001219573",
+      "o_clsf": "SC",
+      "Record1": [
+        {
+          "crncy_cd": "KRW",
+          "fcrncy_rcvbl_ordr_psbl_amt_p2": "0000099119535.00",
+          "fcrncy_tfnd": "0000101000000.00",
+          "ntn_nm": "한국",
+          "fcrncy_use_psbl_amt_p2": "0000099119535.00",
+          "fcrncy_unty_ordr_psbl_amt_p2": "0000099119535.00"
+        },
+        {
+          "crncy_cd": "CNY",
+          "fcrncy_rcvbl_ordr_psbl_amt_p2": "0000000437807.13",
+          "fcrncy_tfnd": "0000000000000.00",
+          "ntn_nm": "중국",
+          "fcrncy_use_psbl_amt_p2": "0000000000000.00",
+          "fcrncy_unty_ordr_psbl_amt_p2": "0000000437807.13"
+        },
+        {
+          "crncy_cd": "HKD",
+          "fcrncy_rcvbl_ordr_psbl_amt_p2": "0000000505454.02",
+          "fcrncy_tfnd": "0000000000000.00",
+          "ntn_nm": "홍콩",
+          "fcrncy_use_psbl_amt_p2": "0000000000000.00",
+          "fcrncy_unty_ordr_psbl_amt_p2": "0000000505454.02"
+        },
+        {
+          "crncy_cd": "USD",
+          "fcrncy_rcvbl_ordr_psbl_amt_p2": "0000000064530.94",
+          "fcrncy_tfnd": "0000000000000.00",
+          "ntn_nm": "미국",
+          "fcrncy_use_psbl_amt_p2": "0000000000000.00",
+          "fcrncy_unty_ordr_psbl_amt_p2": "0000000064530.94"
+        },
+        {
+          "crncy_cd": "JPY",
+          "fcrncy_rcvbl_ordr_psbl_amt_p2": "0000010419377.00",
+          "fcrncy_tfnd": "0000000000000.00",
+          "ntn_nm": "일본",
+          "fcrncy_use_psbl_amt_p2": "0000000000000.00",
+          "fcrncy_unty_ordr_psbl_amt_p2": "0000010419377.00"
+        },
+        {
+          "crncy_cd": "VND",
+          "fcrncy_rcvbl_ordr_psbl_amt_p2": "0001700163550.00",
+          "fcrncy_tfnd": "0000000000000.00",
+          "ntn_nm": "베트남",
+          "fcrncy_use_psbl_amt_p2": "0000000000000.00",
+          "fcrncy_unty_ordr_psbl_amt_p2": "0001700163550.00"
+        },
+        {
+          "crncy_cd": "   ",
+          "fcrncy_rcvbl_ordr_psbl_amt_p2": "0000000000000.00",
+          "fcrncy_tfnd": "0000000000000.00",
+          "ntn_nm": "                    ",
+          "fcrncy_use_psbl_amt_p2": "0000000000000.00",
+          "fcrncy_unty_ordr_psbl_amt_p2": "0000000000000.00"
+        },
+        {
+          "crncy_cd": "   ",
+          "fcrncy_rcvbl_ordr_psbl_amt_p2": "0000000000000.00",
+          "fcrncy_tfnd": "0000000000000.00",
+          "ntn_nm": "                    ",
+          "fcrncy_use_psbl_amt_p2": "0000000000000.00",
+          "fcrncy_unty_ordr_psbl_amt_p2": "0000000000000.00"
+        },
+        {
+          "crncy_cd": "   ",
+          "fcrncy_rcvbl_ordr_psbl_amt_p2": "0000000000000.00",
+          "fcrncy_tfnd": "0000000000000.00",
+          "ntn_nm": "                    ",
+          "fcrncy_use_psbl_amt_p2": "0000000000000.00",
+          "fcrncy_unty_ordr_psbl_amt_p2": "0000000000000.00"
+        },
+        {
+          "crncy_cd": "   ",
+          "fcrncy_rcvbl_ordr_psbl_amt_p2": "0000000000000.00",
+          "fcrncy_tfnd": "0000000000000.00",
+          "ntn_nm": "                    ",
+          "fcrncy_use_psbl_amt_p2": "0000000000000.00",
+          "fcrncy_unty_ordr_psbl_amt_p2": "0000000000000.00"
+        }
+      ]
+    }
+  }
+}

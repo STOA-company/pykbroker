@@ -1,0 +1,152 @@
+{
+  "input": {
+    "dataBody": {
+      "fee_clsf": "",
+      "nxt_key": "",
+      "std_crncy_f": "1",
+      "cn_f": "",
+      "exch_r_aplc_f": "1"
+    },
+    "dataHeader": {
+      "ipAddr": "",
+      "macAddr": ""
+    }
+  },
+  "output": {
+    "dataHeader": {
+      "resultCode": "200",
+      "resultMessage": "성공",
+      "processFlag": "A",
+      "processMessage": "",
+      "processCode": "0223",
+      "processTime": "20260622171110148"
+    },
+    "dataBody": {
+      "krw_o_amt_psbl_amt": "000000000000000",
+      "etc_lndng_amt": "000000000000000",
+      "nxt_key": "                                                                                                    ",
+      "grid_cnt2": "0001",
+      "chck_amt": "0000000000000",
+      "tl_asts_exch_val_amt": "000000000078890",
+      "krw_tfnd": "000000000000000",
+      "tl_scrts_exch_val_amt": "000000001207805",
+      "tl_krw_val_amt": "000000000001207805",
+      "mrtg_ln_amt": "000000000000000",
+      "o_msg": "조회 완료, 더 이상 조회할 자료가 없습니다.",
+      "tl_tfnd_exch_val_amt": "000000000000000",
+      "tl_krw_val_pl_amt": "-00000000000000561",
+      "asts_val_amt": "000000000000000000",
+      "krw_mgn": "000000000000000",
+      "o_lngth": "01663",
+      "Record2": [],
+      "o_clsf": "SC",
+      "Record1": [
+        {
+          "rus_use_amt_p3": "000000000000.000",
+          "rus_psbl_ra_p3": "00000000000.000",
+          "otr_ogn_fcrncy_tfnd_p2": "000000000000.00",
+          "tfnd_val_amt": "000000000000000",
+          "cnvr_exch_r_p4": "0000.0000",
+          "crncy_clsf_nm": "          ",
+          "o_amt_psbl_amt_p2": "0000000000000.00",
+          "std_exch_r": "0000.0000",
+          "mgn_p2": "0000000000000.00",
+          "mrtg_ln_amt": "000000000000000",
+          "fcrncy_dl_fee": "000000000000.00",
+          "ordr_psbl_amt_p2": "000000000000.00",
+          "tfnd": "0000000000000.00"
+        },
+        {
+          "rus_use_amt_p3": "000000000000.000",
+          "rus_psbl_ra_p3": "00000000000.000",
+          "otr_ogn_fcrncy_tfnd_p2": "000000000000.00",
+          "tfnd_val_amt": "000000000000000",
+          "cnvr_exch_r_p4": "0000.0000",
+          "crncy_clsf_nm": "          ",
+          "o_amt_psbl_amt_p2": "0000000000000.00",
+          "std_exch_r": "0000.0000",
+          "mgn_p2": "0000000000000.00",
+          "mrtg_ln_amt": "000000000000000",
+          "fcrncy_dl_fee": "000000000000.00",
+          "ordr_psbl_amt_p2": "000000000000.00",
+          "tfnd": "0000000000000.00"
+        },
+        {
+          "rus_use_amt_p3": "000000000000.000",
+          "rus_psbl_ra_p3": "00000000000.000",
+          "otr_ogn_fcrncy_tfnd_p2": "000000000000.00",
+          "tfnd_val_amt": "000000000000000",
+          "cnvr_exch_r_p4": "0000.0000",
+          "crncy_clsf_nm": "          ",
+          "o_amt_psbl_amt_p2": "0000000000000.00",
+          "std_exch_r": "0000.0000",
+          "mgn_p2": "0000000000000.00",
+          "mrtg_ln_amt": "000000000000000",
+          "fcrncy_dl_fee": "000000000000.00",
+          "ordr_psbl_amt_p2": "000000000000.00",
+          "tfnd": "0000000000000.00"
+        },
+        {
+          "rus_use_amt_p3": "000000000000.000",
+          "rus_psbl_ra_p3": "00000000000.000",
+          "otr_ogn_fcrncy_tfnd_p2": "000000000000.00",
+          "tfnd_val_amt": "000000000000000",
+          "cnvr_exch_r_p4": "0000.0000",
+          "crncy_clsf_nm": "          ",
+          "o_amt_psbl_amt_p2": "0000000000000.00",
+          "std_exch_r": "0000.0000",
+          "mgn_p2": "0000000000000.00",
+          "mrtg_ln_amt": "000000000000000",
+          "fcrncy_dl_fee": "000000000000.00",
+          "ordr_psbl_amt_p2": "000000000000.00",
+          "tfnd": "0000000000000.00"
+        },
+        {
+          "rus_use_amt_p3": "000000000000.000",
+          "rus_psbl_ra_p3": "00000000000.000",
+          "otr_ogn_fcrncy_tfnd_p2": "000000000000.00",
+          "tfnd_val_amt": "000000000000000",
+          "cnvr_exch_r_p4": "0000.0000",
+          "crncy_clsf_nm": "          ",
+          "o_amt_psbl_amt_p2": "0000000000000.00",
+          "std_exch_r": "0000.0000",
+          "mgn_p2": "0000000000000.00",
+          "mrtg_ln_amt": "000000000000000",
+          "fcrncy_dl_fee": "000000000000.00",
+          "ordr_psbl_amt_p2": "000000000000.00",
+          "tfnd": "0000000000000.00"
+        },
+        {
+          "rus_use_amt_p3": "000000000.000000",
+          "rus_psbl_ra_p3": "00000002.000000",
+          "otr_ogn_fcrncy_tfnd_p2": "000000000000120",
+          "tfnd_val_amt": "000000000000000",
+          "cnvr_exch_r_p4": "000.00000",
+          "crncy_clsf_nm": "0001미국나",
+          "o_amt_psbl_amt_p2": "000000000397.255",
+          "std_exch_r": "002.00000",
+          "mgn_p2": "LA        테슬라",
+          "mrtg_ln_amt": "000000000000000",
+          "fcrncy_dl_fee": "              0",
+          "ordr_psbl_amt_p2": "00000000394.450",
+          "tfnd": "스닥USD       TS"
+        },
+        {
+          "rus_use_amt_p3": "4.511531.0000NAS",
+          "rus_psbl_ra_p3": "   000000000079",
+          "otr_ogn_fcrncy_tfnd_p2": "0794.5100000000",
+          "tfnd_val_amt": "000.00000000000",
+          "cnvr_exch_r_p4": "000000000",
+          "crncy_clsf_nm": "7805-00000",
+          "o_amt_psbl_amt_p2": "0000.00252060000",
+          "std_exch_r": "000000000",
+          "mgn_p2": "71000000002.0000",
+          "mrtg_ln_amt": "0000000398.2550",
+          "fcrncy_dl_fee": "00",
+          "ordr_psbl_amt_p2": "0000000000.0000",
+          "tfnd": "000008588-00000."
+        }
+      ]
+    }
+  }
+}

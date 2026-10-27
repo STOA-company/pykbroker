@@ -130,12 +130,17 @@ def test_an_unreadable_halt_provider_answer_is_still_unknown():
 def test_kis_us_rules_state_the_us_tick_and_never_a_krx_band():
     client, api = Mock(), Mock()
     client.key = SimpleNamespace(virtual_account=False)
+    api.get_price_overseas_detail.return_value = {
+        "rt_cd": "0", "output": {"last": "100", "e_ordyn": "매매 가능"}
+    }
     broker = KIS(account="fixture", market="US", venue="NASDAQ", client=client, api=api)
     rules = broker.get_rules("AAPL")
     assert rules.market == "US" and rules.currency == "USD" and rules.timezone == "America/New_York"
     assert rules.tick is None and rules.limit_up is None and rules.limit_down is None
-    assert rules.lot == 1 and rules.tradable is False
-    api.get_price_overseas_detail.assert_not_called()
+    assert rules.lot == 1 and rules.halted is False and rules.tradable is False
+    api.get_price_overseas_detail.assert_called_once_with(
+        kis_account=client.account.return_value, excd="NAS", code="AAPL"
+    )
 
 
 def test_dbfi_answers_the_same_contract_and_admits_its_silence(dbfi):

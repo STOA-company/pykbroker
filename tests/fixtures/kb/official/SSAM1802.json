@@ -1,0 +1,49 @@
+{
+  "input": {
+    "dataBody": {
+      "ordr_uprc": "360000",
+      "is_cd": "005930",
+      "sor_ordr_ccd": "N",
+      "ordr_ccd": "00",
+      "mkt_tm_clsf": "1",
+      "ordr_q": "5"
+    },
+    "dataHeader": {
+      "ipAddr": "",
+      "macAddr": ""
+    }
+  },
+  "output": {
+    "dataHeader": {
+      "resultCode": "200",
+      "resultMessage": "성공",
+      "processFlag": "A",
+      "processMessage": "",
+      "processCode": "0005",
+      "processTime": "20260623100456934"
+    },
+    "dataBody": {
+      "ordr_uprc": "000360000",
+      "ordr_jb_clsf": "2",
+      "ordr_mng_no": "            ",
+      "ln_dt": "        ",
+      "acct_cd": "   ",
+      "crct_clsf": " ",
+      "o_lngth": "00302",
+      "ordr_no": "9000000001",
+      "o_clsf": "SC",
+      "gtc_ccd": " ",
+      "spclz_ordr_ccd": "  ",
+      "is_cd": "005930",
+      "s_clsf": " ",
+      "orgn_ordr_no": "0000000000",
+      "sor_ordr_ccd": "N",
+      "stpd_prc": "000000000",
+      "ordr_ccd": "00",
+      "o_msg": "정상적으로 매수주문 완료되었습니다.",
+      "mkt_tm_clsf": "1",
+      "ordr_q": "0000000005",
+      "crdt_typ_cd": "00"
+    }
+  }
+}

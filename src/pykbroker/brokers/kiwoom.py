@@ -11,7 +11,7 @@ import re
 import urllib.request
 from collections.abc import Callable, Mapping
 from datetime import UTC, date, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from pykbroker._http import urlopen
@@ -21,7 +21,6 @@ from pykbroker.exceptions import (
     ConfigurationError,
     InvalidResponseError,
     NotSupportedError,
-    SpecUnverifiedError,
     TransportError,
 )
 from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
@@ -37,10 +36,10 @@ from ._common import BaseBroker, decimal, whole
 KIWOOM_API_BASE_URL = "https://api.kiwoom.com"
 KIWOOM_MOCK_BASE_URL = "https://mockapi.kiwoom.com"
 # Spec: real 5 order and 5 read calls/s, mock «TR 1개당 1초 1회», but whether a bucket is per TR or per account is
-# unstated. Every TR is at most 1/s and the read TRs sum to 5 (4 x 1 + 2 x 0.5): either reading of the real limit holds.
+# unstated. Every TR is at most 1/s and KR read TRs sum to 5 (3 x 1 + 4 x 0.5).
 KIWOOM_TR_RATE_LIMITS: dict[str, float] = {
-    "ka10001": 1, "ka10004": 1, "kt00001": 1, "kt00018": 1, "ka10075": 0.5, "kt00007": 0.5,
-    "kt10000": 1, "kt10001": 1, "kt10003": 1,
+    "ka10001": 1, "ka10004": 1, "kt00001": 0.5, "kt00018": 1, "ka10075": 0.5, "kt00007": 0.5,
+    "kt00011": 0.5, "kt10000": 1, "kt10001": 1, "kt10003": 1,
     "usa20100": 0.4, "usa20101": 0.4, "ust21050": 0.4, "ust21070": 0.4,
     "ust21110": 0.4, "ust21150": 0.4, "ust31490": 0.4,
     "ust20000": 1, "ust20001": 1, "ust20003": 1,
@@ -140,11 +139,34 @@ def _order_number(value: Any, *, market: str = "KR") -> str:
 
 
 def _price(value: Any) -> Decimal:
-    """Spec: prices are «부호가 포함된 숫자» and the sign's meaning (direction or value) is unstated, with "-" on
-    fields that cannot be negative. "+" cannot change the magnitude; "-" is refused rather than read either way."""
-    if isinstance(value, str) and value.strip().startswith("-"):
-        raise SpecUnverifiedError("A signed price is unverified; the meaning of its sign is not in the spec")
+    """Price strings carry direction: official ka10095 has lst_pric=-85200, base_pric=121700."""
+    if isinstance(value, str):
+        try:
+            value = Decimal(value).copy_abs()
+        except InvalidOperation:
+            raise InvalidResponseError("Invalid price field") from None
     return decimal(value)
+
+
+def _cash_amount(value: Any) -> Decimal:
+    """KR cash deficits remain zero spendable cash; nonfinite/malformed fields are refused."""
+    if value is None or isinstance(value, bool):
+        raise InvalidResponseError("Missing or invalid cash field")
+    try:
+        amount = Decimal(str(value))
+    except InvalidOperation:
+        raise InvalidResponseError("Invalid cash field") from None
+    if not amount.is_finite():
+        raise InvalidResponseError("Nonfinite cash field")
+    return max(amount, Decimal(0))
+
+
+def _average_fill(row: Mapping[str, Any], filled: int) -> Decimal | None:
+    amount = row.get("cntr_tot_amt")
+    if not filled or amount is None or (isinstance(amount, str) and not amount.strip()):
+        return None
+    total = decimal(amount)
+    return total / filled if total > 0 else None
 
 
 def _optional_price(value: Any) -> Decimal | None:
@@ -358,7 +380,8 @@ class Kiwoom(BaseBroker):
         row = self._post("/api/dostk/acnt", "kt00001", {"qry_tp": KIWOOM_CASH_QUERY_TYPE})[0]
         # `ord_alow_amt` (주문가능금액) is not documented as cash-only and the official sample shows it above the
         # deposit `entr` (85,341 vs 17,534), so it is capped by the deposit. `prsm_dpst_aset_amt` is never used.
-        return min(decimal(row["ord_alow_amt"]), decimal(row["entr"]))
+        # 100% stock allowance and D+2 deposit include today's unsettled buys (official example: 12,550).
+        return min(_cash_amount(row[key]) for key in ("ord_alow_amt", "entr", "100stk_ord_alow_amt", "d2_entra"))
 
     def available_cash(self) -> Decimal:
         return self._call(self._cash)
@@ -481,6 +504,7 @@ class Kiwoom(BaseBroker):
                         quantity=whole(row["ord_qty"]),
                         price=_optional_price(row["ord_pric"]),
                         filled=filled,
+                        fill_price=_average_fill(row, filled),
                         remaining=remaining,
                         status=("partial" if filled else "open") if remaining else "unknown",
                         virtual=self.virtual,
@@ -492,7 +516,7 @@ class Kiwoom(BaseBroker):
 
     def status(self, order: Order) -> Order:
         """kt00007 for today (KST) by order number. An order the ledger does not show exactly once, or whose numbers
-        do not add up, or that a cancel/amend row points at, is unknown: absence never proves a fill or a cancel."""
+        do not add up, is unknown. Only confirmed, linked cancel quantities establish a cancellation."""
         code = self._symbol(order.symbol, order.market)
         if self.market == "US":
             return self._call(lambda: self._us_status(order, code))
@@ -512,17 +536,40 @@ class Kiwoom(BaseBroker):
             if len(mine) != 1 or self._symbol(mine[0]["stk_cd"], "KR") != code:
                 return order.model_copy(update={"status": "unknown"})
             quantity, filled, remaining = (whole(mine[0][name]) for name in ("ord_qty", "cntr_qty", "ord_remnq"))
-            pointers = [
+            changes = [
                 row for row in rows if row.get("ori_ord") == order.id and str(row.get("mdfy_cncl") or "").strip()
             ]
-            touched = bool(pointers)
             status = "unknown"
-            if filled and filled == quantity and not remaining:
+            if quantity > 0 and filled == quantity and not remaining:
+                # A late amendment/cancel row cannot undo the original order's complete execution.
                 status = "filled"
-            elif remaining and not touched and filled + remaining == quantity:
-                status = "partial" if filled else "open"
-            elif not remaining and filled < quantity and self._cancelled_rest(pointers, quantity - filled):
-                status = "cancelled"
+            else:
+                # kt00007 cnfm_qty is confirmed quantity, not the requested ord_qty.
+                cancel_ids = [row.get("ord_no") for row in changes]
+                # Merge of #49 (venue/symbol/own-id/unique-id checks) and #63 (ASSUMED: kt00007 leaves mdfy_cncl blank; «취소»/«취소확인» unspecified, other values stay unknown).
+                confirmed = all(
+                    str(row.get("mdfy_cncl")).strip() in {"취소", "취소확인"}
+                    and self._symbol(row["stk_cd"], "KR") == code
+                    and row.get("dmst_stex_tp") == "KRX"
+                    and row.get("ord_no") != order.id
+                    for row in changes
+                ) and len(set(cancel_ids)) == len(cancel_ids)
+                cancelled = 0
+                if confirmed and changes:
+                    # cnfm_qty is the cancelled quantity (#49); #63: absent on every row -> the rows' ord_qty;
+                    # present on only some rows -> unknown. Conservation below still has to close.
+                    given = [whole(row["cnfm_qty"]) for row in changes if row.get("cnfm_qty") not in (None, "")]
+                    if not given:
+                        cancelled = sum(whole(row["ord_qty"]) for row in changes)
+                    elif len(given) == len(changes):
+                        cancelled = sum(given)
+                    else:
+                        confirmed = False
+                if confirmed and quantity > 0 and filled + cancelled + remaining == quantity:
+                    if cancelled and not remaining:
+                        status = "cancelled"
+                    elif remaining and (not changes or cancelled > 0):
+                        status = "partial" if filled else "open"
             return order.model_copy(
                 update={
                     "status": status,
@@ -534,23 +581,6 @@ class Kiwoom(BaseBroker):
             )
 
         return self._call(read)
-
-    @staticmethod
-    def _cancelled_rest(pointers: list[Mapping[str, Any]], rest: int) -> bool:
-        """The unfilled rest is cancelled only when every row pointing at the order is a cancel and their quantities
-        cover exactly that rest. Official kt00007 (spec 953e5db, 계좌별주문체결내역상세요청): ori_ord=원주문,
-        mdfy_cncl=정정취소, ord_qty=주문수량, cnfm_qty=확인수량. An amend ("정정") moves the rest to a new order,
-        so any non-cancel pointer, a confirmed quantity that disagrees, or a sum that differs stays unknown.
-        ASSUMED (#63 review P2-1): the official kt00007 leaves mdfy_cncl's description blank and its example value "";
-        «취소»/«취소확인» are not in the spec. Another real value keeps the order unknown (never a false cancel); confirm
-        with one company test-account cancel."""
-        if not pointers or any(str(row.get("mdfy_cncl")).strip() not in {"취소", "취소확인"} for row in pointers):
-            return False
-        asked = sum(whole(row["ord_qty"]) for row in pointers)
-        confirmed = [whole(row["cnfm_qty"]) for row in pointers if row.get("cnfm_qty") not in (None, "")]
-        if confirmed and (len(confirmed) != len(pointers) or sum(confirmed) != asked):
-            return False
-        return asked == rest
 
     def _us_body(self, code: str) -> dict[str, str]:
         return {"stex_tp": _US_VENUES[self.venue], "stk_cd": code}
@@ -575,9 +605,13 @@ class Kiwoom(BaseBroker):
         # Official /guide/apiGuideContents/33/usa20100: trd_susp_tp "0" is normal;
         # suspended instruments are not returned. No other code meaning is documented.
         self._us_native_halts[key] = (
-            False if type(basic.get("trd_susp_tp")) is str and basic["trd_susp_tp"] == "0"
-            and basic.get("stk_cd") == code and basic.get("stex_tp") == _US_VENUES[self.venue]
-            and quote.last > 0 else None
+            False
+            if type(basic.get("trd_susp_tp")) is str
+            and basic["trd_susp_tp"] == "0"
+            and basic.get("stk_cd") == code
+            and basic.get("stex_tp") == _US_VENUES[self.venue]
+            and quote.last > 0
+            else None
         )
         return quote
 
@@ -602,18 +636,23 @@ class Kiwoom(BaseBroker):
         return positions
 
     def orderable_quantity(self, symbol: str, price: Decimal) -> int:
-        """ust31490 no-debt quantity from the broker. No cash/FX/asset-value conversion.
+        """kt00011 (KR) / ust31490 (US) no-debt quantity. No cash/FX/asset-value conversion.
 
         The existing account's explicit is_integrated selects the broker's KRW-order column,
         only when the broker confirms that the account has applied for KRW orders.
         This read neither enrolls the account nor changes order submission safety.
         """
-        code = self._symbol(symbol, "US")
+        code = self._symbol(symbol, self.market)
         price = decimal(price)
         if not price:
             raise ConfigurationError("Supply a positive order price")
 
         def read() -> int:
+            if self.market == "KR":
+                if price != price.to_integral_value():
+                    raise ConfigurationError("KR order price must be whole won")
+                row = self._post("/api/dostk/acnt", "kt00011", {"stk_cd": code, "uv": format(price, "f")})[0]
+                return whole(row["min_ord_alowq"])
             row = self._post("/api/us/ordr", "ust31490", {**self._us_body(code), "uv": format(price, "f")})[0]
             if row.get("crnc_code") != "USD":
                 raise InvalidResponseError("Kiwoom orderability currency is not USD")

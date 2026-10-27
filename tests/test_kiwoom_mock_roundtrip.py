@@ -276,24 +276,20 @@ def test_an_explicit_rejection_is_reported_distinctly_from_an_unclear_answer():
     assert "잔고 부족" not in json.dumps(result, ensure_ascii=False)  # vendor detail is not echoed
 
 
-# --- guard: a signed price is refused, not guessed ---
+# --- price direction: negative price strings preserve magnitude ---
 
 
-def test_a_signed_current_price_aborts_as_manual_check_not_a_guess():
+def test_minus_signed_current_price_completes_only_the_fake_roundtrip():
     responses = full_responses()
-    responses["ka10001"] = [{**QUOTE_BODY, "cur_prc": "-72000"}]
+    for body in responses["ka10001"]:
+        body["cur_prc"] = "-72000"
     factory, holder = make_factory(responses)
 
     result = script.run(execute=True, env=FAKE_ENV, client_factory=factory, rate_limiter=RateLimiter(FAST_RATES))
 
-    assert result["status"] == "manual_check_needed"
-    assert result["steps"][-1] == {
-        "name": "read_quote",
-        "ok": False,
-        "error": "SpecUnverifiedError",
-        "minus_sign_seen": True,
-    }
-    assert [call["key"] for call in holder["client"].calls] == [TOKEN_PATH, "ka10001"]
+    assert result["status"] == "ok"
+    assert len(holder["client"].calls) == 8
+    assert holder["client"].calls[4]["json"]["ord_uv"] == "50400"
 
 
 def test_plus_signed_prices_complete_only_the_fake_roundtrip():
