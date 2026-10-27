@@ -192,6 +192,9 @@ def _failed(reply: _Reply) -> bool:
 class Saxo(BaseBroker):
     broker_code = "saxo"
     supports_virtual = True
+    # Class-level defaults so capabilities() can be read without a connection (broker_table probes it).
+    _markets: tuple = ("US", "SG", "FX")
+    _asset_types: tuple = ("Stock", "Etf", "FxSpot")
 
     def __init__(
         self,
@@ -217,6 +220,7 @@ class Saxo(BaseBroker):
         client: Any = None,
         client_options: Mapping | None = None,
         market: str = "US",
+        venue: str | None = None,
         virtual: bool | None = None,
         **kwargs,
     ) -> None:
@@ -234,6 +238,8 @@ class Saxo(BaseBroker):
         # The mode is explicit and never inferred; demo and paper are both «virtual» (no real money).
         if mode not in MODES:
             raise ConfigurationError("Saxo mode must be paper, demo or live")
+        if venue is not None:
+            raise ConfigurationError("Saxo routes by instrument; no venue is configured")
         if virtual is not None and virtual != (mode != "live"):
             raise ConfigurationError("virtual contradicts the Saxo mode")
         # One Saxo instance serves several markets; BaseBroker only knows KR/US so it gets the US placeholder.
