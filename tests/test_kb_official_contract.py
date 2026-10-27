@@ -290,17 +290,16 @@ def test_kr_cancel_matches_successful_official_example_despite_xlsx_description(
 def test_us_cancel_normalizes_ledger_p6_to_p4_without_rounding():
     ledger = sample("SPQM2204")["output"]
     first = ledger["dataBody"]["Record1"][0]
-    acknowledgement = sample("SKAM2102")["output"]  # official SKAM2102 example carries processFlag B (#63 per-TR success flag).
+    acknowledgement = sample("SKAM2101")["output"]  # SKAM2102 official response is a failure.
     client = FakeClient({"/api/v1/spqm2204": ledger, "/api/v1/skam2102": acknowledgement})
     b = broker(client, "US", writes_enabled=True, order_date=date(2026, 6, 22))
     request = cancel("US", order_id=first["ordr_no"])
-    # The official SKAM2102 example (flag B accepted, #63) carries no order number: reconcile, never guess.
-    with pytest.raises(InvalidResponseError, match="order number"):
-        b._cancel_order(request)
+    result = b._cancel_order(request)
     assert client.calls[-1][2]["dataBody"] == {
         "crct_cncl_clsf": "2", "is_cd": "TSLA", "orgn_ordr_no": first["ordr_no"],
         "frgn_ordr_prc_p4": "1",
     }
+    assert result.status == "unknown"
 
 
 @pytest.mark.parametrize("change", ["partial", "excess_precision", "missing_original_price"])
@@ -347,7 +346,7 @@ def test_every_official_order_field_limit_is_checked_at_final_transport_boundary
         body[name] = "X" * maximum
         # Some official outputs are business failures; receipt by the fake
         # transport proves the length boundary passed, not broker acceptance.
-        if official["output"]["dataHeader"]["processFlag"] == ("B" if tr not in module._SUCCESS_FLAG_B_TRS else "never"):
+        if official["output"]["dataHeader"]["processFlag"] == "B":
             with pytest.raises(InvalidResponseError, match="business result"):
                 b._response(tr, body)
         else:
