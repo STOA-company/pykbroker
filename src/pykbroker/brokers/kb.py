@@ -15,7 +15,13 @@ from urllib.request import Request
 from zoneinfo import ZoneInfo
 
 from pykbroker._http import urlopen
-from pykbroker.exceptions import ConfigurationError, InvalidResponseError, NotSupportedError, SpecUnverifiedError
+from pykbroker.exceptions import (
+    ConfigurationError,
+    InvalidResponseError,
+    NotSupportedError,
+    SpecUnverifiedError,
+    TransportError,
+)
 from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote
 from pykbroker.safety.rate_limit import credential_rate_limiter
 
@@ -26,6 +32,57 @@ KB_API_BASE_URL = "https://developer.kbsec.com:32484"
 KB_US_ROW_KEY = ("is_cd", "mkt_clsf", "crncy_clsf_nm", "ln_dt", "mtrt_dt")
 KB_KR_SELLABLE_ROW_KEY = ("is_no",)
 _US_VENUES = {"NASDAQ": "NAS", "NYSE": "NYS", "AMEX": "AMX"}
+# Official XLSX input tables: sheets25/26,28,63/64. Validate the serialized
+# fields at the final transport boundary; never truncate a financial request.
+_KR_ORDER_LENGTHS = {"mkt_tm_clsf": 1, "is_cd": 12, "ordr_q": 10,
+                     "ordr_uprc": 9, "ordr_ccd": 2, "sor_ordr_ccd": 1}
+_ORDER_LENGTHS = {
+    "ssam1801": _KR_ORDER_LENGTHS, "ssam1802": _KR_ORDER_LENGTHS,
+    "ssam1806": {"is_cd": 12, "ordr_q": 10, "crct_clsf": 1, "orgn_ordr_no": 10},
+    "skam2101": {"trd_dl_ccd": 2, "is_cd": 12, "frgn_ordr_typ_cd": 1,
+                 "frgn_ordr_q": 18, "frgn_ordr_prc_p4": 15},
+    "skam2102": {"crct_cncl_clsf": 1, "is_cd": 12, "orgn_ordr_no": 10, "frgn_ordr_prc_p4": 15},
+}
+
+
+def _check_lengths(body, limits):
+    if body.keys() != limits.keys() or any(
+        not isinstance(body[key], str) or not body[key] or len(body[key]) > maximum
+        or "\n" in body[key] or "\r" in body[key]
+        for key, maximum in limits.items()
+    ):
+        raise ConfigurationError("KB request fields exceed or violate the official string contract")
+
+
+def _response_body(result):
+    if not isinstance(result, Mapping):
+        raise InvalidResponseError("KB response is not an object")
+    header, data = result.get("dataHeader"), result.get("dataBody")
+    if (not isinstance(header, Mapping) or header.get("resultCode") != "200"
+            or header.get("processFlag") != "A"):
+        raise InvalidResponseError("KB business result is unsuccessful or unknown; reconcile before retrying")
+    if not isinstance(data, Mapping):
+        raise InvalidResponseError("KB response body is missing")
+    return data
+
+
+def _price_text(price, market):
+    if not isinstance(price, Decimal) or not price.is_finite() or price <= 0:
+        raise ConfigurationError("KB limit price must be positive and finite")
+    # Remove insignificant trailing zeroes without Decimal.normalize's context
+    # rounding or allocating a huge fixed-point string for arbitrary exponents.
+    sign, digits, exponent = price.as_tuple()
+    digits = list(digits)
+    while digits[-1] == 0:
+        digits.pop()
+        exponent += 1
+    precision, maximum = (0, 9) if market == "KR" else (4, 15)
+    if exponent < -precision or price.adjusted() + 1 > maximum:
+        raise ConfigurationError("KB limit price exceeds official precision or length")
+    value = format(Decimal((sign, tuple(digits), exponent)), "f")
+    if len(value) > maximum:
+        raise ConfigurationError("KB limit price exceeds official string length")
+    return value
 
 
 class _KbRestClient:
@@ -90,6 +147,46 @@ class KB(BaseBroker):
         if self.virtual is not False or getattr(self._client, "base_url", None) != KB_API_BASE_URL:
             raise ConfigurationError("KB client must use the official production URL")
 
+    @staticmethod
+    def issue_token(*, app_key: str, secret_key: str, virtual: bool = False, client_factory=None) -> dict:
+        """Explicit Client Credentials issuance; no secret/token cache or auto-renewal.
+
+        Official token.json and pinned auth_example.py:34-46 use the same envelope.
+        Returns access_token, token_type and expires_in for caller-managed storage.
+        """
+        if virtual is not False:
+            raise ConfigurationError("KB token issuance has no mock environment")
+        body = {"grantType": "client_credentials", "appKey": app_key, "appSecret": secret_key}
+        _check_lengths(body, {"grantType": 18, "appKey": 36, "appSecret": 32})
+        if not app_key.strip() or not secret_key.strip():
+            raise ConfigurationError("Supply KB app_key and secret_key")
+        client = (client_factory or _KbRestClient)()
+        if getattr(client, "base_url", None) != KB_API_BASE_URL:
+            raise ConfigurationError("KB token client must use the official production URL")
+        credential_rate_limiter("kb", app_key, {"request": 1.0}).wait("request")
+        failed = False
+        try:
+            result = client.post("/oauth2/token", headers={"Content-Type": "application/json"},
+                                 body={"dataHeader": {"ipAddr": "", "macAddr": ""}, "dataBody": body})
+        except Exception:
+            # Leave the handler before raising: `from None` alone retains the
+            # injected exception (and possibly credentials) in __context__.
+            failed = True
+        if failed:
+            raise TransportError("KB token issuance failed; reconcile token state before retrying") from None
+        try:
+            data = _response_body(result)
+            token, kind, expiry = (data[key] for key in ("access_token", "token_type", "expires_in"))
+            if (not isinstance(token, str) or not token.strip() or len(token) > 440
+                    or "\r" in token or "\n" in token
+                    or not isinstance(kind, str) or kind.lower() != "bearer"
+                    or type(expiry) is not int or not 0 < expiry < 10**10):
+                raise ValueError
+            return {"access_token": token, "token_type": kind, "expires_in": expiry}
+        except (KeyError, TypeError, ValueError, InvalidResponseError):
+            pass
+        raise InvalidResponseError("KB token response is invalid") from None
+
     def capabilities(self) -> Capabilities:
         return Capabilities(
             supports_spot=True, supports_limit_order=True, supports_market_order=False,
@@ -100,6 +197,8 @@ class KB(BaseBroker):
 
     def _response(self, tr: str, body: dict) -> Mapping:
         self._verify_host()
+        if tr in _ORDER_LENGTHS:
+            _check_lengths(body, _ORDER_LENGTHS[tr])
         self._limiter.wait("request")
         result = self._client.post(
             "/api/v1/" + tr,
@@ -107,14 +206,7 @@ class KB(BaseBroker):
                      "Authorization": "bearer " + self._token},
             body={"dataHeader": {"ipAddr": "", "macAddr": ""}, "dataBody": body},
         )
-        if not isinstance(result, Mapping):
-            raise InvalidResponseError("KB response is not an object")
-        header, data = result.get("dataHeader"), result.get("dataBody")
-        if not isinstance(header, Mapping) or header.get("resultCode") != "200" or header.get("processFlag") != "A":
-            raise InvalidResponseError("KB business result is unsuccessful or unknown; reconcile before retrying")
-        if not isinstance(data, Mapping):
-            raise InvalidResponseError("KB response body is missing")
-        return data
+        return _response_body(result)
 
     def get_quote(self, symbol: str, *, market: str = "KR") -> Quote:
         symbol = self._symbol(symbol, market)
@@ -164,10 +256,9 @@ class KB(BaseBroker):
         super()._validate_order(request)
         if isinstance(request, OrderRequest) and request.order_type != "limit":
             raise NotSupportedError("KB adapter currently submits limit orders only")
-        if self.market == "US" and isinstance(request, OrderRequest) and request.price * 10000 != (
-            request.price * 10000
-        ).to_integral_value():
-            raise ConfigurationError("KB US limit price supports at most four decimal places")
+        if isinstance(request, OrderRequest):
+            tr, body = self._order_body(request)
+            _check_lengths(body, _ORDER_LENGTHS[tr])
         if self.market == "US" and isinstance(request, OrderRequest) and not self._is_integrated:
             raise SpecUnverifiedError("KB US requires existing Global One Market enrollment")
         if not self._writes_enabled:
@@ -176,6 +267,10 @@ class KB(BaseBroker):
             value = request.order_id
             if not value.isascii() or not value.isdecimal() or len(value) > 10 or not value.strip("0"):
                 raise ConfigurationError("KB order number must be a nonzero decimal string of at most ten digits")
+            if self.market == "KR":
+                _check_lengths(self._kr_cancel_body(request), _ORDER_LENGTHS["ssam1806"])
+            elif len(request.symbol) > 12:
+                raise ConfigurationError("KB US order symbol exceeds twelve characters")
 
     @staticmethod
     def _order_number(row):
@@ -185,22 +280,27 @@ class KB(BaseBroker):
             raise InvalidResponseError("KB order number missing or invalid; reconcile before retrying")
         return value
 
+    def _order_body(self, request):
+        symbol = self._symbol(request.symbol, request.market)
+        price = _price_text(request.price, self.market)
+        if self.market == "KR":
+            return ("ssam1802" if request.side == "buy" else "ssam1801"), {
+                "mkt_tm_clsf": "1", "is_cd": symbol, "ordr_q": str(request.quantity),
+                "ordr_uprc": price, "ordr_ccd": "00", "sor_ordr_ccd": "K",
+            }
+        return "skam2101", {"trd_dl_ccd": "02" if request.side == "buy" else "01", "is_cd": symbol,
+                            "frgn_ordr_typ_cd": "2", "frgn_ordr_q": str(request.quantity),
+                            "frgn_ordr_prc_p4": price}
+
     def _place_order(self, request: OrderRequest) -> Order:
         self._verify_host()
         if not self._writes_enabled:
             raise SpecUnverifiedError("KB writes are disabled")
+        tr, body = self._order_body(request)
+        row = self._response(tr, body)
         if self.market == "KR":
-            tr = "ssam1802" if request.side == "buy" else "ssam1801"
-            row = self._response(tr, {"mkt_tm_clsf": "1", "is_cd": request.symbol,
-                                     "ordr_q": str(request.quantity), "ordr_uprc": str(request.price),
-                                     "ordr_ccd": "00", "sor_ordr_ccd": "K"})
-            if row.get("is_cd") != request.symbol or decimal(row["ordr_q"]) != request.quantity:
+            if row.get("is_cd") != body["is_cd"] or decimal(row["ordr_q"]) != request.quantity:
                 raise InvalidResponseError("KB accepted order identity is inconsistent; reconcile before retrying")
-        else:
-            row = self._response("skam2101", {"trd_dl_ccd": "02" if request.side == "buy" else "01",
-                                            "is_cd": request.symbol, "frgn_ordr_typ_cd": "2",
-                                            "frgn_ordr_q": str(request.quantity),
-                                            "frgn_ordr_prc_p4": format(request.price, "f")})
         return Order(id=self._order_number(row), symbol=request.symbol, market=request.market,
                      side=request.side, order_type=request.order_type, quantity=request.quantity,
                      price=request.price, status="accepted", virtual=False)
@@ -213,10 +313,64 @@ class KB(BaseBroker):
             raise InvalidResponseError("KB account or order row count is inconsistent")
         return rows
 
+    @staticmethod
+    def _funding_rows(data):
+        """SKQM3350's array(10) includes zero-filled padding, unlike ledger pages."""
+        rows = data.get("Record1")
+        if not isinstance(rows, list) or len(rows) > 10 or any(not isinstance(row, Mapping) for row in rows):
+            raise InvalidResponseError("KB funding rows are invalid")
+        active = []
+        for row in rows:
+            currency = row.get("crncy_cd")
+            if not isinstance(currency, str):
+                raise InvalidResponseError("KB funding currency is missing")
+            if currency.strip():
+                active.append(row)
+            else:
+                # A missing identity with money is corruption, never harmless padding.
+                amounts = ("fcrncy_rcvbl_ordr_psbl_amt_p2", "fcrncy_tfnd", "fcrncy_use_psbl_amt_p2",
+                           "fcrncy_unty_ordr_psbl_amt_p2")
+                if (not isinstance(row.get("ntn_nm"), str) or row["ntn_nm"].strip()
+                        or any(decimal(row[key]) != 0 for key in amounts)):
+                    raise InvalidResponseError("KB funding padding contains unidentified data")
+        if whole(data["grid_cnt"]) != len(active):
+            raise InvalidResponseError("KB funding row count is inconsistent")
+        return active
+
+    @staticmethod
+    def _verify_empty_foreign_holdings(page):
+        """An empty Record2/count cannot override valuation or displaced stock data."""
+        message = "KB foreign holdings response is incomplete; verification required (확인 필요)"
+        # SPQM2226 sheet59:22,24,30,33. Do not derive holdings from these totals.
+        totals = ("tl_scrts_exch_val_amt", "tl_krw_val_amt", "tl_asts_exch_val_amt", "asts_val_amt")
+        if whole(page["grid_cnt2"]) != 0 or any(decimal(page.get(key, 0)) > 0 for key in totals):
+            raise SpecUnverifiedError(message)
+        funding = page.get("Record1", [])
+        # sheet59:35 defines five currency funding rows. The official damaged
+        # export has seven, with TSLA text displaced into numeric funding fields.
+        if not isinstance(funding, list) or len(funding) > 5:
+            raise SpecUnverifiedError(message)
+        for row in funding:
+            if not isinstance(row, Mapping):
+                raise SpecUnverifiedError(message)
+            for key, value in row.items():
+                if key == "crncy_clsf_nm":
+                    continue
+                if key in {"is_cd", "is_nm", "frgn_hld_q_p6", "frgn_ordr_psbl_q_p6"}:
+                    if str(value).strip():
+                        raise SpecUnverifiedError(message)
+                    continue
+                try:
+                    decimal(value)
+                except InvalidResponseError:
+                    raise SpecUnverifiedError(message) from None
+
     def _pages(self, tr, body, block, count):
         cursor, seen = "", set()
         for _ in range(100):
             page = self._response(tr, {**body, "nxt_key": cursor})
+            if tr == "spqm2226" and page.get(block) == []:
+                self._verify_empty_foreign_holdings(page)
             yield self._rows(page, block, count)
             cursor = page.get("nxt_key")
             if not isinstance(cursor, str):
@@ -258,7 +412,19 @@ class KB(BaseBroker):
                 rows, complete = self._kr_snapshot()
                 if not complete:
                     raise SpecUnverifiedError("KB KR holdings are truncated; no continuation input is documented")
-                return self._kr_positions(rows)
+                result = []
+                for row in rows:
+                    # sheet42:51-55,68-72 only name the ten quantity fields;
+                    # neither XLSX nor JSON defines their relationship. In
+                    # particular 0+1-0=1 cannot establish ec_q semantics.
+                    quantities = ("hld_q", "ordr_psbl_q", "nstmt_s_q", "nstmt_b_q", "ec_q")
+                    values = [decimal(row[key]) for key in quantities]
+                    values.extend(decimal(row.get(key + "_p6", 0)) for key in quantities)
+                    if any(value != 0 for value in values) or decimal(row["val_amt"]) > 0:
+                        raise SpecUnverifiedError(
+                            "KB KR holding quantity semantics require verification (확인 필요)"
+                        )
+                return result
             result, pages = [], PageRows(KB_US_ROW_KEY, "KB US")
             for page in self._pages("spqm2226", {"std_crncy_f": "1"}, "Record2", "grid_cnt2"):
                 for row in pages.add(page):
@@ -331,7 +497,7 @@ class KB(BaseBroker):
                 cash = decimal(self._response("ssqm0004", {"is_no": ""})["ordr_psbl_csh"])
             else:
                 data = self._response("skqm3350", {})
-                rows = self._rows(data, "Record1", "grid_cnt")
+                rows = self._funding_rows(data)
                 usd = [row for row in rows if row.get("crncy_cd", "").strip() == "USD"]
                 if len(usd) != 1:
                     raise InvalidResponseError("KB funding requires one explicitly identified USD row")
@@ -344,6 +510,8 @@ class KB(BaseBroker):
     def _ledger_date(self):
         if self._order_date is not None:
             return self._order_date.strftime("%Y%m%d")
+        # SPQM2204 sheet71 does not define the date's timezone. Preserve the
+        # existing default; callers can supply the verified broker order_date.
         zone = "Asia/Seoul" if self.market == "KR" else "America/New_York"
         return datetime.now(ZoneInfo(zone)).strftime("%Y%m%d")
 
@@ -398,24 +566,30 @@ class KB(BaseBroker):
             return result
         return self._call(read)
 
+    def _kr_cancel_body(self, request):
+        # sheet28:13 calls 1/2 partial/full correction, but SSAM1806.json
+        # explicitly demonstrates cancellation with 1 + quantity. Follow that
+        # successful quantity-specific example; never infer a full-cancel enum.
+        return {"is_cd": self._symbol(request.symbol, request.market), "ordr_q": str(request.quantity),
+                "crct_clsf": "1", "orgn_ordr_no": request.order_id}
+
     def _cancel_order(self, request: CancelRequest) -> Order:
         if not self._writes_enabled:
             raise SpecUnverifiedError("KB cancellation writes disabled")
         if self.market == "KR":
-            row = self._response("ssam1806", {"is_cd": request.symbol, "ordr_q": str(request.quantity),
-                                             "crct_clsf": "1", "orgn_ordr_no": request.order_id})
-            if row.get("orgn_ordr_no") != request.order_id or row.get("is_cd") != request.symbol:
+            body = self._kr_cancel_body(request)
+            row = self._response("ssam1806", body)
+            if row.get("orgn_ordr_no") != request.order_id or row.get("is_cd") != body["is_cd"]:
                 raise InvalidResponseError("KB cancellation identity inconsistent; reconcile before retrying")
         else:
             orders = [item for item in self.list_orders(request.symbol) if item.id == request.order_id]
             if len(orders) != 1 or orders[0].remaining != request.quantity or orders[0].price is None:
                 raise SpecUnverifiedError("KB US cancellation requires exact current full remainder and original price")
-            if orders[0].price * 10000 != (orders[0].price * 10000).to_integral_value():
-                raise SpecUnverifiedError("KB original US price is not representable by the cancellation contract")
+            price = _price_text(orders[0].price, "US")
             # SKAM2102 exposes no cancel quantity: a partial-quantity request must not cancel the entire order.
             row = self._response("skam2102", {"crct_cncl_clsf": "2", "is_cd": request.symbol,
                                              "orgn_ordr_no": request.order_id,
-                                             "frgn_ordr_prc_p4": format(orders[0].price, "f")})
+                                             "frgn_ordr_prc_p4": price})
         self._order_number(row)
         # Acknowledgement is not proof that any original remainder was actually cancelled.
         return Order(id=request.order_id, symbol=request.symbol, market=request.market, status="unknown")

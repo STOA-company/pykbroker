@@ -1,0 +1,47 @@
+{
+  "input": {
+    "dataBody": {
+      "crct_clsf": "1",
+      "is_cd": "005930",
+      "orgn_ordr_no": "9000000001",
+      "ordr_q": "1"
+    },
+    "dataHeader": {
+      "ipAddr": "",
+      "macAddr": ""
+    }
+  },
+  "output": {
+    "dataHeader": {
+      "resultCode": "200",
+      "resultMessage": "성공",
+      "processFlag": "A",
+      "processMessage": "",
+      "processCode": "0014",
+      "processTime": "20260623102408897"
+    },
+    "dataBody": {
+      "ordr_uprc": "000350000",
+      "ordr_jb_clsf": "4",
+      "ordr_mng_no": "            ",
+      "ln_dt": "        ",
+      "acct_cd": "   ",
+      "crct_clsf": "1",
+      "o_lngth": "00302",
+      "ordr_no": "9000000002",
+      "o_clsf": "SC",
+      "gtc_ccd": " ",
+      "spclz_ordr_ccd": "  ",
+      "is_cd": "005930",
+      "s_clsf": "2",
+      "orgn_ordr_no": "9000000001",
+      "sor_ordr_ccd": "N",
+      "stpd_prc": "000000000",
+      "ordr_ccd": "00",
+      "o_msg": "정상적으로 취소주문 완료되었습니다.",
+      "mkt_tm_clsf": "1",
+      "ordr_q": "0000000001",
+      "crdt_typ_cd": "00"
+    }
+  }
+}

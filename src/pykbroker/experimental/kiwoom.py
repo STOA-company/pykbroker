@@ -43,13 +43,7 @@ class Kiwoom(RestBroker):
         )
 
     def get_balance(self) -> Balance:
-        def read():
-            row = self._balance_response()
-            return Balance(
-                cash_available=decimal(row["prsm_dpst_aset_amt"]), position_value=decimal(row["tot_evlt_amt"])
-            )
-
-        return self._call(read)
+        raise SpecUnverifiedError("Experimental Kiwoom balance is disabled; use pykbroker.brokers.kiwoom.Kiwoom")
 
     def get_positions(self) -> list[Position]:
         return self._call(

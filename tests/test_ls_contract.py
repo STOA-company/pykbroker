@@ -60,12 +60,17 @@ class FakeClient:
         self.base_url = module.LS_API_BASE_URL
         self.responses = {tr: list(pages) for tr, pages in responses.items()}
         self.calls = []
+        self.response_headers = {"tr_cont": "N", "tr_cont_key": ""}
 
     def post(self, path, *, headers, json):
         self.calls.append((path, headers, json))
         response = self.responses[headers["tr_cd"]].pop(0)
         if isinstance(response, Exception):
             raise response
+        # Synthetic per-page transport metadata; not part of the broker JSON.
+        if "_headers" in response:
+            response = deepcopy(response)
+            self.response_headers = response.pop("_headers")
         return deepcopy(response)
 
 
@@ -237,7 +242,7 @@ def test_unverified_body_cursor_only_empty_account_pages_are_empty_lists(tr, met
 @pytest.mark.parametrize(
     "meta,expected",
     [
-        ("more", SpecUnverifiedError),
+        ("more", InvalidResponseError),
         (None, InvalidResponseError),
         (7, InvalidResponseError),
     ],
@@ -406,7 +411,7 @@ def test_order_request_reuses_legacy_tr_and_injected_enum_values(unlocked, live_
     assert path == "/stock/order" and headers["tr_cd"] == "CSPAT00601"
     assert body == {
         "CSPAT00601InBlock1": {
-            "IsuNo": "005930",
+            "IsuNo": "A005930",
             "OrdQty": 1,
             "OrdPrc": 70000,
             "BnsTpCode": "fixture-" + side,
@@ -428,7 +433,7 @@ def test_unverified_string_orgordno_exact_single_cancel_never_expands_other_orde
     assert result == Order(id="42", symbol="005930", status="accepted", virtual=True)
     path, headers, body = client.calls[0]
     assert path == "/stock/order" and headers["tr_cd"] == "CSPAT00801"
-    assert body == {"CSPAT00801InBlock1": {"OrgOrdNo": "42", "IsuNo": "005930", "OrdQty": 2}}
+    assert body == {"CSPAT00801InBlock1": {"OrgOrdNo": "42", "IsuNo": "A005930", "OrdQty": 2}}
     limiter.wait.assert_called_once_with("CSPAT00801")
     assert result.status != "cancelled"  # The acknowledgement is not closing evidence.
 
@@ -876,3 +881,185 @@ def test_us_rules_read_native_eligibility_from_same_quote(suspend, sellonly, exp
     broker.get_quote("AAPL", market="US")
     assert broker.get_rules("AAPL").halted is expected
     assert [call[1] for call in calls] == ["g3101", "g3104"]
+
+
+# Official 20261007070834325 field shapes; all values below are fabricated.
+def official_tr(tr):
+    return load_fixture('ls/official', tr)['transaction']
+
+
+@pytest.mark.parametrize('tr', ['CSPAT00601', 'CSPAT00801'])
+def test_official_kr_stock_symbol_contract(tr):
+    field = next(f for f in official_tr(tr)['request']['body'][0]['fields'] if f['element'] == 'IsuNo')
+    assert '종목코드 or A+종목코드' in field['description']
+    assert '모의투자는 A+종목코드' in field['description']
+    assert make()[0]._order_symbol('A005930') == '005930'
+
+
+@pytest.mark.parametrize('tr', ['t0424', 't0425', 'COSAQ00102'])
+def test_official_continuation_headers_and_existing_rates(tr):
+    doc = load_fixture('ls/official', tr)
+    headers = doc['commonHeaders'] or doc['transaction']
+    for side in ('request', 'response'):
+        fields = headers[side] if doc['commonHeaders'] else headers[side]['headers']
+        names = {f['element'] for f in fields}
+        assert {'tr_cont', 'tr_cont_key'} <= names
+    assert module.LS_RATES[tr] == int(doc['transaction']['transactionPerSec'])
+
+
+@pytest.mark.parametrize('operation,tr,market', [
+    ('place_order', 'CSPAT00601', 'KR'), ('cancel_order', 'CSPAT00801', 'KR'),
+    ('place_order', 'COSAT00301', 'US'), ('cancel_order', 'COSAT00301', 'US'),
+])
+@pytest.mark.parametrize('code,order_id,accepted', [
+    ('00000', 42, True), ('00039', 42, False), ('00040', 42, False),
+    ('99999', 42, False), ('00000', None, False), ('00000', 0, False),
+    ('00000', -1, False), ('00000', True, False), ('00000', '0000000000', False),
+])
+def test_order_code_and_positive_number_unknown_keeps_claim(
+    unlocked, live_safety, operation, tr, market, code, order_id, accepted
+):
+    from datetime import date
+
+    outblock = tr + 'OutBlock2'
+    field = next(f for b in official_tr(tr)['response']['body'] if b['element'] == outblock
+                 for f in b['fields'] if f['element'] == 'OrdNo')
+    assert field['type'] == 'Number'
+    payload = {'rsp_cd': code, outblock: {'OrdNo': order_id} if order_id is not None else {}}
+    options = {'market': 'US', 'venue': 'NASDAQ', 'order_date': date(2026, 10, 8)} if market == 'US' else {}
+    broker, client, _ = make_mock({tr: [payload]}, safety=live_safety, **options)
+    live_safety.valuation = lambda request: Decimal('10000')
+    args = {'symbol': 'AAPL', 'market': 'US', 'venue': 'NASDAQ', 'price': '100'} if market == 'US' else {}
+    request = buy(**args) if operation == 'place_order' else cancel(**{k: v for k, v in args.items() if k != 'price'})
+    if accepted:
+        result = getattr(broker, operation)(request)
+        assert result.status == 'accepted' and result.id == '42'
+    else:
+        with pytest.raises(InvalidResponseError, match='reconcile'):
+            getattr(broker, operation)(request)
+    with pytest.raises(DuplicateOrderError):
+        getattr(broker, operation)(request)
+    assert len(client.calls) == 1
+
+
+LIST_TRS = [
+    ('t0424', 'get_positions', 't0424OutBlock', 'cts_expcode', 't0424OutBlock1'),
+    ('t0425', 'list_orders', 't0425OutBlock', 'cts_ordno', 't0425OutBlock1'),
+    ('COSAQ00102', 'list_orders', None, None, 'COSAQ00102OutBlock3'),
+]
+
+
+def list_page(tr, block, cursor, rows, *, flag='N', key='', value=''):
+    body = page(tr) if tr != 'COSAQ00102' else {'rsp_cd': '00136'}
+    body['_headers'] = {'Tr_Cont': flag, 'Tr_Cont_Key': key}
+    body[rows] = []
+    if cursor:
+        body[block] = {cursor: value}
+    return body
+
+
+def list_broker(tr, responses):
+    from datetime import date
+
+    options = {'market': 'US', 'venue': 'NASDAQ', 'order_date': date(2026, 10, 8)} if tr == 'COSAQ00102' else {}
+    return make({tr: responses}, **options)
+
+
+@pytest.mark.parametrize('tr,method,block,cursor,rows', LIST_TRS)
+def test_official_lists_follow_headers_body_cursor_and_rate_limit(tr, method, block, cursor, rows):
+    first = list_page(tr, block, cursor, rows, flag='Y', key='fixture-next', value='fixture-cts')
+    last = list_page(tr, block, cursor, rows)
+    if cursor:
+        first[rows] = page(tr)[rows]
+        last[rows] = deepcopy(first[rows])
+        if tr == 't0424':
+            last[rows][0]['expcode'] = '000660'
+        else:
+            for row in last[rows]:
+                row['ordno'] = str(int(row['ordno']) + 10)
+    else:
+        row = {'OrdNo': 42, 'ShtnIsuNo': 'AAPL', 'CrcyCode': 'USD', 'OrdMktCode': '82',
+               'OrdQty': 1, 'AllExecQty': 0, 'UnercQty': 1, 'OvrsOrdPrc': '100'}
+        first[rows], last[rows] = [row], [{**row, 'OrdNo': 43}]
+    broker, client, limiter = list_broker(tr, [first, last])
+    result = getattr(broker, method)()
+    assert len(result) == len(first[rows]) + len(last[rows])
+    assert len(client.calls) == 2
+    assert client.calls[0][1]['tr_cont'] == 'N' and client.calls[0][1]['tr_cont_key'] == ''
+    assert client.calls[1][1]['tr_cont'] == 'Y' and client.calls[1][1]['tr_cont_key'] == 'fixture-next'
+    if cursor:
+        assert client.calls[0][2][tr + 'InBlock'][cursor] == ''
+        assert client.calls[1][2][tr + 'InBlock'][cursor] == 'fixture-cts'
+    else:
+        assert client.calls[0][2] == client.calls[1][2]
+        assert {o.id for o in result} == {'42', '43'}
+    assert [call.args[0] for call in limiter.wait.call_args_list] == [tr, tr]
+
+
+@pytest.mark.parametrize('tr,method,block,cursor,rows', LIST_TRS)
+@pytest.mark.parametrize('failure', ['repeated', 'limit', 'bad-last', 'rejected-last'])
+def test_official_lists_never_return_partial_after_continuation(tr, method, block, cursor, rows, failure):
+    first = list_page(tr, block, cursor, rows, flag='Y', key='fixture-1', value='fixture-cts')
+    if failure == 'limit':
+        pages = [list_page(tr, block, cursor, rows, flag='Y', key=f'fixture-{i}', value=f'cts-{i}')
+                 for i in range(module.LS_MAX_PAGES)]
+    elif failure == 'repeated':
+        pages = [first, deepcopy(first)]
+    else:
+        last = list_page(tr, block, cursor, rows)
+        if failure == 'bad-last':
+            last[rows] = 'invalid'
+        else:
+            last['rsp_cd'] = 'ERROR'
+        pages = [first, last]
+    broker, client, limiter = list_broker(tr, pages)
+    expected = BrokerRejectedError if failure == 'rejected-last' else InvalidResponseError
+    with pytest.raises(expected):
+        getattr(broker, method)()
+    assert len(client.calls) == (module.LS_MAX_PAGES if failure == 'limit' else 2)
+    assert limiter.wait.call_count == len(client.calls)
+
+
+@pytest.mark.parametrize('tr,method,block,cursor,rows', LIST_TRS)
+@pytest.mark.parametrize('headers', [None, {}, {'tr_cont': 'Y', 'tr_cont_key': ''},
+    {'tr_cont': 'N', 'tr_cont_key': 'next'}, {'tr_cont': 'X'}, {'tr_cont': 'Y', 'tr_cont_key': 7}])
+def test_official_lists_require_consistent_response_headers(tr, method, block, cursor, rows, headers):
+    payload = list_page(tr, block, cursor, rows)
+    payload['_headers'] = headers
+    broker, client, _ = list_broker(tr, [payload])
+    with pytest.raises(InvalidResponseError):
+        getattr(broker, method)()
+    assert len(client.calls) == 1
+
+
+def test_official_us_date_is_ledger_input_not_order_field():
+    order_fields = {f['element'] for f in official_tr('COSAT00301')['request']['body'][0]['fields']}
+    ledger_fields = {f['element']: f for f in official_tr('COSAQ00102')['request']['body'][0]['fields']}
+    assert 'OrdDt' not in order_fields
+    assert ledger_fields['OrdDt']['length'] == '8'
+    assert ledger_fields['OrdDt']['name'] == '주문일자'
+    broker, client, _ = us_make({'COSAT00301': [{'rsp_cd': '00000', 'COSAT00301OutBlock2': {'OrdNo': 42}}]})
+    broker._place_order(buy(symbol='AAPL', market='US', venue='NASDAQ', price='100'))
+    body = client.calls[0][2]['COSAT00301InBlock1']
+    assert body['IsuNo'] == 'AAPL' and body['OrdPtnCode'] == '02' and body['OrdprcPtnCode'] == '00'
+    assert body['OrdMktCode'] == '82' and body['OvrsOrdPrc'] == 100
+    assert set(body) == order_fields
+    assert not broker.capabilities().supports_limit_order
+
+
+@pytest.mark.parametrize('tr,method,block,cursor,rows', LIST_TRS)
+def test_official_lists_allow_empty_final_page(tr, method, block, cursor, rows):
+    first = list_page(tr, block, cursor, rows, flag='Y', key='fixture-next', value='fixture-cts')
+    last = list_page(tr, block, cursor, rows)
+    broker, client, _ = list_broker(tr, [first, last])
+    assert getattr(broker, method)() == []
+    assert len(client.calls) == 2
+
+
+@pytest.mark.parametrize('tr,method,block,cursor,rows', LIST_TRS[:2])
+def test_official_domestic_header_continuation_requires_body_cursor(tr, method, block, cursor, rows):
+    first = list_page(tr, block, cursor, rows, flag='Y', key='fixture-next', value='')
+    broker, client, _ = list_broker(tr, [first])
+    with pytest.raises(InvalidResponseError):
+        getattr(broker, method)()
+    assert len(client.calls) == 1

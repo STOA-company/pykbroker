@@ -4,7 +4,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from pykbroker.exceptions import NotSupportedError, SpecUnverifiedError
+from pykbroker.exceptions import ConfigurationError, NotSupportedError, SpecUnverifiedError
 from pykbroker.models import CancelRequest
 
 CASES = [
@@ -52,10 +52,23 @@ def test_flag_alone_cannot_submit(module_name, class_name, constant, monkeypatch
         client.base_url = module.LS_API_BASE_URL
     broker = getattr(module, class_name)(account="fixture", client=client, safety=live_safety)
     expected = SpecUnverifiedError if module_name == "ls" else Exception
-    message = "live writes are locked" if module_name == "ls" else "code"
+    message = "explicit real-account opt-in" if module_name == "ls" else "code"
     with pytest.raises(expected, match=message):
         broker.place_order(request_order)
     client.post.assert_not_called()
+    if module_name == "ls":
+        # Even an opted-in real instance must verify the token's account before an order POST.
+        client.post.return_value = {
+            "rsp_cd": "00000", "CSPAQ12200OutBlock1": {"AcntNo": "other-fixture-account"}
+        }
+        opted_in = module.LS(
+            account="fixture", client=client, safety=live_safety,
+            client_options={"token": "fixture-token"}, allow_live_orders=True, rate_limiter=Mock(),
+        )
+        with pytest.raises(ConfigurationError, match="bound to the requested account"):
+            opted_in.place_order(request_order)
+        client.post.assert_called_once()
+        assert client.post.call_args.kwargs["headers"]["tr_cd"] == "CSPAQ12200"
 
 
 @pytest.mark.parametrize("module_name,class_name,constant", CASES[:2])

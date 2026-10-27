@@ -10,7 +10,10 @@ import pytest
 import pykbroker
 from pykbroker.base import BrokerAdapter
 from pykbroker.brokers.dbfi import DBFI
+from pykbroker.brokers.kb import KB, KB_API_BASE_URL
 from pykbroker.brokers.kis import KIS
+from pykbroker.brokers.kiwoom import Kiwoom
+from pykbroker.brokers.ls import LS, LS_API_BASE_URL
 from pykbroker.brokers.nh import NH
 from pykbroker.brokers.toss import Toss
 from pykbroker.exceptions import ConfigurationError, NotSupportedError, SpecUnverifiedError
@@ -22,7 +25,7 @@ def _locked_client(module_name):
     return {"client": SimpleNamespace(base_url="https://openapi.ls-sec.co.kr:8080")} if module_name == "ls" else {}
 
 
-SHIPPED = [KIS, DBFI, Toss, NH]
+SHIPPED = [KIS, DBFI, Toss, NH, Kiwoom, LS, KB]
 LOCKED = [("ls", "LS"), ("kiwoom", "Kiwoom"), ("nh", "NH"), ("kb", "KB")]
 # Every question the settlement-aware executor asks a broker, whatever the asset class.
 CONTRACT = (
@@ -45,6 +48,25 @@ def _built(broker_type, **kwargs):
         )
     if broker_type is Toss:
         return Toss(account="fixture", account_seq=1, sdk_factory=Mock(), **kwargs)
+    if broker_type is Kiwoom:
+        return Kiwoom(
+            account="fixture",
+            client_options={"app_key": "fixture-key", "token": "fixture-token"},
+            client_factory=lambda **options: SimpleNamespace(**options),
+            **kwargs,
+        )
+    if broker_type is LS:
+        client.base_url = LS_API_BASE_URL
+        return LS(
+            account="fixture", client=client,
+            client_options={"token": "fixture-token"}, allow_live_orders=True, **kwargs,
+        )
+    if broker_type is KB:
+        client.base_url = KB_API_BASE_URL
+        return KB(
+            account="fixture", bound_account="fixture", client=client,
+            app_key="fixture-key", token="fixture-token", writes_enabled=True, **kwargs,
+        )
     return broker_type(account="fixture", client=client, api=api, **kwargs)
 
 
@@ -59,7 +81,8 @@ def test_every_shipped_broker_answers_the_whole_contract(broker_type):
 @pytest.mark.parametrize("broker_type", SHIPPED)
 @pytest.mark.parametrize("argument", ["virtual", "halt_provider"])
 def test_the_account_mode_and_halt_source_are_uniform_arguments(broker_type, argument):
-    assert argument in inspect.signature(broker_type.__init__).parameters
+    # LS/KB forward these public arguments through **kwargs to BaseBroker.
+    _built(broker_type, **{argument: False if argument == "virtual" else lambda symbol: False})
 
 
 @pytest.mark.parametrize("broker_type", SHIPPED)
@@ -141,7 +164,8 @@ def test_experimental_brokers_are_not_reachable_through_the_factory(module_name,
 
 
 def test_the_factory_ships_exactly_the_registered_adapters():
-    assert set(BROKERS) == {"kis", "dbfi", "toss", "kiwoom", "ls", "nh"}
+    assert set(BROKERS) == {"kis", "dbfi", "toss", "kiwoom", "ls", "nh", "kb"}
+    assert set(BROKERS.values()) == set(SHIPPED)
 
 
 # --- B′-0: 거래소 선언 정합 --------------------------------------------------
@@ -212,13 +236,7 @@ US_MATRIX = [row for row in MATRIX if row[1] == "US"]
 
 
 def _for_market(broker_type, market, **kwargs):
-    client, api = Mock(), Mock()
-    client.key = SimpleNamespace(virtual_account=False)
-    if broker_type is Toss:
-        return Toss(account="fixture", account_seq=1, sdk_factory=Mock(), market=market, **kwargs)
-    if broker_type is NH:
-        return _built(NH, market=market, **kwargs)
-    return broker_type(account="fixture", market=market, client=client, api=api, **kwargs)
+    return _built(broker_type, market=market, **kwargs)
 
 
 def _request(kind, market, **kwargs):
@@ -306,9 +324,9 @@ def test_a_broker_either_routes_a_market_or_locks_it(broker_type, market, live_s
     takes_venue = "venue" in inspect.signature(broker_type.__init__).parameters
     kwargs = {"venue": "NASDAQ"} if market == "US" and takes_venue else {}
     if broker_type is NH and market == "US":
-        with pytest.raises(NotSupportedError):
+        with pytest.raises(ConfigurationError, match="US for US"):
             _for_market(broker_type, market, safety=live_safety, **kwargs)
-        return
+        kwargs = {"venue": "US"}
     try:
         caps = _for_market(broker_type, market, safety=live_safety, **kwargs).capabilities()
     except SpecUnverifiedError:

@@ -1,0 +1,49 @@
+{
+  "input": {
+    "dataBody": {
+      "ordr_uprc": "320000",
+      "is_cd": "005930",
+      "sor_ordr_ccd": "",
+      "ordr_ccd": "00",
+      "mkt_tm_clsf": "1",
+      "ordr_q": "1"
+    },
+    "dataHeader": {
+      "ipAddr": "",
+      "macAddr": ""
+    }
+  },
+  "output": {
+    "dataHeader": {
+      "resultCode": "200",
+      "resultMessage": "성공",
+      "processFlag": "B",
+      "processMessage": "",
+      "processCode": "1853",
+      "processTime": "20260623101053614"
+    },
+    "dataBody": {
+      "ordr_uprc": "000320000",
+      "ordr_jb_clsf": "1",
+      "ordr_mng_no": "            ",
+      "ln_dt": "        ",
+      "acct_cd": "   ",
+      "crct_clsf": " ",
+      "o_lngth": "00302",
+      "ordr_no": "0000000000",
+      "o_clsf": "SC",
+      "gtc_ccd": " ",
+      "spclz_ordr_ccd": "  ",
+      "is_cd": "005930",
+      "s_clsf": "2",
+      "orgn_ordr_no": "0000000000",
+      "sor_ordr_ccd": " ",
+      "stpd_prc": "000000000",
+      "ordr_ccd": "00",
+      "o_msg": "제권리 수량이 없습니다.",
+      "mkt_tm_clsf": "1",
+      "ordr_q": "0000000001",
+      "crdt_typ_cd": "00"
+    }
+  }
+}

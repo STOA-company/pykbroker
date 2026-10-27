@@ -38,12 +38,18 @@ from ._common import BaseBroker, decimal, optional_price, whole
 
 NH_API_BASE_URL = "https://api.nhplug.com:8443"
 NH_MOCK_BASE_URL = "https://moapi.nhplug.com:8443"
+NH_N2_API_BASE_URL = "https://api.n2plug.com:8443"
+NH_N2_MOCK_BASE_URL = "https://moapi.n2plug.com:8443"
+_BRAND_HOSTS = {
+    "nhplug": (NH_API_BASE_URL, NH_MOCK_BASE_URL),
+    "n2plug": (NH_N2_API_BASE_URL, NH_N2_MOCK_BASE_URL),
+}
 NH_SUCCESS_CODES = frozenset({"00000", "00166", "00221", "13578"})
 NH_CONTINUATION_CODES = frozenset({"00165", "00218"})
 TOKEN_MARGIN = timedelta(minutes=5)
 NH_READ_RATES = {"read": 4.0}
 NH_MAX_BALANCE_PAGES = 100
-_OPTIONS = {"app_key", "app_secret", "token", "token_type", "expires_at", "acct_type"}
+_OPTIONS = {"app_key", "app_secret", "token", "token_type", "expires_at", "acct_type", "brand"}
 _VENUES = frozenset({"KRX", "NXT", "UNT"})
 _COMPLETED = re.compile(
     r"(?:^|\s)(?:조회\s*)?완료(?:되었습니다|됐습니다|했습니다|됨)?[.!\s]*$|"
@@ -159,6 +165,10 @@ class NH(BaseBroker):
         options = dict(client_options)
         if not set(options) <= _OPTIONS:
             raise ConfigurationError("Unknown NH client option")
+        brand = options.get("brand", "nhplug")
+        if not isinstance(brand, str) or brand not in _BRAND_HOSTS:
+            raise ConfigurationError("NH brand must be nhplug (나무) or n2plug (N2)")
+        auth_host, mock_host = _BRAND_HOSTS[brand]
         app_key, app_secret, token = (options.get(k) for k in ("app_key", "app_secret", "token"))
         if not isinstance(app_key, str) or not app_key or not (token or app_secret):
             raise ConfigurationError("Supply app_key and a stored token or app_secret")
@@ -182,19 +192,19 @@ class NH(BaseBroker):
         self._clock = clock
         self._limiter = rate_limiter or credential_rate_limiter("nh", app_key, NH_READ_RATES)
         factory = client_factory or _NhRestClient
-        order_host = NH_MOCK_BASE_URL if virtual else NH_API_BASE_URL
+        order_host = mock_host if virtual else auth_host
         self._client = factory(base_url=order_host)
         self._verify_host(self._client, order_host)
         self._order_host = order_host
         # Token issuance is always on the live host, including for mock accounts.
-        self._auth_client = factory(base_url=NH_API_BASE_URL)
-        self._verify_host(self._auth_client, NH_API_BASE_URL)
+        self._auth_client = factory(base_url=auth_host)
+        self._verify_host(self._auth_client, auth_host)
         self._publish_token_if_fresher()
 
     @property
     def virtual(self) -> bool:
         """Account mode follows the verified order host and cannot be reassigned."""
-        return self._order_host == NH_MOCK_BASE_URL
+        return self._order_host in {NH_MOCK_BASE_URL, NH_N2_MOCK_BASE_URL}
 
     @staticmethod
     def _verify_host(client: Any, expected: str) -> None:
@@ -515,7 +525,10 @@ class NH(BaseBroker):
             if not isinstance(row, Mapping):
                 raise InvalidResponseError("NH balance block is invalid")
             # Never count margin or unsettled assets as spendable cash.
-            cash = min(decimal(row["dca"]), decimal(row["orr_pbl_amt"]))
+            if "dca" not in row or not any(name in row for name in ("orr_pbl_amt4", "orr_pbl_amt")):
+                raise InvalidResponseError("NH cash balance fields are missing")
+            candidates = [decimal(row[name]) for name in ("dca", "orr_pbl_amt4", "orr_pbl_amt") if name in row]
+            cash = min(candidates)
             return Balance(cash_available=cash, position_value=decimal(row["tot_eal_amt"]))
 
         return self._call(read)
@@ -629,7 +642,7 @@ class NH(BaseBroker):
 
     def _validate_order(self, request: OrderRequest | CancelRequest) -> None:
         super()._validate_order(request)
-        if self._order_host == NH_API_BASE_URL and self._allow_live_orders is not True:
+        if not self.virtual and self._allow_live_orders is not True:
             raise SafetyError("NH live orders are locked until order-to-ledger reconciliation is verified")
         if request.venue is not None and request.venue != self.venue:
             raise NotSupportedError("NH order venue must match the configured venue")
@@ -745,7 +758,9 @@ class NH(BaseBroker):
         for _ in range(NH_MAX_BALANCE_PAGES):
             body, headers = self._read_response("/krstock/inquiry/v1/dailyOrderExecution", payload, None, cts=cts)
             # Current official schema uses Output_0; older fixtures/wire used Output_1.
-            page = body.get("Output_1") if "Output_1" in body else body.get("Output_0")
+            if "Output_0" in body and "Output_1" in body and body["Output_0"] != body["Output_1"]:
+                raise InvalidResponseError("NH daily order rows are invalid")
+            page = body.get("Output_0") if "Output_0" in body else body.get("Output_1")
             if page is None:
                 if str(body.get("rsp_cd", "")).strip() != "13578":
                     raise InvalidResponseError("NH daily order rows are missing")
@@ -976,8 +991,10 @@ class NH(BaseBroker):
             "orr_qty": request.quantity,
             "fc_orr_uit_pr": float(self._us_price(request.price)),
             "ahi_nmn_pr_tp_cd": "00",
-            "wtm_cur_knd_cd": "1",
         }
+        # The official sell schema has no margin-currency field.
+        if request.side == "buy":
+            payload["wtm_cur_knd_cd"] = "1"
         output = self._write("/gbstock/order/v1/" + request.side, payload, number_field="orr_no")
         return Order(
             id="us:" + _order_number(output["orr_no"]),

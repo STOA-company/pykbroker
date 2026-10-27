@@ -26,7 +26,6 @@ from pykbroker.exceptions import (
     DuplicateOrderError,
     InvalidResponseError,
     NotSupportedError,
-    SpecUnverifiedError,
     TransportError,
 )
 from pykbroker.factory import BROKERS, create_broker
@@ -339,11 +338,7 @@ def test_amend_and_market_orders_stay_unsupported():
 def test_open_order_signed_price_contract(price):
     row = {**OFFICIAL["ka10075"]["oso"][0], "ord_pric": price}
     broker, client = make({"ka10075": [{**OFFICIAL["ka10075"], "oso": [row]}]})
-    if price.startswith("-"):
-        with pytest.raises(SpecUnverifiedError):
-            broker.list_orders()
-    else:
-        assert broker.list_orders()[0].price == Decimal("70000")
+    assert broker.list_orders()[0].price == Decimal("70000")
     assert [call["headers"]["api-id"] for call in client.calls] == ["ka10075"]
 
 
@@ -399,7 +394,7 @@ def test_open_order_status_comes_from_the_quantity_fields_only(changes, status, 
         {"ord_no": ""},
         {"oso_qty": "x"},
         {"cntr_qty": "-1"},
-        {"ord_pric": "-70000"},
+        {"ord_pric": "--70000"},
         {"stk_cd": "AAPL"},
     ],
 )
@@ -631,3 +626,108 @@ def test_one_share_fill_preserves_the_broker_execution_unit_price_in_both_market
     row = {**US_ROW, "ord_qty": "1", "cntr_qty": "1", "ord_remnq": "0", "cntr_uv": "199.77"}
     broker, _ = us_make({"ust21150": [{"return_code": 0, "result_list": [row]}]})
     assert broker.status(Order(id="000000282", symbol="NVDA", market="US")).fill_price == Decimal("199.77")
+
+
+PINNED = {
+    path.stem: json.loads(path.read_text())
+    for path in (Path(__file__).parent / "fixtures" / "kiwoom" / "official").glob("*.json")
+    if path.stem != "error_codes"
+}
+
+
+@pytest.mark.parametrize(
+    "filled,total,expected",
+    [(0, "0", None), (2, "140100", Decimal("70050")), (2, "0", None), (2, "", None), (2, None, None)],
+)
+def test_pinned_open_order_average_uses_execution_total_only(filled, total, expected):
+    # Official sample has zero fills. The multi-fill values are derived from its field layout.
+    body = PINNED["ka10075"]["response"]
+    row = {**body["oso"][0], "cntr_qty": str(filled), "cntr_tot_amt": total, "ord_qty": "3", "oso_qty": str(3 - filled)}
+    (order,) = make({"ka10075": [{**body, "oso": [row]}]})[0].list_orders()
+    assert order.fill_price == expected
+
+
+@pytest.mark.parametrize(
+    "filled,cancelled,remaining,status",
+    [
+        (0, 3, 0, "cancelled"),
+        (1, 2, 0, "cancelled"),
+        (0, 2, 1, "open"),
+        (1, 1, 1, "partial"),
+        (1, 1, 0, "unknown"),
+        (0, 4, 0, "unknown"),
+    ],
+)
+def test_pinned_cancel_state_requires_conserved_confirmed_quantities(filled, cancelled, remaining, status):
+    # kt00007 has no cancel response example: these are derived confirmed-cancel rows.
+    body = PINNED["kt00007"]["response"]
+    base = body[LEDGER][0]
+    original = {**base, "ord_qty": "0000000003", "cntr_qty": str(filled), "ord_remnq": str(remaining)}
+    change = {
+        **base,
+        "ord_no": "0000051",
+        "ori_ord": base["ord_no"],
+        "mdfy_cncl": "취소확인",
+        "cnfm_qty": str(cancelled),
+        "ord_qty": "99",
+    }
+    result = make({"kt00007": [{**body, LEDGER: [original, change]}]})[0].status(held())
+    assert (result.status, result.quantity, result.filled, result.remaining) == (status, 3, filled, remaining)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"mdfy_cncl": "취소접수"},
+        {"mdfy_cncl": "취소"},
+        {"mdfy_cncl": "취소거부"},
+        {"mdfy_cncl": "정정"},
+        {"mdfy_cncl": "알 수 없는 값"},
+        {"mdfy_cncl": "취소확인", "cnfm_qty": "1"},
+        {"mdfy_cncl": "취소확인", "dmst_stex_tp": "NXT"},
+        {"mdfy_cncl": "정정확인"},
+    ],
+)
+def test_pinned_fully_filled_order_survives_late_cancel_or_amend_rows(change):
+    # Derived late changes: the official ledger sample has one share fully executed.
+    body = PINNED["kt00007"]["response"]
+    original = body[LEDGER][0]
+    late = {**original, "ord_no": "0000051", "ori_ord": original["ord_no"], **change}
+    result = make({"kt00007": [{**body, LEDGER: [original, late]}]})[0].status(held())
+    assert (result.status, result.quantity, result.filled, result.remaining) == ("filled", 1, 1, 0)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"mdfy_cncl": "취소접수"},
+        {"mdfy_cncl": "알 수 없는 값"},
+        {"mdfy_cncl": "정정확인"},
+        {"stk_cd": "A005930"},
+        {"dmst_stex_tp": "NXT"},
+        {"cnfm_qty": "0"},
+    ],
+)
+def test_pinned_unconfirmed_or_other_instrument_cancel_stays_unknown(change):
+    body = PINNED["kt00007"]["response"]
+    base = body[LEDGER][0]
+    original = {**base, "cntr_qty": "0", "ord_remnq": "0"}
+    cancel_row = {
+        **base,
+        "ord_no": "0000051",
+        "ori_ord": base["ord_no"],
+        "mdfy_cncl": "취소확인",
+        "cnfm_qty": "1",
+        **change,
+    }
+    assert make({"kt00007": [{**body, LEDGER: [original, cancel_row]}]})[0].status(held()).status == "unknown"
+
+
+def test_pinned_duplicate_cancel_rows_do_not_double_count():
+    body = PINNED["kt00007"]["response"]
+    base = body[LEDGER][0]
+    original = {**base, "ord_qty": "2", "cntr_qty": "0", "ord_remnq": "0"}
+    cancel_row = {**base, "ord_no": "0000051", "ori_ord": base["ord_no"], "mdfy_cncl": "취소확인", "cnfm_qty": "1"}
+    assert (
+        make({"kt00007": [{**body, LEDGER: [original, cancel_row, cancel_row]}]})[0].status(held()).status == "unknown"
+    )

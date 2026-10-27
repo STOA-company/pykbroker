@@ -1,0 +1,32 @@
+{
+  "input": {
+    "dataBody": {
+      "frgn_ordr_q": "1",
+      "is_cd": "TSLA",
+      "trd_dl_ccd": "02",
+      "frgn_ordr_prc_p4": "1",
+      "frgn_ordr_typ_cd": "2"
+    },
+    "dataHeader": {
+      "ipAddr": "",
+      "macAddr": ""
+    }
+  },
+  "output": {
+    "dataHeader": {
+      "resultCode": "200",
+      "resultMessage": "성공",
+      "processFlag": "A",
+      "processMessage": "",
+      "processCode": "0005",
+      "processTime": "20260622171822164"
+    },
+    "dataBody": {
+      "o_msg": "정상적으로 매수주문 완료되었습니다.",
+      "o_lngth": "00142",
+      "ordr_no": "9000000003",
+      "cutn_mtr_err_cd": " ",
+      "o_clsf": "SC"
+    }
+  }
+}
