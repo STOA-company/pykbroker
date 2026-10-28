@@ -156,3 +156,68 @@ def test_nh_us_cancel_confirmation(row, state):
     broker, _ = make({US_ORDERS: [reply([row])]}, market="US", venue="US")
     listed = [o for o in broker.list_orders() if o.id == "us:123"]
     assert listed[0].status == state
+
+
+# ---------------------------------------------------------------- LS ledger reads + cancel confirmation (D6738 ③④)
+
+from tests.test_ls_contract import make as ls_make  # noqa: E402
+
+
+def _t0425(*rows):
+    return {"t0425": [{"rsp_cd": "00000", "rsp_msg": "조회완료", "t0425OutBlock": {"cts_ordno": ""},
+                       "t0425OutBlock1": list(rows)}]}
+
+
+def _ls_row(ordno="42", qty=3, cheqty=1, ordrem=0, **extra):
+    return {"ordno": ordno, "expcode": "005930", "qty": str(qty), "price": "70000", "cheqty": str(cheqty),
+            "cheprice": "70000", "ordrem": str(ordrem), "cfmqty": "0", "orgordno": "0", **extra}
+
+
+def _cancel_row(ordno="43", parent="42", qty=2, cfmqty=2):
+    return _ls_row(ordno=ordno, qty=qty, cheqty=0, ordrem=0, cfmqty=str(cfmqty), orgordno=parent)
+
+
+def test_ls_default_instance_keeps_quantities_locked():
+    broker, _, _ = ls_make(_t0425(_ls_row(cheqty=3)))
+    (order,) = broker.list_orders()
+    assert (order.quantity, order.filled, order.status) == (None, None, "unknown")
+
+
+@pytest.mark.parametrize("row,state,filled", [
+    (_ls_row(cheqty=3, ordrem=0), "filled", 3),
+    (_ls_row(cheqty=1, ordrem=2), "partial", 1),
+    (_ls_row(cheqty=0, ordrem=3), "open", 0),
+    (_ls_row(cheqty=1, ordrem=0), "unknown", 1),   # zero remaining without a cancel row is never a fill
+])
+def test_ls_ledger_reads_opt_in_reads_official_quantities(row, state, filled):
+    broker, _, _ = ls_make(_t0425(row), ledger_reads=True)
+    (order,) = broker.list_orders()
+    assert (order.status, order.filled) == (state, filled)
+
+
+def test_ls_confirmed_cancel_child_closes_the_original_as_cancelled():
+    broker, _, _ = ls_make(_t0425(_ls_row(), _cancel_row()), ledger_reads=True)
+    statuses = {o.id: (o.status, o.filled) for o in broker.list_orders()}
+    assert statuses["42"] == ("cancelled", 1)
+    assert statuses["43"][0] == "unknown"
+
+
+@pytest.mark.parametrize("child", [
+    _cancel_row(cfmqty=0),                                          # cancel not confirmed yet
+    _cancel_row(qty=1, cfmqty=1),                                    # only part cancelled: quantities do not close
+    _ls_row(ordno="43", qty=2, cheqty=0, ordrem=2, orgordno="42"),   # correction: a live child order
+    _ls_row(ordno="43", qty=2, cheqty=2, ordrem=0, cfmqty="2", orgordno="42"),  # correction child that executed
+])
+def test_ls_other_child_shapes_keep_the_original_unknown(child):
+    broker, _, _ = ls_make(_t0425(_ls_row(), child), ledger_reads=True)
+    assert {o.id: o.status for o in broker.list_orders()}["42"] == "unknown"
+
+
+def test_ls_ledger_reads_does_not_unlock_an_unverified_virtual_instance():
+    from pykbroker.brokers import ls as module
+
+    broker, client, _ = ls_make(_t0425(_ls_row(cheqty=3)))
+    client.base_url = module.LS_MOCK_BASE_URL
+    broker._bound_virtual = True  # an unverified mock: the opt-in is for real accounts only
+    broker._ledger_reads = True
+    assert broker._reads_verified() is False
