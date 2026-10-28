@@ -62,6 +62,9 @@ def _reject_code(code: Any) -> str | None:
     return text if re.fullmatch(r"[A-Za-z0-9_-]{1,40}", text) else None
 
 
+_NH_UNCERTAIN_WORDS = re.compile(r"접수|처리\s*중|지연|시간\s*초과|타임\s*아웃|timeout|확인", re.IGNORECASE)
+
+
 def _nh_definite_write_failure(code: Any, message: Any, output: Any, number_field: str) -> bool:
     """HTTP 200 order answer that the official contract defines as a business failure (not accepted).
 
@@ -83,6 +86,8 @@ def _nh_definite_write_failure(code: Any, message: Any, output: Any, number_fiel
         return False
     if not isinstance(message, str) or not message.strip() or "완료" in message or _COMPLETED.search(message):
         return False
+    if _NH_UNCERTAIN_WORDS.search(message):
+        return False  # delay/timeout/«확인» wording may hide a standing order (#676·#66 review P1-1)
     if output is None:
         return True
     if not isinstance(output, Mapping):
@@ -202,6 +207,7 @@ class NH(BaseBroker):
         venue: str = "KRX",
         virtual: bool = False,
         allow_live_orders: bool = False,
+        definite_rejects: bool = False,
         is_integrated: bool = False,
         client_factory: Callable[..., Any] | None = None,
         token_cache: MutableMapping[str, dict[str, str]] | None = None,
@@ -219,6 +225,11 @@ class NH(BaseBroker):
         if type(allow_live_orders) is not bool:
             raise ConfigurationError("allow_live_orders must be a boolean")
         self._allow_live_orders = allow_live_orders
+        if type(definite_rejects) is not bool:
+            raise ConfigurationError("definite_rejects must be a boolean")
+        # OFF by default (F2 D6301, #676·#66 review P1-1): until the R85 test-account read proves that a failure
+        # answer without an order number means «no order at the venue», every such answer stays unknown (locked).
+        self._definite_rejects = definite_rejects
         options = dict(client_options)
         if not set(options) <= _OPTIONS:
             raise ConfigurationError("Unknown NH client option")
@@ -747,7 +758,7 @@ class NH(BaseBroker):
         if message is not None and not isinstance(message, str):
             raise InvalidResponseError("NH order message is invalid; reconcile before retrying")
         completed = bool(message and _COMPLETED.search(message))
-        if _nh_definite_write_failure(code, message, body.get("Output_0"), number_field):
+        if self._definite_rejects and _nh_definite_write_failure(code, message, body.get("Output_0"), number_field):
             raise BrokerRejectedError("NH did not accept the order request; no order replay occurred",
                                       code=_reject_code(code), kind="rejected", reason="broker_rejected")
         # Only known success codes plus a valid market order number acknowledge a write.

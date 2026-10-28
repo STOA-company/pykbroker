@@ -512,10 +512,8 @@ def test_risk_cap_refuses_before_post_and_accepts_exact_boundary(unlocked, live_
         ({"rsp_cd": True}, InvalidResponseError),
         ({"rsp_cd": 0}, InvalidResponseError),
         ({"rsp_cd": "00000"}, InvalidResponseError),
-        # D6738(10-28): a non-zero code WITH a vendor reason and no order number is now a definite rejection
-        # (tests/test_nh_ls_definite_rejects_1028.py). Without a reason it stays unknown.
-        ({"rsp_cd": "ERROR"}, InvalidResponseError),
-        ({"rsp_cd": "ERROR", "rsp_msg": " "}, InvalidResponseError),
+        # D6301: definite rejection is OFF by default (definite_rejects=False) — a reasoned failure stays unknown.
+        ({"rsp_cd": "ERROR", "rsp_msg": "fixture-sensitive-detail"}, InvalidResponseError),
     ],
 )
 def test_uncertain_writes_never_retry_or_release_the_client_key(

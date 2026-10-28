@@ -24,7 +24,7 @@ SECRET = "fixture-sensitive-detail"
 @pytest.mark.parametrize("endpoint,call", [("cashBuy", "place"), ("cancel", "cancel")])
 def test_nh_failure_code_without_order_number_is_definite_rejection(endpoint, call, live_safety):
     body = {"rsp_cd": "90001", "message": {"usr_msg": "주문가능금액을 초과하였습니다. " + SECRET}}
-    broker, calls = make({ORDER + endpoint: [(200, body, {})]}, safety=live_safety)
+    broker, calls = make({ORDER + endpoint: [(200, body, {})]}, safety=live_safety, definite_rejects=True)
     with pytest.raises(BrokerRejectedError) as raised:
         broker.place_order(order()) if call == "place" else broker.cancel_order(nh_cancel())
     assert raised.value.code == "90001" and raised.value.kind == "rejected"
@@ -35,7 +35,7 @@ def test_nh_failure_code_without_order_number_is_definite_rejection(endpoint, ca
 @pytest.mark.parametrize("output", [{}, {"mkt_orr_no": 0}, {"mkt_orr_no": None}])
 def test_nh_failure_code_with_empty_block_is_definite_rejection(output, live_safety):
     broker, _ = make({ORDER + "cashBuy": [reply(output, code="90001", message="종목코드 항목을 입력하세요.")]},
-                     safety=live_safety)
+                     safety=live_safety, definite_rejects=True)
     with pytest.raises(BrokerRejectedError):
         broker.place_order(order())
 
@@ -50,10 +50,12 @@ def test_nh_failure_code_with_empty_block_is_definite_rejection(output, live_saf
         reply(None, code=None, message="주문가능금액을 초과하였습니다."),               # no code
         reply(None, code="00000", message="주문가능금액을 초과하였습니다."),            # success code
         reply(None, code="00165", message="조회가 계속됩니다"),                          # continuation code
+        reply(None, code="90009", message="주문 처리 지연 중입니다. 주문내역을 확인하세요."),  # delay wording
+        reply(None, code="90010", message="시간 초과"),                                  # timeout wording
     ],
 )
 def test_nh_other_answers_stay_unknown(response, live_safety):
-    broker, calls = make({ORDER + "cashBuy": [response]}, safety=live_safety)
+    broker, calls = make({ORDER + "cashBuy": [response]}, safety=live_safety, definite_rejects=True)
     with pytest.raises(InvalidResponseError):
         broker.place_order(order())
     assert len(calls) == 1
@@ -70,7 +72,7 @@ def test_ls_nonzero_code_with_reason_and_no_order_number_is_definite_rejection(
     response = {"rsp_cd": "03001", "rsp_msg": "주문가능금액을 초과하였습니다. " + SECRET}
     if block is not None:
         response[tr + "OutBlock2"] = block
-    broker, client, _ = make_mock({tr: [response, page(tr)]}, safety=live_safety)
+    broker, client, _ = make_mock({tr: [response, page(tr)]}, safety=live_safety, definite_rejects=True)
     request = buy() if operation.startswith("place") else cancel()
     with pytest.raises(BrokerRejectedError) as raised:
         getattr(broker, operation)(request)
@@ -82,9 +84,16 @@ def test_ls_nonzero_code_with_reason_and_no_order_number_is_definite_rejection(
 
 
 @pytest.mark.parametrize("operation,tr", [("place_order", "CSPAT00601"), ("cancel_order", "CSPAT00801")])
-def test_ls_nonzero_code_with_order_number_stays_unknown(unlocked, live_safety, operation, tr):  # noqa: F811
-    response = {"rsp_cd": "00039", "rsp_msg": "매수주문이 완료되었습니다.", tr + "OutBlock2": {"OrdNo": 42}}
-    broker, client, _ = make_mock({tr: [response]}, safety=live_safety)
+@pytest.mark.parametrize("response", [
+    {"rsp_cd": "00039", "rsp_msg": "매수주문이 완료되었습니다.", "BLOCK": {"OrdNo": 42}},  # number came back
+    {"rsp_cd": "00039", "rsp_msg": "매수주문이 완료되었습니다."},     # «완료» without the expected block (P1-1)
+    {"rsp_cd": "00040", "rsp_msg": "매도주문이 접수되었습니다."},     # «접수» wording
+    {"rsp_cd": "09999", "rsp_msg": "주문 처리 지연 중입니다. 주문내역을 확인하세요."},  # delay wording
+    {"rsp_cd": "09998", "rsp_msg": "Timeout"},                          # timeout wording
+])
+def test_ls_uncertain_answers_stay_unknown(unlocked, live_safety, operation, tr, response):  # noqa: F811
+    response = {(tr + "OutBlock2" if k == "BLOCK" else k): v for k, v in response.items()}
+    broker, client, _ = make_mock({tr: [response]}, safety=live_safety, definite_rejects=True)
     with pytest.raises(InvalidResponseError):
         getattr(broker, operation)(buy() if operation.startswith("place") else cancel())
     assert len(client.calls) == 1
@@ -221,3 +230,36 @@ def test_ls_ledger_reads_does_not_unlock_an_unverified_virtual_instance():
     broker._bound_virtual = True  # an unverified mock: the opt-in is for real accounts only
     broker._ledger_reads = True
     assert broker._reads_verified() is False
+
+
+# ----------------------------------------------------------------------------- switch OFF by default (D6301)
+
+
+@pytest.mark.parametrize("endpoint,call", [("cashBuy", "place"), ("cancel", "cancel")])
+def test_nh_definite_rejects_is_off_by_default(endpoint, call, live_safety):
+    body = {"rsp_cd": "90001", "message": {"usr_msg": "주문가능금액을 초과하였습니다."}}
+    broker, calls = make({ORDER + endpoint: [(200, body, {})]}, safety=live_safety)
+    with pytest.raises(InvalidResponseError) as raised:
+        broker.place_order(order()) if call == "place" else broker.cancel_order(nh_cancel())
+    assert not isinstance(raised.value, BrokerRejectedError)
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("operation,tr", [("place_order", "CSPAT00601"), ("cancel_order", "CSPAT00801")])
+def test_ls_definite_rejects_is_off_by_default(unlocked, live_safety, operation, tr):  # noqa: F811
+    response = {"rsp_cd": "03001", "rsp_msg": "주문가능금액을 초과하였습니다."}
+    broker, client, _ = make_mock({tr: [response]}, safety=live_safety)
+    with pytest.raises(InvalidResponseError) as raised:
+        getattr(broker, operation)(buy() if operation.startswith("place") else cancel())
+    assert not isinstance(raised.value, BrokerRejectedError)
+    assert len(client.calls) == 1
+
+
+@pytest.mark.parametrize("value", [1, "yes", None])
+def test_definite_rejects_must_be_a_bool(value):
+    from pykbroker.exceptions import ConfigurationError
+
+    with pytest.raises(ConfigurationError):
+        make({}, definite_rejects=value)
+    with pytest.raises(ConfigurationError):
+        ls_make({}, definite_rejects=value)

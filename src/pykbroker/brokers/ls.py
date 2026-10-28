@@ -84,6 +84,9 @@ def _reject_code(code):
     return text if re.fullmatch(r"[A-Za-z0-9_-]{1,40}", text) else None
 
 
+_LS_UNCERTAIN_WORDS = re.compile(r"완료|접수|처리\s*중|지연|시간\s*초과|타임\s*아웃|timeout|확인", re.IGNORECASE)
+
+
 def _ls_definite_write_failure(result, tr):
     """HTTP 200 order answer that LS's own live client treats as a failed request, with no order number.
 
@@ -100,6 +103,10 @@ def _ls_definite_write_failure(result, tr):
     """
     message = result.get("rsp_msg")
     if not isinstance(message, str) or not message.strip():
+        return False
+    # Real LS order successes carry non-zero codes (00039/00040 «…완료되었습니다»): any «완료» wording, and any
+    # delay/timeout/«확인» wording that may hide a standing order, stays unknown (#676·#66 review P1-1).
+    if _LS_UNCERTAIN_WORDS.search(message):
         return False
     block = result.get(tr + "OutBlock2")
     if block is None:
@@ -162,6 +169,7 @@ class LS(RestBroker):
         client_options: Mapping | None = None,
         allow_live_orders: bool = False,
         ledger_reads: bool = False,
+        definite_rejects: bool = False,
         **kwargs,
     ) -> None:
         if not isinstance(spec_verified, bool) or not isinstance(is_integrated, bool):
@@ -170,6 +178,8 @@ class LS(RestBroker):
             raise ConfigurationError("allow_live_orders must be a boolean")
         if type(ledger_reads) is not bool:
             raise ConfigurationError("ledger_reads must be a boolean")
+        if type(definite_rejects) is not bool:
+            raise ConfigurationError("definite_rejects must be a boolean")
         if is_integrated:
             raise SpecUnverifiedError("LS unified margin enrollment/settlement contract is unverified")
         if market == "US" and venue not in LS_US_VENUES:
@@ -202,6 +212,8 @@ class LS(RestBroker):
             raise ConfigurationError("LS live opt-in requires a persisted real-account token")
         self._allow_live_orders = allow_live_orders
         self._ledger_reads = ledger_reads
+        # OFF by default (F2 D6301, #676·#66 review P1-1): see _ls_definite_write_failure; R85 read before ON.
+        self._definite_rejects = definite_rejects
         # RestBroker's constructor is domestic-only; reuse its request boundary
         # with BaseBroker's existing KR/US validation and explicit LS state.
         BaseBroker.__init__(self, virtual=virtual, market=market, **kwargs)
@@ -326,7 +338,7 @@ class LS(RestBroker):
         # Extra codes are documented in that client's TR_META for the two US reads.
         if not re.fullmatch("0+", code) and (write or code not in LS_READ_SUCCESS.get(tr, set())):
             if write:
-                if _ls_definite_write_failure(result, tr):
+                if self._definite_rejects and _ls_definite_write_failure(result, tr):
                     raise BrokerRejectedError("LS did not accept the order request; no order replay occurred",
                                               code=_reject_code(code), kind="rejected", reason="broker_rejected")
                 # The TR guide has no order success-code table. Even OrdNo > 0
