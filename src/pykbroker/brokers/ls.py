@@ -79,6 +79,37 @@ LS_API_BASE_URL = "https://openapi.ls-sec.co.kr:8080"
 LS_MOCK_BASE_URL: str | None = None
 
 
+def _reject_code(code):
+    text = str(code).strip() if code is not None else ""
+    return text if re.fullmatch(r"[A-Za-z0-9_-]{1,40}", text) else None
+
+
+def _ls_definite_write_failure(result, tr):
+    """HTTP 200 order answer that LS's own live client treats as a failed request, with no order number.
+
+    Sources (read 2026-10-28): the official live client https://openapi.ls-sec.co.kr/resource/playground/sample.html
+    (SHA256 a6bbe85e…, the page cited in docs/status/2026-10-04-pack-ls-us.md) — ``callRestTr`` throws
+    «<TR> 요청 실패: <rsp_msg>» when ``!isApiSuccessCode(rsp_cd)`` (``/^0+$/``) and the TR has no listed
+    successCodes (order TRs CSPAT00601/CSPAT00801/COSAT00301 list none); ``showOrderResult`` shows it as an order
+    error. TR guide 20261026021444748 (tr-guides.json) defines the order number ``OrdNo`` in ``<TR>OutBlock2`` as the
+    acknowledgement and publishes no order code table.
+
+    Our rule is narrower than the official client: a non-zero code is a definite «not accepted» only when no
+    positive ``OrdNo`` came back and the vendor wrote a reason (``rsp_msg``). A non-zero code WITH an order number
+    (e.g. an unverified 00039/00040) stays unknown — the order may stand.
+    """
+    message = result.get("rsp_msg")
+    if not isinstance(message, str) or not message.strip():
+        return False
+    block = result.get(tr + "OutBlock2")
+    if block is None:
+        return True
+    if not isinstance(block, dict):
+        return False
+    number = block.get("OrdNo")
+    return number is None or (type(number) in (int, str) and str(number).strip("0 ") == "")
+
+
 class _LsRestClient:
     """One POST attempt through the shared no-redirect boundary; no token issue/refresh."""
 
@@ -291,6 +322,9 @@ class LS(RestBroker):
         # Extra codes are documented in that client's TR_META for the two US reads.
         if not re.fullmatch("0+", code) and (write or code not in LS_READ_SUCCESS.get(tr, set())):
             if write:
+                if _ls_definite_write_failure(result, tr):
+                    raise BrokerRejectedError("LS did not accept the order request; no order replay occurred",
+                                              code=_reject_code(code), kind="rejected", reason="broker_rejected")
                 # The TR guide has no order success-code table. Even OrdNo > 0
                 # cannot prove acceptance for an unknown code; retain the claim.
                 raise InvalidResponseError("Unverified LS write result; reconcile before retrying")
