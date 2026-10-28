@@ -423,6 +423,7 @@ class Toss(BaseBroker):
                 currency=currency,
                 cash_available=decimal(cash["cashBuyingPower"]),
                 position_value=decimal(value),
+                orderable_cash=decimal(cash["cashBuyingPower"]) if self.market == "KR" else None,
             )
 
         return self._call(read)

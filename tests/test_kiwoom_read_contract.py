@@ -385,6 +385,7 @@ def test_cash_read_needs_no_position_codes_and_makes_one_call():
 def test_estimated_deposit_asset_is_never_cash():
     assert OFFICIAL["kt00018"]["prsm_dpst_aset_amt"] == "000001012632507"
     balance = make()[0].get_balance()
+    assert balance.orderable_cash is None  # Deposit/settlement caps are part of the legacy cash policy.
     assert balance.cash_available == Decimal("12550") != Decimal("1012632507")
     assert balance.position_value == Decimal("857000")  # the two official rows: 177000 + 680000
     assert balance.total == Decimal("869550")

@@ -179,7 +179,13 @@ class DBFI(BaseBroker):
                 return Balance(currency="USD", cash_available=cash,
                                position_value=sum((p.market_value for p in self.get_positions()), Decimal(0)))
             data = self._balance_pages()[0]["Out"]
-            return Balance(cash_available=decimal(data["Dps2"]), position_value=decimal(data["TotEvalAmt"]))
+            return Balance(
+                cash_available=decimal(data["Dps2"]),
+                position_value=decimal(data["TotEvalAmt"]),
+                # Only the broker's CSPBQ00100 result establishes buying power.
+                # A caller-owned cash_provider has no guaranteed field semantics.
+                orderable_cash=self.available_cash() if self._cash_provider is None else None,
+            )
 
         return self._call(read)
 

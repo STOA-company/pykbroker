@@ -118,6 +118,17 @@ def test_kr_verified_zero_quantities_and_valuation_allow_empty_positions():
     assert broker(FakeClient({"/api/v1/ssqm2952": response})).get_positions() == []
 
 
+def test_kr_balance_orderable_cash_reuses_broker_cash_field():
+    response = sample("SSQM2952")["output"]
+    response["dataBody"]["Record1"][0].update(dict.fromkeys([*KR_QUANTITIES, "val_amt"], "0"))
+    client = FakeClient({"/api/v1/ssqm2952": response, "/api/v1/ssqm0004": {
+        "dataHeader": response["dataHeader"], "dataBody": {"ordr_psbl_csh": "123456.25"},
+    }})
+    balance = broker(client).get_balance()
+    assert balance.cash_available == balance.orderable_cash == Decimal("123456.25")
+    assert [call[0] for call in client.calls] == ["/api/v1/ssqm0004", "/api/v1/ssqm2952"]
+
+
 @pytest.mark.parametrize("field,value", [("grid_cnt1", "2"), ("tl_data_cnt", "2")])
 def test_kr_truncated_official_holding_fails_closed(field, value):
     response = sample("SSQM2952")["output"]
@@ -136,6 +147,7 @@ def test_us_funding_official_fixed_array_padding_is_not_counted():
     client = FakeClient({"/api/v1/skqm3350": funding, "/api/v1/spqm2226": holdings})
     balance = broker(client, "US").get_balance()
     assert balance.currency == "USD" and balance.cash_available == 0 and balance.position_value == 0
+    assert balance.orderable_cash is None
     assert len(KB._funding_rows(funding["dataBody"])) == 6
 
 

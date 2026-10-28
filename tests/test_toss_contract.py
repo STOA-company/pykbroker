@@ -273,7 +273,8 @@ def test_toss_same_loop_reads_orders_and_close(live_safety, request_order):
     )
     for _ in range(3):
         assert broker.get_quote("005930").last == Decimal("70000")
-    assert broker.get_balance().cash_available == Decimal("100000")
+    balance = broker.get_balance()
+    assert balance.cash_available == balance.orderable_cash == Decimal("100000")
     assert broker.get_positions()[0].sellable == 1
     order = broker.place_order(request_order)
     assert order.id == "fixture-order"
