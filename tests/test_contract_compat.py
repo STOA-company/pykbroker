@@ -43,6 +43,14 @@ def test_balance_orderable_cash_is_an_optional_addition():
     assert legacy.model_dump(exclude={"orderable_cash"}) == richer.model_dump(exclude={"orderable_cash"})
 
 
+@pytest.mark.parametrize("amount", ["-1", "NaN", "sNaN", "Infinity", "-Infinity"])
+def test_balance_orderable_cash_uses_the_existing_money_constraints(amount):
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Balance(cash_available="100", position_value="20", orderable_cash=amount)
+
+
 def _extras(name):
     return tomllib.loads(PYPROJECT.read_text())["project"]["optional-dependencies"][name]
 

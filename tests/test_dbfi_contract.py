@@ -120,16 +120,20 @@ def test_dbfi_balance_keeps_d2_deposit_and_available_cash_requeries_buying_power
     assert client.get_able_order_quantity.call_count == 3
 
 
-@pytest.mark.parametrize("response,error", [
-    ({"rsp_cd": "00000", "Out": {"Dps2": "900000"}}, InvalidResponseError),
-    ({"rsp_cd": "99999", "Out": {"MgnRat100pctOrdAbleAmt": "900000"}}, BrokerRejectedError),
-    ({"Out": {"MgnRat100pctOrdAbleAmt": "900000"}}, InvalidResponseError),
+@pytest.mark.parametrize("response", [
+    {"rsp_cd": "00000", "Out": {"Dps2": "900000"}},
+    {"rsp_cd": "99999", "Out": {"MgnRat100pctOrdAbleAmt": "900000"}},
+    {"Out": {"MgnRat100pctOrdAbleAmt": "900000"}},
+    {"rsp_cd": "00000", "Out": {"MgnRat100pctOrdAbleAmt": "-1"}},
 ])
-def test_dbfi_balance_orderable_cash_never_falls_back_to_deposits(dbfi, response, error):
+def test_dbfi_balance_orderable_cash_never_falls_back_to_deposits(dbfi, response):
     broker, client, _ = dbfi
     client.get_able_order_quantity.return_value = response
-    with pytest.raises(error):
-        broker.get_balance()
+    balance = broker.get_balance()
+    assert balance.cash_available == Decimal("200000")
+    assert balance.position_value == Decimal("140000")
+    assert balance.orderable_cash is None
+    client.get_able_order_quantity.assert_called_once()
     client.buy.assert_not_called()
     client.sell.assert_not_called()
     client.cancel.assert_not_called()
