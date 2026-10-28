@@ -106,14 +106,46 @@ def test_dbfi_balance_keeps_d2_deposit_and_available_cash_requeries_buying_power
     broker, client, _ = dbfi
     client.get_able_order_quantity.return_value = {
         "rsp_cd": "00000", "Out": {"MgnRat100pctOrdAbleAmt": "100000", "Dps": "900000"}}
-    assert broker.get_balance().cash_available == Decimal("200000")
-    client.get_able_order_quantity.assert_not_called()
+    balance = broker.get_balance()
+    assert balance.cash_available == Decimal("200000")
+    assert balance.orderable_cash == Decimal("100000")
+    assert balance.total == Decimal("340000")
+    client.get_able_order_quantity.assert_called_once_with(
+        region="domestic", stock_code="005930", order_type="2", price=0)
     assert broker.available_cash(symbol="A005930", price=Decimal("70000")) == Decimal("100000")
     client.get_able_order_quantity.return_value["Out"]["MgnRat100pctOrdAbleAmt"] = "150000"
     assert broker.available_cash(symbol="005930", price=Decimal("70000")) == Decimal("150000")
     client.get_able_order_quantity.assert_called_with(
         region="domestic", stock_code="005930", order_type="2", price=70000)
-    assert client.get_able_order_quantity.call_count == 2
+    assert client.get_able_order_quantity.call_count == 3
+
+
+@pytest.mark.parametrize("response", [
+    {"rsp_cd": "00000", "Out": {"Dps2": "900000"}},
+    {"rsp_cd": "99999", "Out": {"MgnRat100pctOrdAbleAmt": "900000"}},
+    {"Out": {"MgnRat100pctOrdAbleAmt": "900000"}},
+    {"rsp_cd": "00000", "Out": {"MgnRat100pctOrdAbleAmt": "-1"}},
+])
+def test_dbfi_balance_orderable_cash_never_falls_back_to_deposits(dbfi, response):
+    broker, client, _ = dbfi
+    client.get_able_order_quantity.return_value = response
+    balance = broker.get_balance()
+    assert balance.cash_available == Decimal("200000")
+    assert balance.position_value == Decimal("140000")
+    assert balance.orderable_cash is None
+    client.get_able_order_quantity.assert_called_once()
+    client.buy.assert_not_called()
+    client.sell.assert_not_called()
+    client.cancel.assert_not_called()
+
+
+def test_dbfi_balance_does_not_label_caller_cash_provider_as_broker_buying_power(dbfi):
+    broker, client, _ = dbfi
+    broker._cash_provider = lambda _: Decimal("900000")
+    balance = broker.get_balance()
+    assert balance.cash_available == Decimal("200000")
+    assert balance.orderable_cash is None
+    client.get_able_order_quantity.assert_not_called()
 
 
 @pytest.mark.parametrize("integrated,expected", [(False, "100"), (True, "300")])

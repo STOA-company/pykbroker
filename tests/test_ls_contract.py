@@ -192,6 +192,7 @@ def test_quote_balance_and_positions_reuse_existing_fields():
         "005930", Decimal(70000), Decimal(70000), Decimal(70100))
     assert quote.prev_close == Decimal(69500)
     balance = broker.get_balance()
+    assert balance.orderable_cash == Decimal(200000)
     assert (balance.currency, balance.cash_available, balance.position_value) == (
         "KRW",
         Decimal(200000),
@@ -680,6 +681,7 @@ def test_us_cash_is_broker_usd_orderable_field_and_positions_are_sellable():
     client.response_headers = {"tr_cont": "N", "tr_cont_key": ""}
     balance = broker.get_balance()
     assert balance.currency == "USD" and balance.cash_available == Decimal("12.34")
+    assert balance.orderable_cash is None
     assert balance.position_value == Decimal("500.25")
     position = broker.get_positions()[0]
     assert (position.market, position.quantity, position.sellable) == ("US", 3, 2)

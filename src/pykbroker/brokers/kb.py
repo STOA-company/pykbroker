@@ -530,7 +530,8 @@ class KB(BaseBroker):
                 cash = min(decimal(usd[0]["fcrncy_tfnd"]), decimal(usd[0]["fcrncy_use_psbl_amt_p2"]))
             positions = self.get_positions()
             return Balance(currency="KRW" if self.market == "KR" else "USD", cash_available=cash,
-                           position_value=sum((item.market_value for item in positions), Decimal(0)))
+                           position_value=sum((item.market_value for item in positions), Decimal(0)),
+                           orderable_cash=cash if self.market == "KR" else None)
         return self._call(read)
 
     def _ledger_date(self):

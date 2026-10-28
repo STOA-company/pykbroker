@@ -454,6 +454,7 @@ def test_cash_balance_uses_lower_deposit_when_order_amount_is_higher():
     body = {"Output_0": {"dca": 1000, "orr_pbl_amt": 5000, "tot_eal_amt": 0}, "rsp_cd": "00000"}
     broker, _ = make({"/krstock/inquiry/v1/balance": reply(body)})
     assert broker.get_balance().cash_available == 1000
+    assert broker.get_balance().orderable_cash is None  # min(deposit, buying power) is not the raw amount.
 
 
 def test_quote_requires_expected_output_block():

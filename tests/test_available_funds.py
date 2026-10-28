@@ -12,6 +12,7 @@ def test_kis_available_cash_is_the_orderable_cash_not_the_total(kis):
     # Fixture: orderable cash 200,000 while positions are worth another 140,000.
     assert broker.available_cash() == Decimal(200000)
     assert broker.get_balance().total == Decimal(340000)
+    assert broker.get_balance().orderable_cash == Decimal(200000)
 
 
 def test_kis_available_qty_is_the_sellable_not_the_held_quantity(kis):
@@ -28,6 +29,7 @@ def test_dbfi_answers_the_same_two_questions(dbfi):
     assert broker.available_qty("005930") == 1
     balance = broker.get_balance()
     assert balance.cash_available == Decimal(200000)
+    assert balance.orderable_cash == Decimal(250000)
     assert balance.total == Decimal(340000)
 
 
@@ -203,6 +205,9 @@ def test_us_native_balance_excludes_integrated_buying_power(broker_type):
         broker = DBFI(account="fixture", market="US", venue="NASDAQ", client=client, is_integrated=True)
     balance = broker.get_balance()
     assert balance.cash_available == Decimal("80") and balance.total == Decimal("80")
+    assert balance.orderable_cash is None
+    if broker_type == "dbfi":
+        client.get_able_order_quantity.assert_not_called()
 
 def test_kb_us_cancel_does_not_require_a_new_integrated_buy_policy():
     from pykbroker.brokers.kb import KB

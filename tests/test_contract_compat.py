@@ -22,6 +22,7 @@ from pykbroker.brokers.kis import KIS
 from pykbroker.brokers.toss import Toss
 from pykbroker.exceptions import NotSupportedError
 from pykbroker.experimental._rest import RestBroker
+from pykbroker.models import Balance
 
 PYPROJECT = Path(__file__).resolve().parent.parent / "pyproject.toml"
 # What B/B′ already call, from before A′ touched the contract.
@@ -30,6 +31,24 @@ PRE_A = {
     "place_order cancel_order close".split(),
     BrokerAdapter: "quote balance positions rules place cancel status".split(),
 }
+
+
+def test_balance_orderable_cash_is_an_optional_addition():
+    from decimal import Decimal
+
+    legacy = Balance(cash_available="100.00", position_value="20.00")
+    richer = Balance(cash_available="100.00", position_value="20.00", orderable_cash="75.25")
+    assert legacy.orderable_cash is None
+    assert richer.orderable_cash == Decimal("75.25")
+    assert legacy.model_dump(exclude={"orderable_cash"}) == richer.model_dump(exclude={"orderable_cash"})
+
+
+@pytest.mark.parametrize("amount", ["-1", "NaN", "sNaN", "Infinity", "-Infinity"])
+def test_balance_orderable_cash_uses_the_existing_money_constraints(amount):
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Balance(cash_available="100", position_value="20", orderable_cash=amount)
 
 
 def _extras(name):

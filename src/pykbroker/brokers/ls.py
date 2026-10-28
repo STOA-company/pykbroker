@@ -513,7 +513,8 @@ class LS(RestBroker):
             row = self._response(
                 "/stock/accno", "CSPAQ12200", {"CSPAQ12200InBlock1": {"BalCreTp": self._code("balance_type")}}
             )["CSPAQ12200OutBlock2"]
-            return Balance(cash_available=decimal(row["MnyOrdAbleAmt"]), position_value=decimal(row["BalEvalAmt"]))
+            return Balance(cash_available=decimal(row["MnyOrdAbleAmt"]), position_value=decimal(row["BalEvalAmt"]),
+                           orderable_cash=decimal(row["MnyOrdAbleAmt"]))
 
         return self._call(read)
 

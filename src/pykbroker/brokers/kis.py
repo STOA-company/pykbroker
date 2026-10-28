@@ -348,6 +348,7 @@ class KIS(BaseBroker):
             return Balance(
                 cash_available=decimal(field(amount, "ord_psbl_cash")),
                 position_value=decimal(field(balance, "evlu_amt_smtl_amt")),
+                orderable_cash=decimal(field(amount, "ord_psbl_cash")),
             )
 
         return self._call(read)

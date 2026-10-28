@@ -6,7 +6,7 @@ from decimal import Decimal
 from importlib import import_module
 from typing import Any
 
-from pykbroker.exceptions import ConfigurationError, FractionalNotSupportedError, InvalidResponseError, MissingDependencyError, NotSupportedError
+from pykbroker.exceptions import BrokerError, ConfigurationError, FractionalNotSupportedError, InvalidResponseError, MissingDependencyError, NotSupportedError
 from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote, Rules
 from pykbroker.rules.kr import equity_rules
 from pykbroker.safety.gate import OrderSafety
@@ -179,7 +179,20 @@ class DBFI(BaseBroker):
                 return Balance(currency="USD", cash_available=cash,
                                position_value=sum((p.market_value for p in self.get_positions()), Decimal(0)))
             data = self._balance_pages()[0]["Out"]
-            return Balance(cash_available=decimal(data["Dps2"]), position_value=decimal(data["TotEvalAmt"]))
+            orderable = None
+            if self._cash_provider is None:
+                try:
+                    orderable = self.available_cash()
+                except BrokerError:
+                    # This optional query must not discard the existing balance.
+                    orderable = None
+            return Balance(
+                cash_available=decimal(data["Dps2"]),
+                position_value=decimal(data["TotEvalAmt"]),
+                # Only the broker's CSPBQ00100 result establishes buying power.
+                # A caller-owned cash_provider has no guaranteed field semantics.
+                orderable_cash=orderable,
+            )
 
         return self._call(read)
 

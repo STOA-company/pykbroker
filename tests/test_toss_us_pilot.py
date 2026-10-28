@@ -93,6 +93,7 @@ def test_us_read_contract_and_currency_guards():
     assert broker.capabilities().markets == ("US",)
     assert broker.capabilities().requires_venue is False
     assert broker.get_balance().currency == "USD"
+    assert broker.get_balance().orderable_cash is None
     quote = broker.get_quote("F", market="US")
     assert (quote.last, quote.bid, quote.ask) == (Decimal("13.06"), Decimal("13.05"), Decimal("13.07"))
     assert broker.funding_snapshot() == {
