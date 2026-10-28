@@ -1,3 +1,4 @@
+from datetime import datetime
 from decimal import Decimal
 from typing import Literal, Self
 
@@ -6,7 +7,13 @@ from pydantic import Field, model_validator
 from ._base import FractionalQuantity, Model, Money, PositiveMoney, PositiveQuantity, Quantity
 
 Side = Literal["buy", "sell"]
-OrderType = Literal["limit", "market", "close"]
+OrderType = Literal["limit", "market", "close", "stop", "stop_limit"]
+# Order duration. None on a request = the broker's own default; a broker that does not
+# declare a value in Capabilities.time_in_force refuses it before any HTTP.
+TimeInForce = Literal["day", "gtc", "gtd", "ioc", "fok"]
+# KR/US are the original markets; SG (SGX) and FX (spot FX) are capability data — a broker that does not
+# list them in Capabilities.markets refuses the order before any HTTP.
+MarketCode = Literal["KR", "US", "SG", "FX"]
 OrderStatus = Literal["accepted", "open", "partial", "filled", "cancelled", "rejected", "unknown"]
 
 
@@ -20,7 +27,12 @@ class OrderRequest(Model):
     amount: PositiveMoney | None = None
     order_type: OrderType = "limit"
     price: PositiveMoney | None = None
-    market: Literal["KR", "US"] = "KR"
+    # Trigger price of a stop / stop_limit order (price = the limit of stop_limit).
+    stop_price: PositiveMoney | None = None
+    time_in_force: TimeInForce | None = None
+    # Required for (and only for) time_in_force="gtd": timezone-aware expiry.
+    expire_at: datetime | None = None
+    market: MarketCode = "KR"
     venue: str | None = None
     client_key: str = Field(min_length=1, max_length=128, pattern=r"\S", repr=False)
 
@@ -57,6 +69,18 @@ class OrderRequest(Model):
             raise ValueError("A limit order requires a positive price")
         if self.order_type == "market" and self.price is not None:
             raise ValueError("A market order cannot carry a limit price")
+        if self.order_type in ("stop", "stop_limit") and self.stop_price is None:
+            raise ValueError("A stop order requires a positive stop_price")
+        if self.order_type == "stop" and self.price is not None:
+            raise ValueError("A stop order carries stop_price only")
+        if self.order_type == "stop_limit" and self.price is None:
+            raise ValueError("A stop_limit order requires a limit price")
+        if self.stop_price is not None and self.order_type not in ("stop", "stop_limit"):
+            raise ValueError("stop_price belongs to stop / stop_limit orders only")
+        if (self.time_in_force == "gtd") != (self.expire_at is not None):
+            raise ValueError("expire_at is required for gtd and allowed only there")
+        if self.expire_at is not None and self.expire_at.tzinfo is None:
+            raise ValueError("expire_at must include a timezone")
         if not self.client_key.strip():
             raise ValueError("client_key cannot be blank")
         return self
@@ -82,6 +106,9 @@ class Order(Model):
     market: str = "KR"
     # True only when the submission went to a broker mock (virtual) account.
     virtual: bool = False
+    # Echo of the request's client_key when the broker carries one (Saxo ExternalReference is a
+    # shortened form, so reconciliation compares `external_reference`, see brokers/saxo.py).
+    external_reference: str | None = None
 
 
 class CancelRequest(Model):
@@ -89,5 +116,24 @@ class CancelRequest(Model):
     symbol: str = Field(min_length=1)
     quantity: PositiveQuantity
     client_key: str = Field(min_length=1, max_length=128, pattern=r"\S", repr=False)
-    market: Literal["KR", "US"] = "KR"
+    market: MarketCode = "KR"
     venue: str | None = None
+
+
+class AmendRequest(OrderRequest):
+    """Change the price (and optionally the size) of a working order.
+
+    `quantity` is the quantity still to be worked after the amendment (the remainder), never the
+    original total: a broker whose API wants the total adds the filled part itself. Limit,
+    stop and stop_limit orders only — a market order has nothing to amend.
+    """
+
+    order_id: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def amendable(self) -> Self:
+        if self.order_type == "market" or self.order_type == "close":
+            raise ValueError("Only priced orders (limit, stop, stop_limit) can be amended")
+        if self.quantity is None:
+            raise ValueError("An amendment names the remaining quantity")
+        return self
