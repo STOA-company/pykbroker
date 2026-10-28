@@ -57,6 +57,68 @@ _COMPLETED = re.compile(
 )
 
 
+def _reject_code(code: Any) -> str | None:
+    text = str(code).strip() if code is not None else ""
+    return text if re.fullmatch(r"[A-Za-z0-9_-]{1,40}", text) else None
+
+
+_NH_UNCERTAIN_WORDS = re.compile(r"접수|처리\s*중|지연|시간\s*초과|타임\s*아웃|timeout|확인", re.IGNORECASE)
+
+
+def _nh_definite_write_failure(code: Any, message: Any, output: Any, number_field: str) -> bool:
+    """HTTP 200 order answer that the official contract defines as a business failure (not accepted).
+
+    Source (read 2026-10-28): https://www.nhplug.com/openapi-docs/krstock/openapi.json and
+    common/openapi.json ``x-response-status`` · https://www.nhplug.com/llms.txt «성공 판정»: HTTP 200 can be a
+    business error; judge by ① the expected block (Output_N) carrying a value, ② ``rsp_msg`` meaning completion
+    (a failure message describes its cause, e.g. «종목코드 항목을 입력하세요.»); ``rsp_cd`` is for logs only and
+    no code table is published. cashBuy/cashSell/cancel (krstock) and buy/sell/cancel (gbstock) document the
+    order number (``mkt_orr_no``/``orr_no``) as the only acknowledgement and blocks «appear only with data».
+
+    So a write is definitely NOT accepted only when all hold: a code outside the known success/continuation
+    codes, NO order number in Output_0 (block absent/empty or number absent/zero), and a non-empty message that
+    is not completion wording (no «완료» at all, so «완료되지 않았습니다» stays unknown). Anything else —
+    an order number with an unknown code, no message, completion-like wording — stays unknown (reconcile).
+    """
+    if not isinstance(code, str) or not code.strip():
+        return False
+    if code.strip() in NH_SUCCESS_CODES | NH_CONTINUATION_CODES:
+        return False
+    if not isinstance(message, str) or not message.strip() or "완료" in message or _COMPLETED.search(message):
+        return False
+    if _NH_UNCERTAIN_WORDS.search(message):
+        return False  # delay/timeout/«확인» wording may hide a standing order (#676·#66 review P1-1)
+    if output is None:
+        return True
+    if not isinstance(output, Mapping):
+        return False
+    number = output.get(number_field)
+    return number is None or (type(number) in (int, str) and str(number).strip("0 ") == "")
+
+
+def _us_cancel_closed(row: Mapping[str, Any], quantity: int, filled: int, remaining: int) -> bool:
+    """US cancel confirmation (F2 D6738 ③) from the official order/execution list.
+
+    gbstock openapi.json /gbstock/inquiry/v1/unexecuted (명세서 261015, read 2026-10-28) documents per-row
+    orr_qty · cns_qty · ny_cns_orr_qty · can_qty(취소수량) · cor_qty(정정수량) · oss_ato_orr_sts_cd (2=거부) ·
+    rjt_rsn_cts. An ORIGINAL row (no org_orr_no) whose quantities close as filled + cancelled == ordered with nothing
+    open, no correction and no rejection is cancelled. cor_can_dit_cd/orr_sts_nm have no published values and are not
+    read as evidence either way. ASSUMED (R85 test-account read): can_qty is written on the original row.
+    """
+    cancelled = whole(row.get("can_qty") or 0)
+    corrected = whole(row.get("cor_qty") or 0)
+    return (
+        quantity > 0
+        and cancelled > 0
+        and remaining == 0
+        and filled + cancelled == quantity
+        and corrected == 0
+        and not str(row.get("rjt_rsn_cts") or "").strip()
+        and str(row.get("oss_ato_orr_sts_cd") or "").strip() != "2"
+        and row.get("org_orr_no") in (None, "", 0, "0")
+    )
+
+
 class _NhRestClient:
     """Small injectable HTTP boundary; HTTP errors never expose response bodies."""
 
@@ -145,6 +207,7 @@ class NH(BaseBroker):
         venue: str = "KRX",
         virtual: bool = False,
         allow_live_orders: bool = False,
+        definite_rejects: bool = False,
         is_integrated: bool = False,
         client_factory: Callable[..., Any] | None = None,
         token_cache: MutableMapping[str, dict[str, str]] | None = None,
@@ -162,6 +225,11 @@ class NH(BaseBroker):
         if type(allow_live_orders) is not bool:
             raise ConfigurationError("allow_live_orders must be a boolean")
         self._allow_live_orders = allow_live_orders
+        if type(definite_rejects) is not bool:
+            raise ConfigurationError("definite_rejects must be a boolean")
+        # OFF by default (F2 D6301, #676·#66 review P1-1): until the R85 test-account read proves that a failure
+        # answer without an order number means «no order at the venue», every such answer stays unknown (locked).
+        self._definite_rejects = definite_rejects
         options = dict(client_options)
         if not set(options) <= _OPTIONS:
             raise ConfigurationError("Unknown NH client option")
@@ -690,6 +758,9 @@ class NH(BaseBroker):
         if message is not None and not isinstance(message, str):
             raise InvalidResponseError("NH order message is invalid; reconcile before retrying")
         completed = bool(message and _COMPLETED.search(message))
+        if self._definite_rejects and _nh_definite_write_failure(code, message, body.get("Output_0"), number_field):
+            raise BrokerRejectedError("NH did not accept the order request; no order replay occurred",
+                                      code=_reject_code(code), kind="rejected", reason="broker_rejected")
         # Only known success codes plus a valid market order number acknowledge a write.
         if code is None or code.strip() not in NH_SUCCESS_CODES:
             raise InvalidResponseError("NH order outcome is unknown; reconcile before retrying")
@@ -835,6 +906,22 @@ class NH(BaseBroker):
                 state = "filled"
             elif remaining:
                 state = "partial" if filled else "open"
+        elif (
+            # Cancel confirmation (F2 D6738 ③). Official dailyOrderExecution (krstock openapi.json, 명세서 261015,
+            # read 2026-10-28) documents per-row 주문수량 orr_qty · 총체결수량 tot_cns_qty · 미체결수량 ny_cns_qty ·
+            # 취소수량 can_qty. An ORIGINAL row whose quantities close as filled + cancelled == ordered with nothing
+            # left open is finished: cancelled (with any partial fill kept). The cancel itself appears as a child row
+            # pointing at it (org_itg_orr_no), so «touched» does not veto this branch. A correction (cor_qty), a
+            # rejection reason, a legacy change marker, or any quantity mismatch stays unknown.
+            # ASSUMED (to confirm on the R85 test-account read): the vendor writes can_qty on the original row.
+            quantity > 0
+            and cancelled > 0
+            and remaining == 0
+            and filled + cancelled == quantity
+            and not (changed or rejected or corrected)
+            and not str(row.get("org_itg_orr_no") or "").strip("0 ")
+        ):
+            state = "cancelled"
         side = {"매수": "buy", "매도": "sell"}.get(str(row.get("sby_dit_cd_nm", "")).strip())
         order_type = "limit" if str(row.get("nmn_pr_tp_cd_nm", "")).strip() in {"보통가", "지정가"} else None
         return Order(
@@ -1097,6 +1184,8 @@ class NH(BaseBroker):
             state = "unknown"
             if quantity > 0 and filled + remaining == quantity and not changed and number not in touched:
                 state = "filled" if filled == quantity else "partial" if filled else "open"
+            elif _us_cancel_closed(row, quantity, filled, remaining):
+                state = "cancelled"
             orders.append(
                 Order(
                     id="us:" + number,

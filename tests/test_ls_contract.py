@@ -512,6 +512,7 @@ def test_risk_cap_refuses_before_post_and_accepts_exact_boundary(unlocked, live_
         ({"rsp_cd": True}, InvalidResponseError),
         ({"rsp_cd": 0}, InvalidResponseError),
         ({"rsp_cd": "00000"}, InvalidResponseError),
+        # D6301: definite rejection is OFF by default (definite_rejects=False) — a reasoned failure stays unknown.
         ({"rsp_cd": "ERROR", "rsp_msg": "fixture-sensitive-detail"}, InvalidResponseError),
     ],
 )

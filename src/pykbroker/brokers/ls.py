@@ -79,6 +79,44 @@ LS_API_BASE_URL = "https://openapi.ls-sec.co.kr:8080"
 LS_MOCK_BASE_URL: str | None = None
 
 
+def _reject_code(code):
+    text = str(code).strip() if code is not None else ""
+    return text if re.fullmatch(r"[A-Za-z0-9_-]{1,40}", text) else None
+
+
+_LS_UNCERTAIN_WORDS = re.compile(r"완료|접수|처리\s*중|지연|시간\s*초과|타임\s*아웃|timeout|확인", re.IGNORECASE)
+
+
+def _ls_definite_write_failure(result, tr):
+    """HTTP 200 order answer that LS's own live client treats as a failed request, with no order number.
+
+    Sources (read 2026-10-28): the official live client https://openapi.ls-sec.co.kr/resource/playground/sample.html
+    (SHA256 a6bbe85e…, the page cited in docs/status/2026-10-04-pack-ls-us.md) — ``callRestTr`` throws
+    «<TR> 요청 실패: <rsp_msg>» when ``!isApiSuccessCode(rsp_cd)`` (``/^0+$/``) and the TR has no listed
+    successCodes (order TRs CSPAT00601/CSPAT00801/COSAT00301 list none); ``showOrderResult`` shows it as an order
+    error. TR guide 20261026021444748 (tr-guides.json) defines the order number ``OrdNo`` in ``<TR>OutBlock2`` as the
+    acknowledgement and publishes no order code table.
+
+    Our rule is narrower than the official client: a non-zero code is a definite «not accepted» only when no
+    positive ``OrdNo`` came back and the vendor wrote a reason (``rsp_msg``). A non-zero code WITH an order number
+    (e.g. an unverified 00039/00040) stays unknown — the order may stand.
+    """
+    message = result.get("rsp_msg")
+    if not isinstance(message, str) or not message.strip():
+        return False
+    # Real LS order successes carry non-zero codes (00039/00040 «…완료되었습니다»): any «완료» wording, and any
+    # delay/timeout/«확인» wording that may hide a standing order, stays unknown (#676·#66 review P1-1).
+    if _LS_UNCERTAIN_WORDS.search(message):
+        return False
+    block = result.get(tr + "OutBlock2")
+    if block is None:
+        return True
+    if not isinstance(block, dict):
+        return False
+    number = block.get("OrdNo")
+    return number is None or (type(number) in (int, str) and str(number).strip("0 ") == "")
+
+
 class _LsRestClient:
     """One POST attempt through the shared no-redirect boundary; no token issue/refresh."""
 
@@ -130,12 +168,18 @@ class LS(RestBroker):
         order_date: date | None = None,
         client_options: Mapping | None = None,
         allow_live_orders: bool = False,
+        ledger_reads: bool = False,
+        definite_rejects: bool = False,
         **kwargs,
     ) -> None:
         if not isinstance(spec_verified, bool) or not isinstance(is_integrated, bool):
             raise ConfigurationError("LS verification and margin flags must be booleans")
         if type(allow_live_orders) is not bool:
             raise ConfigurationError("allow_live_orders must be a boolean")
+        if type(ledger_reads) is not bool:
+            raise ConfigurationError("ledger_reads must be a boolean")
+        if type(definite_rejects) is not bool:
+            raise ConfigurationError("definite_rejects must be a boolean")
         if is_integrated:
             raise SpecUnverifiedError("LS unified margin enrollment/settlement contract is unverified")
         if market == "US" and venue not in LS_US_VENUES:
@@ -167,6 +211,9 @@ class LS(RestBroker):
         if allow_live_orders and (not token or virtual):
             raise ConfigurationError("LS live opt-in requires a persisted real-account token")
         self._allow_live_orders = allow_live_orders
+        self._ledger_reads = ledger_reads
+        # OFF by default (F2 D6301, #676·#66 review P1-1): see _ls_definite_write_failure; R85 read before ON.
+        self._definite_rejects = definite_rejects
         # RestBroker's constructor is domestic-only; reuse its request boundary
         # with BaseBroker's existing KR/US validation and explicit LS state.
         BaseBroker.__init__(self, virtual=virtual, market=market, **kwargs)
@@ -291,6 +338,9 @@ class LS(RestBroker):
         # Extra codes are documented in that client's TR_META for the two US reads.
         if not re.fullmatch("0+", code) and (write or code not in LS_READ_SUCCESS.get(tr, set())):
             if write:
+                if self._definite_rejects and _ls_definite_write_failure(result, tr):
+                    raise BrokerRejectedError("LS did not accept the order request; no order replay occurred",
+                                              code=_reject_code(code), kind="rejected", reason="broker_rejected")
                 # The TR guide has no order success-code table. Even OrdNo > 0
                 # cannot prove acceptance for an unknown code; retain the claim.
                 raise InvalidResponseError("Unverified LS write result; reconcile before retrying")
@@ -526,10 +576,16 @@ class LS(RestBroker):
                 "cts_ordno": "",
             }
             # Validate before filtering: a broken page is never partial success.
-            orders = [self._order(row)
-                      for response in self._pages("/stock/accno", "t0425", {"t0425InBlock": body},
-                                                  block="t0425OutBlock", cursor="cts_ordno")
-                      for row in self._rows(response, "t0425OutBlock1")]
+            rows = [row
+                    for response in self._pages("/stock/accno", "t0425", {"t0425InBlock": body},
+                                                block="t0425OutBlock", cursor="cts_ordno")
+                    for row in self._rows(response, "t0425OutBlock1")]
+            children: dict[str, list] = {}
+            for row in rows:
+                parent = self._parent_number(row)
+                if parent is not None:
+                    children.setdefault(parent, []).append(row)
+            orders = [self._order(row, children.get(str(row.get("ordno")).strip(), [])) for row in rows]
             return [order for order in orders if code is None or order.symbol == code]
 
         return self._call(read)
@@ -537,10 +593,43 @@ class LS(RestBroker):
     def status(self, order: Order) -> Order:
         return super().status(order).model_copy(update={"virtual": self._bound_virtual})
 
-    def _order(self, row) -> Order:
+    def _reads_verified(self) -> bool:
+        """t0425 quantities are official (TR guide 20261026021444748: qty 주문수량 · cheqty 체결수량 ·
+        ordrem 미체결잔량 · cfmqty 확인수량 · orgordno 원주문번호).
+
+        They are read when writes are verified, or when a real-account caller opts in with
+        ``ledger_reads=True``: a read-only reconcile must still see fills and cancels (F2 D6738 ③④)
+        without being handed a write-capable instance. Default stays locked.
+        """
+        return self._writes_verified() or (self._bound_virtual is False and self._ledger_reads is True)
+
+    @staticmethod
+    def _parent_number(row):
+        value = row.get("orgordno")
+        text = str(value).strip() if value is not None and not isinstance(value, bool) else ""
+        return text if text.strip("0") and text.isdecimal() else None
+
+    @staticmethod
+    def _cancel_child(row) -> int | None:
+        """Confirmed quantity of a child row that can only be a confirmed cancel, else None.
+
+        Signature from the official fields: nothing executed (cheqty 0), nothing left (ordrem 0) and the whole child
+        quantity confirmed (cfmqty == qty > 0). A correction child is a live order (ordrem > 0) or
+        executes (cheqty > 0); an unconfirmed/refused child has cfmqty 0.
+        ASSUMED (R85 test-account read): cfmqty is the confirmed cancel quantity on a cancel row,
+        the same reading as Kiwoom kt00007 cnfm_qty (#63).
+        """
+        try:
+            qty, done, left, confirmed = (whole(row[k]) for k in ("qty", "cheqty", "ordrem", "cfmqty"))
+        except (KeyError, TypeError, ValueError):
+            return None
+        return confirmed if qty > 0 and done == 0 and left == 0 and confirmed == qty else None
+
+    def _order(self, row, children=()) -> Order:
         # Official t0425 quantities; missing fields stay unknown and average fill price stays None.
-        quantity = whole(row["qty"]) if self._writes_verified() and "qty" in row else None
-        filled = whole(row["cheqty"]) if self._writes_verified() and "cheqty" in row else None
+        readable = self._reads_verified()
+        quantity = whole(row["qty"]) if readable and "qty" in row else None
+        filled = whole(row["cheqty"]) if readable and "cheqty" in row else None
         remaining = whole(row["ordrem"])
         price = self._price(row.get("price"))
         if quantity is not None:
@@ -548,10 +637,16 @@ class LS(RestBroker):
                 raise InvalidResponseError("Inconsistent LS order quantities")
         status = "unknown"
         # No quantity subtraction, zero-remainder inference, or unverified state interpretation.
-        if self._writes_verified() and quantity is not None and filled is not None:
-            if filled == quantity and remaining == 0:
+        if readable and quantity is not None and filled is not None and self._parent_number(row) is None:
+            if children:
+                # A child row points here (cancel or correction). Only a proven full close by confirmed cancels
+                # (filled + cancelled == ordered, nothing open) is cancelled; anything else stays unknown.
+                cancels = [self._cancel_child(child) for child in children]
+                if remaining == 0 and None not in cancels and filled + sum(cancels) == quantity:
+                    status = "cancelled"
+            elif filled == quantity and remaining == 0:
                 status = "filled"
-            elif filled > 0 and remaining > 0:
+            elif filled > 0 and remaining > 0 and filled + remaining == quantity:
                 status = "partial"
             elif filled == 0 and remaining == quantity:
                 status = "open"
