@@ -1,0 +1,37 @@
+# R147 국내 주식 시장가 경로 팩 (2026-10-29)
+
+- 승인 정본: workspace `BRIEF-kr-market-R147-go2.md`, 대표 R147=1.
+- 고객: «삼성전자 10주 시장가» → 명시 market 구조 칸 → 소유 계좌 → 주문/개장 예약.
+- 플랫폼 새 설정 `q_kr_market_orders_enabled=False`; 꺼짐은 기존 지정가/카드 경로.
+- `q_order_language_entry.single_preview` → `q_market_fill_price.kr_market_card`: 기존 order_type 칸만 읽음.
+- `q_order_draft._kr_slots` → `_reservation_chat._advance`: order_type·at_market_open 보존.
+- `q_real_proposals.create/confirm/build_q_stock_intent`: KR 정수 시장가는 price=None, kind=market.
+- create/send의 기존 브로커 잠금 예외는 위 market 칸+새 설정+SDK 지원 증권사에만 적용.
+- q_real_preview에는 trader_stock_locked 참조가 없다. 금지 파일/웹 변경 없이 두 송신 접점만 이음.
+- `q_reservations.KR_MARKET_RULE`: 기존 확정 카드의 가격 규칙과 구분해 저장.
+- 개장 예약: due08:30~08:59, grace09:05 유지. 09시 뒤 회복해도 정규장 시장가로 바꾸지 않음.
+- `_guard_real_quote`와 `_kr_fixed_problem`이 동시호가 창·설정을 재확인.
+- TTL은 개장 회차 grace까지(최대3600초); 기존 키·claim·저장 봉투 재사용.
+- trader `LIVE_KR_MARKET_ORDERS`는 정확히1만 켬, 기본unset/off. LIVE_LIMIT_ONLY=1도 계속 필요.
+- 코드 상수 `KR_MARKET_ORDERS_ENV`: 비밀파일 원문 금지 준수, 템플릿을 수정하지 않고 여기 문서화.
+- 꺼짐/missing/0/true 및 LIMIT_ONLY 결손 거절은 회귀시험으로 고정.
+- trader live_gate KR 분기만 market 예외. 코인·미국 분기 무변경.
+- `kr_market_session`: 거래일 정본+확인된 임시휴장+08:30~15:20(끝 제외), 모름 거절.
+- `factory` → `stock_safety`가 SDK market_order_allowed·valuation 콜백의 주인.
+- SDK valuation=유효 시세×정수수량×1.30; 기존 상한만 사용, 새 고객 한도 없음.
+- 시장가에는 지정가격이 없어 quote 유효성+보수평가를 기존 cap·상하한가 관문에 잇는다.
+- live_gate atomic 일일예약은 시장가 행의 저장 notional_krw를 같은 FOR UPDATE에서 읽음.
+- KIS/LS 새 SDK unseal은 order_type=market 한정; 기존 지정가 봉인 유지.
+- LS SDK는 기존 token/본인계좌/host 검증 그대로. factory에 기존 SDK 생성자만 연결.
+- private 생성자 목록의 ls_live는 toss_live와 분리: 토스 열림이 LS 목록을 노출하지 않음.
+- LS fills는 ls_kr_read=True → ledger_reads=True, allow_live_orders=False(설정 닫힌 뒤도 읽기).
+- LS 기존 접수 원장 ID의 취소만 ls_kr_cancel=True; SDK 신규 주문 safety는 봉인.
+- KR 시장가만 계좌 exchange_venue를 SDK에 보존. DB NXT가 KRX로 바뀌지 않음.
+- 라이브러리 지원: 한투/토스/DB/LS; 키움/NH/KB는 현재 capabilities.market=False.
+- NXT 시장가 직렬화는 DB만 선언. 다른 증권사는 기존 venue 거절 유지.
+- 미국 제외: DB 해외 시장가 미지원(외부 시스템), 토스 미국 D11 파일럿 지정가. 코인 별도 범위.
+- 의미 장부: 새 낱말/정규식 판정0, existing 구조값만. helper import 허용1줄·장부3개 재해시.
+- 금액 경로 golden은 R147의 exact AST 델타만 정규화. 기존 US/coin 해시는 재봉인 안 함.
+- 검증 로그/명령/반환코드: workspace R147-IMPLEMENTATION.md 및 /tmp/r147-evidence-*.json.
+- 실PG/loopback은 샌드박스 socket PermissionError. dev/실주문은 안 걸어 봄, 배포 없음.
+- 내보내기: 아직 아니다(실PG·전체verify·공유dev·대표승인 후 실계좌 대사 필요).

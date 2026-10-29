@@ -11,7 +11,7 @@ from pykbroker.exceptions import (
     InvalidResponseError,
     TransportError,
 )
-from pykbroker.models import CancelRequest, Order
+from pykbroker.models import CancelRequest, Order, OrderRequest
 from pykbroker.safety.gate import OrderSafety
 
 
@@ -38,6 +38,22 @@ def test_kis_exact_submission(kis, request_order, side):
     assert order.id == "43" and order.status == "accepted" and order.filled is None
     api.post_order_domestic.assert_called_once_with(
         kis_account=scope, stock_code="005930", order_type=side, order_qty=1, order_price=70000, dvsn="지정가"
+    )
+
+
+@pytest.mark.parametrize("side", ["buy", "sell"])
+def test_kis_kr_market_contract_uses_zero_price(kis, side):
+    # R147: exercise the public guarded path with explicit caller-owned authorization/valuation.
+    broker, _, api, scope = kis
+    broker.safety.market_order_allowed = lambda request: request.market == "KR"
+    broker.safety.valuation = lambda request: Decimal("70000") * request.quantity * Decimal("1.3")
+    request = OrderRequest(
+        symbol="005930", side=side, quantity=1, order_type="market", venue="KRX", client_key="kr-market"
+    )
+    order = broker.place_order(request)
+    assert (order.id, order.order_type, order.price, order.status) == ("43", "market", None, "accepted")
+    api.post_order_domestic.assert_called_once_with(
+        kis_account=scope, stock_code="005930", order_type=side, order_qty=1, order_price=0, dvsn="시장가"
     )
 
 

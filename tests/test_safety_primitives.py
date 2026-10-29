@@ -154,7 +154,18 @@ def test_missing_usage_and_key_cannot_execute(request_order, live_safety):
 
 def test_market_has_no_trusted_valuation(live_safety):
     order = OrderRequest(symbol="005930", side="buy", quantity=1, order_type="market", client_key="market")
-    with pytest.raises(RiskCapError):
+    live_safety.market_order_allowed = lambda request: True
+    with pytest.raises(RiskCapError, match="conservative KRW valuation"):
+        live_safety.execute("test", "account", order, lambda: pytest.fail("submitted"))
+
+
+@pytest.mark.parametrize("authorization", [None, False, 1, "true"])
+def test_market_requires_explicit_session_authorization(live_safety, authorization):
+    order = OrderRequest(symbol="005930", side="buy", quantity=1, order_type="market", client_key="market")
+    live_safety.valuation = lambda request: Decimal("91000")
+    if authorization is not None:
+        live_safety.market_order_allowed = lambda request: authorization
+    with pytest.raises(RiskCapError, match="session authorization"):
         live_safety.execute("test", "account", order, lambda: pytest.fail("submitted"))
 
 
