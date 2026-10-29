@@ -47,8 +47,9 @@ def client(auth=None):
 ])
 def test_unproven_key_constructor_refuses_with_zero_order_posts(demo_http, reply):
     demo_http.probe = reply
-    with pytest.raises(ConfigurationError):
-        DBFI(account="synthetic-account", client=client(), virtual=True)
+    for _ in range(2):
+        with pytest.raises(ConfigurationError):
+            DBFI(account="synthetic-account", client=client(), virtual=True)
     assert demo_http.calls == [PROBE]
 
 

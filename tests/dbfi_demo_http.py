@@ -44,6 +44,7 @@ def demo_http(monkeypatch):
     # Each test starts with an empty process-local cache. Real instances share it.
     from pykbroker.brokers import dbfi_demo
     monkeypatch.setattr(dbfi_demo, "_verified", set())
+    monkeypatch.setattr(dbfi_demo, "_rejected", set())
     try:
         yield state
     finally:

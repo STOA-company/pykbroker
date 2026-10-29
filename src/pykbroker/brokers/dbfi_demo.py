@@ -14,7 +14,9 @@ from pykbroker.exceptions import ConfigurationError
 _REST_URL = "https://openapi.dbsec.co.kr:8443"
 _PROBE_PATH = "/api/v1/trading/kr-stock/inquiry/daily-ernrate"
 _DEMO_MESSAGE = "모의투자에서는 해당업무가 제공되지 않습니다."
+_REFUSED = "DBFI demo key was not positively verified; execution refused"
 _verified: set[bytes] = set()
+_rejected: set[bytes] = set()
 _lock = RLock()
 
 
@@ -44,6 +46,8 @@ def _verified_headers(auth: Any, *, account: str, credentials: Mapping[str, Any]
     with _lock:
         if fingerprint in _verified:
             return headers
+        if fingerprint in _rejected:
+            raise ConfigurationError(_REFUSED) from None
         try:
             import requests
             response = requests.request(
@@ -59,8 +63,10 @@ def _verified_headers(auth: Any, *, account: str, credentials: Mapping[str, Any]
                 _verified.add(fingerprint)
         except Exception:
             failed = True
+        if failed:
+            _rejected.add(fingerprint)
     if failed:
-        raise ConfigurationError("DBFI demo key was not positively verified; execution refused") from None
+        raise ConfigurationError(_REFUSED) from None
     return headers
 
 
