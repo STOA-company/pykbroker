@@ -1,11 +1,7 @@
-"""NH·LS order answers the official contract defines as «not accepted» become BrokerRejectedError (F2 D6738 ⑤).
+"""NH/LS non-acceptance requires a documented code; missing acknowledgements are not proof.
 
-NH: https://www.nhplug.com/openapi-docs/krstock/openapi.json ``x-response-status`` and https://www.nhplug.com/llms.txt
-«성공 판정» (read 2026-10-28) — HTTP 200 may be a business error; success = expected Output block has a value and
-rsp_msg means completion; rsp_cd is for logs (no code table). LS: official live client
-https://openapi.ls-sec.co.kr/resource/playground/sample.html ``callRestTr`` (non ``/^0+$/`` rsp_cd = «요청 실패»),
-TR guide 20261026021444748 (OrdNo in <TR>OutBlock2). Only answers with NO order number are definite; everything
-else stays unknown (InvalidResponseError) so a possibly standing order is reconciled, never re-sent.
+Official evidence and excluded codes: docs/status/2026-10-29-pack-nh-ls-reject-cancel.md.
+Synthetic 90001/03001 responses deliberately remain unknown, even with rejection-like wording.
 """
 
 import pytest
@@ -22,21 +18,20 @@ SECRET = "fixture-sensitive-detail"
 
 
 @pytest.mark.parametrize("endpoint,call", [("cashBuy", "place"), ("cancel", "cancel")])
-def test_nh_failure_code_without_order_number_is_definite_rejection(endpoint, call, live_safety):
+def test_nh_undocumented_failure_code_without_order_number_stays_unknown(endpoint, call, live_safety):
     body = {"rsp_cd": "90001", "message": {"usr_msg": "주문가능금액을 초과하였습니다. " + SECRET}}
     broker, calls = make({ORDER + endpoint: [(200, body, {})]}, safety=live_safety, definite_rejects=True)
-    with pytest.raises(BrokerRejectedError) as raised:
+    with pytest.raises(InvalidResponseError) as raised:
         broker.place_order(order()) if call == "place" else broker.cancel_order(nh_cancel())
-    assert raised.value.code == "90001" and raised.value.kind == "rejected"
     assert SECRET not in str(raised.value)
     assert [c[1] for c in calls] == [ORDER + endpoint]  # one POST, no replay
 
 
 @pytest.mark.parametrize("output", [{}, {"mkt_orr_no": 0}, {"mkt_orr_no": None}])
-def test_nh_failure_code_with_empty_block_is_definite_rejection(output, live_safety):
+def test_nh_undocumented_failure_code_with_empty_block_stays_unknown(output, live_safety):
     broker, _ = make({ORDER + "cashBuy": [reply(output, code="90001", message="종목코드 항목을 입력하세요.")]},
                      safety=live_safety, definite_rejects=True)
-    with pytest.raises(BrokerRejectedError):
+    with pytest.raises(InvalidResponseError):
         broker.place_order(order())
 
 
@@ -66,7 +61,7 @@ def test_nh_other_answers_stay_unknown(response, live_safety):
 
 @pytest.mark.parametrize("operation,tr", [("place_order", "CSPAT00601"), ("cancel_order", "CSPAT00801")])
 @pytest.mark.parametrize("block", [None, {}, {"OrdNo": 0}, {"OrdNo": "0000"}, {"OrdNo": None}])
-def test_ls_nonzero_code_with_reason_and_no_order_number_is_definite_rejection(
+def test_ls_undocumented_code_with_reason_and_no_order_number_stays_unknown(
     unlocked, live_safety, operation, tr, block  # noqa: F811
 ):
     response = {"rsp_cd": "03001", "rsp_msg": "주문가능금액을 초과하였습니다. " + SECRET}
@@ -74,9 +69,8 @@ def test_ls_nonzero_code_with_reason_and_no_order_number_is_definite_rejection(
         response[tr + "OutBlock2"] = block
     broker, client, _ = make_mock({tr: [response, page(tr)]}, safety=live_safety, definite_rejects=True)
     request = buy() if operation.startswith("place") else cancel()
-    with pytest.raises(BrokerRejectedError) as raised:
+    with pytest.raises(InvalidResponseError) as raised:
         getattr(broker, operation)(request)
-    assert raised.value.code == "03001" and raised.value.kind == "rejected"
     assert SECRET not in str(raised.value)
     with pytest.raises(DuplicateOrderError):  # the same client key is never re-sent
         getattr(broker, operation)(request)
