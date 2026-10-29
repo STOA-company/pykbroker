@@ -6,7 +6,10 @@ The owner must bind supplied credentials to the requested account. This adapter
 never enrolls Global One Market, converts cash, retries writes, or infers fills.
 """
 
+import ipaddress
 import json
+import socket
+import uuid
 from collections.abc import Mapping
 from datetime import date, datetime
 from decimal import Decimal
@@ -103,6 +106,21 @@ class _KbRestClient:
             raise InvalidResponseError("KB HTTP response refused; reconcile writes before retrying") from None
 
 
+def _local_ip_addr() -> str:
+    """Host-local IP via UDP connect (no packet is sent); mirrors kb-openapi openapi_test_defaults._local_ip_addr."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.connect(("8.8.8.8", 80))
+        return sock.getsockname()[0]
+    finally:
+        sock.close()
+
+
+def _local_mac_addr() -> str:
+    node = f"{uuid.getnode():012X}"
+    return ":".join(node[i:i + 2] for i in range(0, 12, 2))
+
+
 class KB(BaseBroker):
     broker_code = "kb"
     us_venues = tuple(_US_VENUES)
@@ -111,16 +129,26 @@ class KB(BaseBroker):
         self, *, account: str, bound_account: str | None = None, app_key: str | None = None, token: str | None = None,
         market: str = "KR", venue: str | None = None, is_integrated: bool = False,
         writes_enabled: bool = False, client=None, order_date: date | None = None,
-        symbol_map: Mapping[str, str] | None = None, client_options: Mapping | None = None, **kwargs,
+        symbol_map: Mapping[str, str] | None = None, client_options: Mapping | None = None,
+        header_ip: str | None = None, **kwargs,
     ) -> None:
         options = dict(client_options or {})
-        allowed = {"bound_account", "app_key", "token", "venue", "is_integrated", "writes_enabled", "symbol_map"}
+        allowed = {"bound_account", "app_key", "token", "venue", "is_integrated", "writes_enabled", "symbol_map", "header_ip"}
         if options.keys() - allowed:
             raise ConfigurationError("Unknown KB client_options field")
         bound_account = bound_account if bound_account is not None else options.get("bound_account")
         app_key = app_key if app_key is not None else options.get("app_key")
         token = token if token is not None else options.get("token")
         venue = venue if venue is not None else options.get("venue")
+        header_ip = header_ip if header_ip is not None else options.get("header_ip")
+        if header_ip is not None and (not isinstance(header_ip, str) or not header_ip.strip()):
+            raise ConfigurationError("KB header_ip must be a non-empty string")
+        if header_ip is not None:
+            try:
+                header_ip = str(ipaddress.IPv4Address(header_ip.strip()))
+            except ValueError:
+                raise ConfigurationError("KB header_ip must be an IPv4 address") from None
+        self._header_ip = header_ip
         # Financial mode flags must be explicit top-level owner arguments; environment cannot silently override them.
         if "is_integrated" in options or "writes_enabled" in options:
             raise ConfigurationError("Supply owner-bound financial mode flags explicitly")
@@ -203,12 +231,21 @@ class KB(BaseBroker):
         self._verify_host()
         if tr in _ORDER_LENGTHS:
             _check_lengths(body, _ORDER_LENGTHS[tr])
+        # Live KB rejects TR requests with an empty dataHeader.ipAddr (processCode 9999, resultCode 200);
+        # the official example comment says blank is fine, the server disagrees (10-29 measurement).
+        try:
+            ip = self._header_ip or _local_ip_addr()
+            mac = _local_mac_addr()
+        except OSError:
+            ip = mac = ""
+        if not ip:
+            raise ConfigurationError("KB TR requests need header_ip (local IP could not be determined)")
         self._limiter.wait("request")
         result = self._client.post(
             "/api/v1/" + tr,
             headers={"Content-Type": "application/json", "appKey": self._app_key,
                      "Authorization": "bearer " + self._token},
-            body={"dataHeader": {"ipAddr": "", "macAddr": ""}, "dataBody": body},
+            body={"dataHeader": {"ipAddr": ip, "macAddr": mac}, "dataBody": body},
         )
         return _response_body(result)
 
