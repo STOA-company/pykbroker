@@ -8,6 +8,8 @@
 - 키·시크릿·실제 인증 헤더·계좌를 묶은 digest만 프로세스 메모리에 보관한다. 값/지문을 출력하지 않는다.
 - 매 연결 때 입력 자격과 실제 세션을 대조한다. 키·토큰·계좌가 바뀌면 재증명한다.
 - 해외 세션도 국내 증명과 같은 인증 객체여야 한다.
+- 모의 client/API/service 사본의 헤더 getter가 실제 전송 직전마다 증명한다. Pydb 재발급·재시도도 새 헤더 증명 전에는 전송하지 않는다.
+- 이미 캐시된 거래/시세/차트 service의 auth가 API auth와 다르면 주문 전에 거부한다. 원본 client와 live 경로는 바꾸지 않는다.
 - REST 주소는 동일하다. 현재 어댑터에는 WS 구현이 없어 새 WS 경로를 만들지 않았다.
 - 모의 NXT 주문/취소는 `NotSupportedError`. 공개 SDK에 CSPAQ01800/CAZCQ03400 조회 메서드는 없다.
 - 기존 KR/US 허용 조회·주문·취소 경로를 사용한다. 실전 `virtual=False`는 증명 호출 없이 유지한다.
@@ -27,3 +29,7 @@
 - 원문/명령/종료: `/home/quantus/coding/cx-db-mock-1029/worker-evidence/repair-{pyk-head,pyk-existing-base,pyk-existing-head}.log`, `repair-commands.txt`.
 - 기존 격리 runner 사용: 외부 네트워크 없음, `/run` 가림, docker/삭제 명령 차단. 새 의존성 설치 없음.
 - dev·브로커·실키·DB·고객 경로는 안 걸어 봄(이번 발주에서 금지). push/PR/머지/배포하지 않음.
+- trader의 원래 핀 `7b6431ff5e41bc874f6abb836924de6b8e336e63` → 승인 기반 `a673c82cc9b064f01bbb065f526bc014b9b1d37e`에는 기존 43커밋이 있다(src 12파일 +1272/−253).
+- 이 기존 변화는 공통 거절 매핑·KIS/Toss/KB/NH/LS/Kiwoom·DB 잔고의 주문가능액 조회 추가를 포함한다. 이번 모의 수리 델타와 구분한다.
+- 전체 pytest base/head(각 900초 상한, 수집 오류 뒤 계속): 실패 이름 5개 동일, head-only 0. 원문 `delta-pyk-full-{base-continued,head}.log`, 목록 `delta-pyk-failed-name-diff.json`.
+- 전역 RLock의 프로브 중 직렬화와 공개 virtual setter는 이번 세션 재현과 별개인 남은 제한으로 두었다.

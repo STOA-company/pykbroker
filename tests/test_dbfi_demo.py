@@ -13,14 +13,27 @@ from .dbfi_demo_http import Auth, DEMO, PROBE, demo_http  # noqa: F401
 
 def client(auth=None):
     auth = auth or Auth()
-    def send(path, **kwargs):
-        return requests.request("POST", "https://openapi.dbsec.co.kr:8443" + path,
-                                json=kwargs, headers=auth.get_auth_header()).json()
-    return SimpleNamespace(domestic=SimpleNamespace(auth=auth), overseas=SimpleNamespace(auth=auth),
-        buy=lambda **kw: send("/api/v1/trading/kr-stock/order", **kw),
-        sell=lambda **kw: send("/api/v1/trading/kr-stock/order", **kw),
-        cancel=lambda **kw: send("/api/v1/trading/kr-stock/order-cancel", **kw),
-        get_transaction_history=lambda **kw: send("/api/v1/trading/kr-stock/inquiry/transaction-history", **kw))
+    class Client:
+        def __init__(self):
+            self.domestic = SimpleNamespace(auth=auth)
+            self.overseas = SimpleNamespace(auth=auth)
+
+        def send(self, path, **kwargs):
+            return requests.request("POST", "https://openapi.dbsec.co.kr:8443" + path,
+                                    json=kwargs, headers=self.domestic.auth.get_auth_header()).json()
+
+        def buy(self, **kwargs):
+            return self.send("/api/v1/trading/kr-stock/order", **kwargs)
+
+        sell = buy
+
+        def cancel(self, **kwargs):
+            return self.send("/api/v1/trading/kr-stock/order-cancel", **kwargs)
+
+        def get_transaction_history(self, **kwargs):
+            return self.send("/api/v1/trading/kr-stock/inquiry/transaction-history", **kwargs)
+
+    return Client()
 
 
 @pytest.mark.parametrize("reply", [

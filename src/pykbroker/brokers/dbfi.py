@@ -63,7 +63,7 @@ class DBFI(BaseBroker):
         if self.virtual:
             from .dbfi_demo import verify_demo_client
             self._demo_verified = False
-            verify_demo_client(self._client, account=self._account, credentials=self._options)
+            self._client = verify_demo_client(self._client, account=self._account, credentials=self._options)
             self._demo_verified = True
         return self._client, self._api
 
