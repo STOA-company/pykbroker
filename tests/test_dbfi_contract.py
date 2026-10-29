@@ -3,7 +3,7 @@ from decimal import Decimal
 import pytest
 
 from pykbroker.exceptions import BrokerRejectedError, DryRunError, DuplicateOrderError, InvalidResponseError
-from pykbroker.models import CancelRequest
+from pykbroker.models import CancelRequest, OrderRequest
 from pykbroker.safety.gate import OrderSafety
 
 
@@ -27,6 +27,23 @@ def test_dbfi_exact_order_mapping(dbfi, request_order, side, venue):
     assert order.id == "43"
     getattr(client, side).assert_called_once_with(
         region="domestic", stock_code="005930", quantity=1, price=70000, price_type="00", use_nxt=venue == "NXT"
+    )
+    getattr(client, "buy" if side == "sell" else "sell").assert_not_called()
+
+
+@pytest.mark.parametrize("side", ["buy", "sell"])
+@pytest.mark.parametrize("venue", ["KRX", "NXT"])
+def test_dbfi_kr_market_contract_uses_03_and_zero_price(dbfi, side, venue):
+    broker, client, _ = dbfi
+    broker.safety.market_order_allowed = lambda request: request.market == "KR"
+    broker.safety.valuation = lambda request: Decimal("70000") * request.quantity * Decimal("1.3")
+    request = OrderRequest(
+        symbol="005930", side=side, quantity=1, order_type="market", venue=venue, client_key="kr-market"
+    )
+    order = broker.place_order(request)
+    assert (order.id, order.order_type, order.price, order.status) == ("43", "market", None, "accepted")
+    getattr(client, side).assert_called_once_with(
+        region="domestic", stock_code="005930", quantity=1, price=0, price_type="03", use_nxt=venue == "NXT"
     )
     getattr(client, "buy" if side == "sell" else "sell").assert_not_called()
 

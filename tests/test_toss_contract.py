@@ -5,6 +5,8 @@ import pytest
 
 from pykbroker import CancelRequest, Toss
 from pykbroker.exceptions import ConfigurationError, InvalidResponseError
+from pykbroker.models import OrderRequest
+from tests.toss_contract_mock import ContractMockTossSdk
 
 
 class LoopSDK:
@@ -68,6 +70,27 @@ class LoopSDK:
     async def aclose(self):
         assert self.loop is asyncio.get_running_loop()
         self.closed = True
+
+
+@pytest.mark.parametrize("side", ["buy", "sell"])
+def test_toss_kr_market_contract_omits_price(live_safety, side):
+    # Vendor-schema fake server refuses a MARKET payload carrying any price field.
+    live_safety.market_order_allowed = lambda request: request.market == "KR"
+    live_safety.valuation = lambda request: Decimal("70000") * request.quantity * Decimal("1.3")
+    with Toss(
+        account="fixture", account_seq=1, sdk_factory=ContractMockTossSdk,
+        safety=live_safety, sdk_dry_run=False,
+    ) as broker:
+        order = broker.place_order(OrderRequest(
+            symbol="005930", side=side, quantity=1, order_type="market", venue="KRX", client_key="kr-market"
+        ))
+        assert (order.order_type, order.price, order.status) == ("market", None, "accepted")
+        payload = broker._sdk.accepted[0]
+        assert (payload["symbol"], payload["side"], payload["orderType"], payload["quantity"]) == (
+            "005930", side.upper(), "MARKET", "1"
+        )
+        assert payload["timeInForce"] == "DAY"
+        assert "price" not in payload
 
 
 class FractionalSDK(LoopSDK):
@@ -174,13 +197,14 @@ def _toss(SDK, live_safety, market="US"):
                 sdk_dry_run=False, **kwargs)
 
 
-# 10-18 검수 527c P2-T: 한 응답에 같은 토스 종목이 두 줄이면 줄마다 종목 전체의 매도 가능 수량이 붙어 2주가 4주로 읽혔다.
+# 10-18 검수 527c P2-T: 같은 토스 종목 두 줄에 각각 종목 전체의 매도 가능 수량이 붙어 2주가 4주로 읽혔다.
 # 토스 문서상 행 식별은 (symbol, marketCountry, currency)이고 매도 가능 수량은 심볼 하나로 읽는다(벤더 답이 기준).
 @pytest.mark.parametrize("market,rows,answer,symbol,expected", [
     ("US", [_row("AAPL", "2"), _row("AAPL", "2")], "2", "AAPL", Decimal("2")),             # 같은 줄 반복 → 한 번
     ("US", [_row("AAPL", "2.57"), _row("AAPL", "2.57")], "2.57", "AAPL", Decimal("2.57")),  # 소수 반복
     ("KR", [_row("005930", "2", country="KR"), _row("005930", "2", country="KR")], "2", "005930", Decimal("2")),
-    ("US", [_row("AAPL", "2"), _row("AAPL", "2", currency="KRW")], "2", "AAPL", Decimal("2")),  # 다른 통화 줄: 벤더 답 한 번
+    # 다른 통화 줄: 벤더 답 한 번
+    ("US", [_row("AAPL", "2"), _row("AAPL", "2", currency="KRW")], "2", "AAPL", Decimal("2")),
     ("US", [_row("AAPL", "2"), _row("MSFT", "4"), _row("005930", "7", country="KR")], "2", "AAPL", Decimal("2")),
     ("US", [_row("MSFT", "4")], "0", "AAPL", Decimal("0")),                                 # 미보유 → 0
 ])
@@ -319,8 +343,6 @@ def test_toss_rejects_mismatched_quote_symbol():
 
 def test_toss_kr_limit_sell_translation_unchanged(live_safety):
     # US 매도 개방(D11)이 KR 번역을 건드리지 않는지 본다.
-    from pykbroker.models import OrderRequest
-
     broker = Toss(account="fixture", account_seq=1, sdk_factory=LoopSDK, safety=live_safety, sdk_dry_run=False)
     order = broker.place_order(
         OrderRequest(symbol="005930", side="sell", quantity=1, price="70000", client_key="kr-sell")
