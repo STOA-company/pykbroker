@@ -62,32 +62,34 @@ def _reject_code(code: Any) -> str | None:
     return text if re.fullmatch(r"[A-Za-z0-9_-]{1,40}", text) else None
 
 
-_NH_UNCERTAIN_WORDS = re.compile(r"접수|처리\s*중|지연|시간\s*초과|타임\s*아웃|timeout|확인", re.IGNORECASE)
+# Only documented request-validation/authorization failures; absence of an order number alone is not proof.
+# Official source for EACH entry: https://www.nhplug.com/testbed-howto (read 2026-10-29).
+# These descriptions imply rejection before dispatch; the vendor does not publish an explicit acceptance table.
+# Evidence locations and excluded examples: docs/status/2026-10-29-pack-nh-ls-reject-cancel.md.
+NH_DEFINITE_REJECT_CODES = frozenset({
+    "IGW40012",  # https://www.nhplug.com/testbed-howto — invalid request JSON.
+    "IGW40018",  # https://www.nhplug.com/testbed-howto — account absent from the issued token.
+    "IGW40050",  # https://www.nhplug.com/testbed-howto — invalid Content-Type.
+    "IGW40051",  # https://www.nhplug.com/testbed-howto — invalid Bearer credentials type.
+    "IGW40301",  # https://www.nhplug.com/testbed-howto — API access not authorized.
+    "IGW40302",  # https://www.nhplug.com/testbed-howto — corporate client IP not authorized.
+    "IGW40401",  # https://www.nhplug.com/testbed-howto — API URI not provided.
+})
+_NH_UNCERTAIN_WORDS = re.compile(r"접수|처리\s*중|지연|시간\s*초과|타임\s*아웃|timeout", re.IGNORECASE)
 
 
 def _nh_definite_write_failure(code: Any, message: Any, output: Any, number_field: str) -> bool:
-    """HTTP 200 order answer that the official contract defines as a business failure (not accepted).
+    """An allowlisted pre-dispatch failure without conflicting acceptance evidence.
 
-    Source (read 2026-10-28): https://www.nhplug.com/openapi-docs/krstock/openapi.json and
-    common/openapi.json ``x-response-status`` · https://www.nhplug.com/llms.txt «성공 판정»: HTTP 200 can be a
-    business error; judge by ① the expected block (Output_N) carrying a value, ② ``rsp_msg`` meaning completion
-    (a failure message describes its cause, e.g. «종목코드 항목을 입력하세요.»); ``rsp_cd`` is for logs only and
-    no code table is published. cashBuy/cashSell/cancel (krstock) and buy/sell/cancel (gbstock) document the
-    order number (``mkt_orr_no``/``orr_no``) as the only acknowledgement and blocks «appear only with data».
-
-    So a write is definitely NOT accepted only when all hold: a code outside the known success/continuation
-    codes, NO order number in Output_0 (block absent/empty or number absent/zero), and a non-empty message that
-    is not completion wording (no «완료» at all, so «완료되지 않았습니다» stays unknown). Anything else —
-    an order number with an unknown code, no message, completion-like wording — stays unknown (reconcile).
+    Unknown/empty codes and missing responses stay unknown. Error-like wording is never an allowlist.
+    A returned order number, completion or uncertainty wording also prevents terminal rejection.
     """
-    if not isinstance(code, str) or not code.strip():
-        return False
-    if code.strip() in NH_SUCCESS_CODES | NH_CONTINUATION_CODES:
+    if not isinstance(code, str) or code.strip() not in NH_DEFINITE_REJECT_CODES:
         return False
     if not isinstance(message, str) or not message.strip() or "완료" in message or _COMPLETED.search(message):
         return False
     if _NH_UNCERTAIN_WORDS.search(message):
-        return False  # delay/timeout/«확인» wording may hide a standing order (#676·#66 review P1-1)
+        return False
     if output is None:
         return True
     if not isinstance(output, Mapping):

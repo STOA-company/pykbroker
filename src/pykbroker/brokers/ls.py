@@ -84,29 +84,22 @@ def _reject_code(code):
     return text if re.fullmatch(r"[A-Za-z0-9_-]{1,40}", text) else None
 
 
+# No published code-specific proof of non-acceptance was found in the official TR guide or live example:
+# https://openapi.ls-sec.co.kr/api/apis/public/tr-guides.json?download=true
+# https://openapi.ls-sec.co.kr/resource/playground/sample.html
+# Both read 2026-10-29. In particular, 03001 is only a synthetic fixture, NOT a verified rejection code.
+# Keep this allowlist empty until such evidence exists; no-order-number + error wording is insufficient.
+LS_DEFINITE_REJECT_CODES: frozenset[str] = frozenset()
 _LS_UNCERTAIN_WORDS = re.compile(r"완료|접수|처리\s*중|지연|시간\s*초과|타임\s*아웃|timeout|확인", re.IGNORECASE)
 
 
 def _ls_definite_write_failure(result, tr):
-    """HTTP 200 order answer that LS's own live client treats as a failed request, with no order number.
-
-    Sources (read 2026-10-28): the official live client https://openapi.ls-sec.co.kr/resource/playground/sample.html
-    (SHA256 a6bbe85e…, the page cited in docs/status/2026-10-04-pack-ls-us.md) — ``callRestTr`` throws
-    «<TR> 요청 실패: <rsp_msg>» when ``!isApiSuccessCode(rsp_cd)`` (``/^0+$/``) and the TR has no listed
-    successCodes (order TRs CSPAT00601/CSPAT00801/COSAT00301 list none); ``showOrderResult`` shows it as an order
-    error. TR guide 20261026021444748 (tr-guides.json) defines the order number ``OrdNo`` in ``<TR>OutBlock2`` as the
-    acknowledgement and publishes no order code table.
-
-    Our rule is narrower than the official client: a non-zero code is a definite «not accepted» only when no
-    positive ``OrdNo`` came back and the vendor wrote a reason (``rsp_msg``). A non-zero code WITH an order number
-    (e.g. an unverified 00039/00040) stays unknown — the order may stand.
-    """
-    message = result.get("rsp_msg")
-    if not isinstance(message, str) or not message.strip():
+    """Only allowlisted pre-dispatch codes without conflicting acceptance evidence may reject."""
+    code = result.get("rsp_cd")
+    if not isinstance(code, str) or code.strip() not in LS_DEFINITE_REJECT_CODES:
         return False
-    # Real LS order successes carry non-zero codes (00039/00040 «…완료되었습니다»): any «완료» wording, and any
-    # delay/timeout/«확인» wording that may hide a standing order, stays unknown (#676·#66 review P1-1).
-    if _LS_UNCERTAIN_WORDS.search(message):
+    message = result.get("rsp_msg")
+    if not isinstance(message, str) or not message.strip() or _LS_UNCERTAIN_WORDS.search(message):
         return False
     block = result.get(tr + "OutBlock2")
     if block is None:
@@ -586,7 +579,7 @@ class LS(RestBroker):
                 parent = self._parent_number(row)
                 if parent is not None:
                     children.setdefault(parent, []).append(row)
-            orders = [self._order(row, children.get(str(row.get("ordno")).strip(), [])) for row in rows]
+            orders = [self._order(row, self._descendants(row, children)) for row in rows]
             return [order for order in orders if code is None or order.symbol == code]
 
         return self._call(read)
@@ -608,17 +601,32 @@ class LS(RestBroker):
     def _parent_number(row):
         value = row.get("orgordno")
         text = str(value).strip() if value is not None and not isinstance(value, bool) else ""
-        return text if text.strip("0") and text.isdecimal() else None
+        return text.lstrip("0") if text.strip("0") and text.isascii() and text.isdecimal() else None
+
+    @classmethod
+    def _descendants(cls, row, children):
+        """Follow all correction/cancel links, including later pages, before closing the root."""
+        root = cls._order_id(row["ordno"]).lstrip("0")
+        pending = list(children.get(root, ()))
+        seen = {root}
+        descendants = []
+        while pending:
+            child = pending.pop()
+            number = cls._order_id(child["ordno"]).lstrip("0")
+            if number in seen:
+                raise InvalidResponseError("Duplicate or cyclic LS order chain")
+            seen.add(number)
+            descendants.append(child)
+            pending.extend(children.get(number, ()))
+        return descendants
 
     @staticmethod
     def _cancel_child(row) -> int | None:
-        """Confirmed quantity of a child row that can only be a confirmed cancel, else None.
+        """Quantity signature of a candidate direct cancel, not proof for a correction chain.
 
-        Signature from the official fields: nothing executed (cheqty 0), nothing left (ordrem 0) and the whole child
-        quantity confirmed (cfmqty == qty > 0). A correction child is a live order (ordrem > 0) or
-        executes (cheqty > 0); an unconfirmed/refused child has cfmqty 0.
-        ASSUMED (R85 test-account read): cfmqty is the confirmed cancel quantity on a cancel row,
-        the same reading as Kiwoom kt00007 cnfm_qty (#63).
+        t0425 defines cfmqty as confirmation quantity, not exclusively cancellation. The direct-cancel reading
+        remains the existing contract assumption; callers must exclude any linked correction descendant before
+        applying it. No status text/enum or aggregate correction-chain fill/cancel semantics are invented here.
         """
         try:
             qty, done, left, confirmed = (whole(row[k]) for k in ("qty", "cheqty", "ordrem", "cfmqty"))
@@ -642,7 +650,12 @@ class LS(RestBroker):
             if children:
                 # A child row points here (cancel or correction). Only a proven full close by confirmed cancels
                 # (filled + cancelled == ordered, nothing open) is cancelled; anything else stays unknown.
-                cancels = [self._cancel_child(child) for child in children]
+                root = self._order_id(row["ordno"]).lstrip("0")
+                # `children` includes ALL descendants. Any non-direct link means a correction chain,
+                # even when an intermediate row has cfmqty == qty and zero remaining. Keep the root unknown.
+                cancels = [self._cancel_child(child) if self._parent_number(child) == root
+                           and self._response_symbol(child["expcode"]) == self._response_symbol(row["expcode"])
+                           else None for child in children]
                 if remaining == 0 and None not in cancels and filled + sum(cancels) == quantity:
                     status = "cancelled"
             elif filled == quantity and remaining == 0:
