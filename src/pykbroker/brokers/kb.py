@@ -6,6 +6,7 @@ The owner must bind supplied credentials to the requested account. This adapter
 never enrolls Global One Market, converts cash, retries writes, or infers fills.
 """
 
+import ipaddress
 import json
 import socket
 import uuid
@@ -142,6 +143,11 @@ class KB(BaseBroker):
         header_ip = header_ip if header_ip is not None else options.get("header_ip")
         if header_ip is not None and (not isinstance(header_ip, str) or not header_ip.strip()):
             raise ConfigurationError("KB header_ip must be a non-empty string")
+        if header_ip is not None:
+            try:
+                header_ip = str(ipaddress.IPv4Address(header_ip.strip()))
+            except ValueError:
+                raise ConfigurationError("KB header_ip must be an IPv4 address") from None
         self._header_ip = header_ip
         # Financial mode flags must be explicit top-level owner arguments; environment cannot silently override them.
         if "is_integrated" in options or "writes_enabled" in options:

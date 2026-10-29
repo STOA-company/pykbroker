@@ -73,3 +73,13 @@ def test_token_issuance_header_stays_empty():
                                 "dataBody": {"access_token": "t", "token_type": "bearer", "expires_in": 100}}
     KB.issue_token(app_key="a" * 36, secret_key="b" * 32, client_factory=lambda: client)
     assert client.post.call_args.kwargs["body"]["dataHeader"] == {"ipAddr": "", "macAddr": ""}
+
+
+@pytest.mark.parametrize("bad", ["not-an-ip", "999.1.1.1", "1.2.3", "::1", "a b", "10.0.0.1/24", "10.0.0.1,10.0.0.2"])
+def test_non_ipv4_header_ip_rejected(live_safety, bad):
+    client = Mock(base_url=KB_API_BASE_URL)
+    with pytest.raises(ConfigurationError):
+        _broker(client, live_safety, header_ip=bad)
+    with pytest.raises(ConfigurationError):
+        _broker(client, live_safety, client_options={"header_ip": bad})
+    assert client.post.call_count == 0
