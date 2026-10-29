@@ -98,15 +98,16 @@ def test_dbfi_rules_and_funds_match_the_kis_shapes(dbfi, kis):
     assert dbfi[0].available_cash() == kis[0].available_cash()
 
 
-@pytest.mark.parametrize("broker_type", [DBFI, Toss])
+@pytest.mark.parametrize("broker_type", [Toss])
 def test_a_broker_without_a_mock_domain_says_so_and_refuses_one(broker_type):
     assert _built(broker_type).capabilities().supports_virtual_account is False
     with pytest.raises(NotSupportedError):
         _built(broker_type, virtual=True)
 
 
-def test_only_kis_claims_a_mock_domain():
+def test_verified_mock_brokers_claim_mock_support():
     assert _built(KIS).capabilities().supports_virtual_account is True
+    assert _built(DBFI).capabilities().supports_virtual_account is True
 
 
 # --- the experimental lock ------------------------------------------------
