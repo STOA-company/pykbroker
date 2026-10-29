@@ -36,8 +36,24 @@ def client(auth=None):
     return Client()
 
 
+DEMO_SUCCESS = {"rsp_cd": "00000", "rsp_msg": "모의투자 조회가 완료되었습니다."}
+
+
+@pytest.mark.parametrize("reply", [DEMO_SUCCESS, {"rsp_cd": "00000", "rsp_msg": "모의투자 데이터가 없습니다."}])
+def test_demo_prefixed_success_reply_is_demo_proof(demo_http, reply):
+    """2026-10-30 dev 실측: 공유 호스트가 모의 키의 탐침에 00000 + «모의투자 …완료» 로 답한다(공식 오류표 106·108·109)."""
+    demo_http.probe = reply
+    DBFI(account="synthetic-account", client=client(), virtual=True)
+    assert demo_http.calls == [PROBE]
+
+
 @pytest.mark.parametrize("reply", [
     {"rsp_cd": "00000", "rsp_msg": "success"}, {}, [],
+    {"rsp_cd": "00000", "rsp_msg": "조회가 완료되었습니다."},
+    {"rsp_cd": "00000", "rsp_msg": "데이터가 없습니다."},
+    {"rsp_cd": "00000", "rsp_msg": "모의투자 조회가 완료되었습니다. "},
+    {"rsp_cd": "M100", "rsp_msg": "모의투자 조회가 완료되었습니다."},
+    {"rsp_cd": "00000", "rsp_msg": DEMO["rsp_msg"]},
     {"rsp_cd": "M100", "rsp_msg": "모의투자 조회실패"},
     {"rsp_cd": "m100", "rsp_msg": DEMO["rsp_msg"]},
     {"rsp_cd": "OTHER", "rsp_msg": DEMO["rsp_msg"]},
