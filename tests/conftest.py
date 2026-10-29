@@ -271,3 +271,10 @@ def _network_guard_marker_gate(request):
 
 
 # ---------------------------- end network guard ----------------------------
+
+
+@pytest.fixture(autouse=True)
+def _kb_local_ip_offline(monkeypatch):
+    """KB TR requests carry the host IP (10-29); tests must not open a socket to find it."""
+    from pykbroker.brokers import kb as _kb
+    monkeypatch.setattr(_kb, "_local_ip_addr", lambda: "10.0.0.1")
