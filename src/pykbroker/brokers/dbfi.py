@@ -18,6 +18,7 @@ US_VENUES = ("NYSE", "NASDAQ", "AMEX")
 
 class DBFI(BaseBroker):
     broker_code = "dbfi"
+    supports_virtual = True
 
     def __init__(
         self,
@@ -46,6 +47,9 @@ class DBFI(BaseBroker):
         self._client, self._api = client, api
         self._factory, self._options = client_factory, dict(client_options or {})
         self._owns_client = client is None
+        self._demo_verified = False
+        if self.virtual:
+            self._connect()  # Positive evidence is required before construction returns.
 
     def _connect(self) -> tuple[Any, Any]:
         try:
@@ -56,7 +60,16 @@ class DBFI(BaseBroker):
                 self._client = factory(**self._options)
         except ImportError:
             raise MissingDependencyError("Supply Pydb source and pykbroker[dbfi], or inject client and api") from None
+        if self.virtual:
+            from .dbfi_demo import verify_demo_client
+            self._demo_verified = False
+            verify_demo_client(self._client, account=self._account, credentials=self._options)
+            self._demo_verified = True
         return self._client, self._api
+
+    @property
+    def demo_verified(self) -> bool:
+        return self.virtual is True and self._demo_verified is True
 
     def capabilities(self) -> Capabilities:
         return Capabilities(
@@ -64,11 +77,13 @@ class DBFI(BaseBroker):
             # DB overseas has no market order either; US is limit-only on both brokers.
             supports_market_order=self.market == "KR",
             supports_single_order_cancel=True,
-            supports_nxt=self.market == "KR",
+            supports_virtual_account=True,
+            virtual=self.virtual,
+            supports_nxt=self.market == "KR" and not self.virtual,
             supports_order_history=True,
             realtime_open_orders=True,
             requires_venue=self.market == "US",
-            venues=US_VENUES if self.market == "US" else ("KRX", "NXT"),
+            venues=US_VENUES if self.market == "US" else (("KRX",) if self.virtual else ("KRX", "NXT")),
             markets=(self.market,),
         )
 
@@ -295,6 +310,7 @@ class DBFI(BaseBroker):
                         remaining=remaining,
                         status=status,
                         market=self.market,
+                        virtual=self.virtual,
                     )
                 )
             return result
@@ -302,6 +318,8 @@ class DBFI(BaseBroker):
         return self._call(read)
 
     def _place_order(self, request: OrderRequest) -> Order:
+        if self.virtual and request.venue == "NXT":
+            raise NotSupportedError("DBFI demo does not support NXT")
         if request.fractional:
             # pydbsec buy()/sell() take quantity: int (no fractional order field). Refuse; never int().
             raise FractionalNotSupportedError("DBFI orders are whole shares")
@@ -340,9 +358,12 @@ class DBFI(BaseBroker):
             price=request.price,
             status="accepted",
             market=self.market,
+            virtual=self.virtual,
         )
 
     def _cancel_order(self, request: CancelRequest) -> Order:
+        if self.virtual and request.venue == "NXT":
+            raise NotSupportedError("DBFI demo does not support NXT")
         client, _ = self._connect()
         if not request.order_id.isdecimal():
             raise ConfigurationError("DBFI requires a numeric order identifier")
@@ -359,7 +380,8 @@ class DBFI(BaseBroker):
         if data.get("rsp_cd") != "00000":
             raise InvalidResponseError("DBFI cancellation response lacks a success status")
         # A successful cancel acknowledgement does not establish final fills.
-        return Order(id=request.order_id, symbol=request.symbol, status="accepted", market=self.market)
+        return Order(id=request.order_id, symbol=request.symbol, status="accepted", market=self.market,
+                     virtual=self.virtual)
 
     def close(self) -> None:
         # Pydb's DBFI.close() revokes the access token (api.py:31-32 -> oauth.py:177). That token sits
