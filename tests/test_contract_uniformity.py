@@ -164,8 +164,9 @@ def test_experimental_brokers_are_not_reachable_through_the_factory(module_name,
 
 
 def test_the_factory_ships_exactly_the_registered_adapters():
-    assert set(BROKERS) == {"kis", "dbfi", "toss", "kiwoom", "ls", "nh", "kb"}
-    assert set(BROKERS.values()) == set(SHIPPED)
+    assert set(BROKERS) == {"kis", "dbfi", "toss", "kiwoom", "ls", "nh", "kb", "saxo"}
+    from pykbroker.brokers.saxo import Saxo  # S2: 계약 균일성 SHIPPED 매개변수화 밖(자체 시험 보유)
+    assert set(BROKERS.values()) == set(SHIPPED) | {Saxo}
 
 
 # --- B′-0: 거래소 선언 정합 --------------------------------------------------

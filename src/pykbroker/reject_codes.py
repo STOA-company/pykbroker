@@ -62,6 +62,80 @@ DEFINITIVE_REJECTS: dict[str, dict[str, RejectCode]] = {
 }
 
 
+# ---------------------------------------------------------------------------------------------
+# Saxo OpenAPI (public docs, read 2026-10-27). Only «not accepted» facts are listed; every code that
+# is pending / timed out / unspecified (OrderCommandPending, OrderCommandTimeout, CouldNotCompleteRequest,
+# OtherError, BrokerOption, AlreadyPendingCancelReplace, TradeNotCompleted), HTTP 409 (duplicate within
+# 15 s), 202, 5xx and any code not listed stays UNKNOWN: never turned into a rejection.
+# ---------------------------------------------------------------------------------------------
+_SAXO_REF = "https://www.developer.saxo/openapi/referencedocs/trade/v2/orders/"
+_SAXO_POST = """
+ActiveFollowerCannotDoManualTrade AlgoOrderTimeBeforeExchangeOpen AmountBelowMinimumLotSize
+AmountCannotBeLessThanFilledAmount AmountNotInLotSize BlocksExistForOwnedContracts
+BreakoutUpPriceCannotBeLessThanDownPrice CashAmountLessThanMinInitialInvestmentAmount ClientCountrySanctioned
+ClientExposureLimitation ClientNotEnabledForExtendedTradingHours ClientOnReduceForcedExposureReductionViolation
+ClosingPositionNotAllowedForMultiDayExecutionOrder ClosingPositionNotAllowedOnJointExecutionModel
+ConditionDurationNotSupported ConditionOnWrongSideOfMarket ConditionPriceExceedsAggressiveTolerance
+ConditionTooFarFromMarket ContactExposureLimitation CrossCurrencyOrderOnMarginLendingAccountNotAllowed
+DealCaptureAllocationKeyNotCorrect DealCaptureInformationNotCorrect DurationNotSupported ExpirationDateInPast
+ExpirationDateRequired ExplicitCloseNotAllowedForIntradayNetting ExtendedHoursTradingCannotBeChanged
+ForceOpenNotAllowed ForcedExposureReductionViolation ForwardDateInPast ForwardDateRequired
+GtdOrderCannotBeLaterThanExpiry IllegalAccount IllegalAmount IllegalAssetType IllegalDate IllegalInstrumentId
+IllegalRequest IllegalStrike IncorrectValuationTypeAndNettingMethod InstrumentDisabledForTrading
+InstrumentForcedExposureReductionViolation InstrumentHasExpired InstrumentNotAllowed
+InstrumentNotSupportedForExtendedHours InsufficientCash InsufficientCash_CausedByOvernightAddOn
+InvalidAllocationKeyUsed InvalidModelState InvalidOrderRelation InvalidRequest InvalidUic InvalidValueDate
+LimitTooFarFromStop MarketClosed NotOwned NotPrimarySession NotSuitable NotTradableAtPresent OnWrongSideOfMarket
+OnlyLimitOrderAllowedForExtendedHours OnlySidedReductionAllowed OptionExerciseAfterCutoff
+OptionExerciseNotAllowedDueExDateOfUpcomingCorporateActionOnInstrument OrderExceedsMarketLimitUpDownTolerance
+OrderNotFound OrderNotPlaced OrderNotSupportedForAccountType OrderPriceOutsideLimit OrderRejectedByBroker
+OrderRelatedPositionIsClosed OrderRelatedPositionMissMatch OrderRequestAfterLastTradingDate
+OrderSizeGreaterThanMaximumAllowed OrderTypeNotSupported OrderValueToSmall OrderValueTooLarge
+PriceExceedsAggressiveTolerance PriceHasMoved PriceNotInTickSizeIncrements
+RelatedOrClosingOrderNotAllowedForIntradayNettingClients RelatedOrderNotAllowedForInstrument
+RelatedOrderNotAllowedForIpo RelatedOrderNotAllowedForShortLived RelatedOrderNotAllowedOnChildOrder
+RelatedOrderNotAllowedOnMultiLegPartialFilled RelatedOrderNotAllowedOnTrailingStopOrder
+RelatedPositionAlreadyHasImplicitClosingOrders RelatedPositionAlreadyHasRelatedOrderType
+RelatedPositionAlreadyHasRelatedOrders RelatedPositionNotFound RepeatTradeOnAutoQuote
+ReservedByShortContractOptions SellExceedsSettledExposure SellOrdersAlreadyExistForOwnedContracts
+ShortTradeDisabled ToOpenNotAllowedOnInstrument TooCloseToMarket TooCloseToOcoRelatedOrderPrice
+TooFarFromEntryOrder TooFarFromMarket TradingDisabled WouldComeTooCloseToAccountValueProtectionLimit
+WouldExceedAccountValueProtectionLimit WouldExceedMargin WouldExceedMarginCeiling WouldExceedMaxCreditLine
+WouldExceedMaxCreditLineLimit WouldExceedTradingLine WrongSideOfRelatedOrder"""
+_SAXO_PATCH = """
+ActiveFollowerCannotChangeOrderManually AlreadyPendingCancelReplace AmendmentsNotSupportedInBreakSession
+AmountChangeNotAllowedWhenAmountIsInAllocationUnitKey IllegalOrderTypeChange LimitOrderHigherStopOnSell
+LimitOrderLowerThenStopOnBuy OrderCannotBeChangedAtThisTime StopOrderLowerLimitOnSell TooLateToChangeOrder"""
+_SAXO_DELETE = """
+ActiveFollowerCannotCancelOrderManually ClientCannotCancelStopOutOrder ClientCannotChangeAllocatedOrder
+OrderCannotBeCancelledAtThisTime TooLateToCancelOrder"""
+
+
+_SAXO_UNKNOWN = ("OrderCommandPending", "OrderCommandTimeout", "CouldNotCompleteRequest", "OtherError",
+                 "BrokerOption", "AlreadyPendingCancelReplace", "TradeNotCompleted")
+
+
+def _saxo_table() -> dict[str, RejectCode]:
+    table: dict[str, RejectCode] = {}
+    for names, page in ((_SAXO_POST, "post__trade"), (_SAXO_PATCH, "patch__trade"),
+                        (_SAXO_DELETE, "delete__trade__orderids"), ("AllocationKeyDoesNotMatchAccount",
+                                                                    "post__trade__precheck")):
+        for code in names.split():
+            table.setdefault(code, RejectCode(REJECTED, "business_rejected", _SAXO_REF + page))
+    for code in _SAXO_UNKNOWN:  # listed in the docs but they do not prove «not accepted»
+        table.pop(code, None)
+    # HTTP status rows (key = «HTTP» + status): the gateway answered before processing the order.
+    table["HTTP401"] = RejectCode(
+        TOKEN_EXPIRED, "token_expired",
+        _SAXO_REF + "post__trade «401 Unauthorized. Missing or invalid Authorization header or security token»")
+    table["HTTP429"] = RejectCode(
+        RATE_LIMITED, "rate_limited", "https://www.developer.saxo/openapi/learn/rate-limiting «429 - Too Many Requests»")
+    return table
+
+
+DEFINITIVE_REJECTS["saxo"] = _saxo_table()
+
+
 def _safe(code: Any) -> str | None:
     text = str(code).strip() if code is not None else ""
     return text if _CODE.fullmatch(text) else None
