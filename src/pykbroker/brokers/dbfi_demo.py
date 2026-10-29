@@ -1,6 +1,11 @@
 """DB's shared REST host requires positive evidence from the authenticated session.
 
-Official spec 564b510: CSPAQ01800 is read-only and unavailable in demo.
+Official spec 564b510: CSPAQ01800 is read-only and unavailable in demo (M100 reply).
+Observed 2026-10-30 on the shared host with a demo key: the same probe now answers
+00000 "모의투자 조회가 완료되었습니다." — the demo-prefixed success is also demo proof.
+Official error table (564b510 docs/errors_and_rate_limits.md:106,108,109) lists the live
+"조회가 완료되었습니다." apart from the demo-prefixed 00000 replies. Only these exact
+(rsp_cd, rsp_msg) pairs prove demo; a plain success is never proof.
 Never log credentials, headers, response bodies or the process-local fingerprints.
 """
 import hashlib
@@ -14,6 +19,11 @@ from pykbroker.exceptions import ConfigurationError
 _REST_URL = "https://openapi.dbsec.co.kr:8443"
 _PROBE_PATH = "/api/v1/trading/kr-stock/inquiry/daily-ernrate"
 _DEMO_MESSAGE = "모의투자에서는 해당업무가 제공되지 않습니다."
+_DEMO_PROOFS = frozenset({
+    ("M100", _DEMO_MESSAGE),
+    ("00000", "모의투자 조회가 완료되었습니다."),
+    ("00000", "모의투자 데이터가 없습니다."),
+})
 _REFUSED = "DBFI demo key was not positively verified; execution refused"
 _verified: set[bytes] = set()
 _rejected: set[bytes] = set()
@@ -57,7 +67,7 @@ def _verified_headers(auth: Any, *, account: str, credentials: Mapping[str, Any]
             )
             body = response.json()
             if (response.status_code != 200 or not isinstance(body, dict)
-                    or body.get("rsp_cd") != "M100" or body.get("rsp_msg") != _DEMO_MESSAGE):
+                    or (body.get("rsp_cd"), body.get("rsp_msg")) not in _DEMO_PROOFS):
                 failed = True
             else:
                 _verified.add(fingerprint)
