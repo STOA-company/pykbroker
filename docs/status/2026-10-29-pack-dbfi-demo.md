@@ -32,5 +32,5 @@
 - dev·브로커·실키·DB·고객 경로는 안 걸어 봄(이번 발주에서 금지). push/PR/머지/배포하지 않음.
 - trader의 원래 핀 `7b6431ff5e41bc874f6abb836924de6b8e336e63` → 승인 기반 `a673c82cc9b064f01bbb065f526bc014b9b1d37e`에는 기존 43커밋이 있다(src 12파일 +1272/−253).
 - 이 기존 변화는 공통 거절 매핑·KIS/Toss/KB/NH/LS/Kiwoom·DB 잔고의 주문가능액 조회 추가를 포함한다. 이번 모의 수리 델타와 구분한다.
-- 전체 pytest base/head(각 900초 상한, 수집 오류 뒤 계속): 실패 이름 5개 동일, head-only 0. 원문 `delta-pyk-full-{base-continued,head}.log`, 목록 `delta-pyk-failed-name-diff.json`.
+- 전체 pytest base/head(각 900초, 수집 오류 뒤 계속): 1856/1886 passed, 공통 3 failed+2 errors, head-only 0. 최종 원문 `delta-pyk-full-base-continued.log`/`delta-pyk-full-final.log`, 목록 `delta-pyk-final-failed-name-diff.json`.
 - 전역 RLock의 프로브 중 직렬화와 공개 virtual setter는 이번 세션 재현과 별개인 남은 제한으로 두었다.
