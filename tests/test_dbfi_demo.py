@@ -48,7 +48,7 @@ def test_demo_prefixed_success_reply_is_demo_proof(demo_http, reply):
 
 
 @pytest.mark.parametrize("reply", [
-    {"rsp_cd": "00000", "rsp_msg": "success"}, {}, [],
+    {"rsp_cd": "00000", "rsp_msg": "success"}, {},
     {"rsp_cd": "00000", "rsp_msg": "조회가 완료되었습니다."},
     {"rsp_cd": "00000", "rsp_msg": "데이터가 없습니다."},
     {"rsp_cd": "00000", "rsp_msg": "모의투자 조회가 완료되었습니다. "},
@@ -59,7 +59,7 @@ def test_demo_prefixed_success_reply_is_demo_proof(demo_http, reply):
     {"rsp_cd": "OTHER", "rsp_msg": DEMO["rsp_msg"]},
     {"rsp_cd": "", "rsp_msg": DEMO["rsp_msg"]},
     {"rsp_msg": DEMO["rsp_msg"]},
-    {"rsp_cd": "M100", "rsp_msg": DEMO["rsp_msg"] + " "}, b"", b"{broken",
+    {"rsp_cd": "M100", "rsp_msg": DEMO["rsp_msg"] + " "},
 ])
 def test_unproven_key_constructor_refuses_with_zero_order_posts(demo_http, reply):
     demo_http.probe = reply
@@ -69,12 +69,22 @@ def test_unproven_key_constructor_refuses_with_zero_order_posts(demo_http, reply
     assert demo_http.calls == [PROBE]
 
 
+@pytest.mark.parametrize("reply", [[], b"", b"{broken"])
+def test_non_dict_or_non_json_reply_refuses_each_request_without_caching(demo_http, reply):
+    demo_http.probe = reply
+    for _ in range(2):
+        with pytest.raises(ConfigurationError):
+            DBFI(account="synthetic-account", client=client(), virtual=True)
+    assert demo_http.calls == [PROBE, PROBE]
+
+
 @pytest.mark.parametrize("status", [302, 400, 403, 500])
 def test_bad_http_status_is_not_demo_proof(demo_http, status):
     demo_http.status = status
-    with pytest.raises(ConfigurationError):
-        DBFI(account="synthetic-account", client=client(), virtual=True)
-    assert demo_http.calls == [PROBE]
+    for _ in range(2):
+        with pytest.raises(ConfigurationError):
+            DBFI(account="synthetic-account", client=client(), virtual=True)
+    assert demo_http.calls == [PROBE, PROBE]
 
 
 @pytest.mark.parametrize("error", [requests.ConnectionError, requests.ConnectTimeout, requests.ReadTimeout])
@@ -228,8 +238,60 @@ def test_unproven_authorization_is_refused_without_order(demo_http, live_safety)
     assert demo_http.calls.count(PROBE) == 2
 
 
-def test_probe_header_hides_nothing_volatile_in_fingerprint_only(demo_http, live_safety):
+def test_probe_header_sends_volatile_headers_and_proven_authorization(demo_http, live_safety):
     broker = DBFI(account="synthetic-account", client=client(_VolatileAuth()), virtual=True, safety=live_safety)
     _buy(broker, "h")
-    sent = demo_http.headers[-1]
-    assert sent.get("Authorization") == "Bearer synthetic-demo-token"
+    sent = {k.lower(): v for k, v in demo_http.headers[-1].items()}
+    assert sent["authorization"] == "Bearer synthetic-demo-token"
+    assert sent["x-session-id"].startswith("sid-") and sent["user-agent"].startswith("ua-")
+
+
+def test_transient_probe_timeout_is_not_cached(demo_http, live_safety, monkeypatch):
+    auth = _VolatileAuth()
+    broker = DBFI(account="synthetic-account", client=client(auth), virtual=True, safety=live_safety)
+    auth.token = "synthetic-demo-token-2"
+    real = requests.request
+
+    def boom(*a, **k):
+        monkeypatch.setattr(requests, "request", real)
+        raise requests.Timeout()
+
+    monkeypatch.setattr(requests, "request", boom)
+    with pytest.raises(ConfigurationError):
+        _buy(broker, "t1")
+    assert "/api/v1/trading/kr-stock/order" not in demo_http.calls
+    assert _buy(broker, "t2").id == "42"
+    assert demo_http.calls.count(PROBE) == 2
+
+
+def test_probe_429_is_not_cached(demo_http, live_safety):
+    auth = _VolatileAuth()
+    broker = DBFI(account="synthetic-account", client=client(auth), virtual=True, safety=live_safety)
+    auth.token = "synthetic-demo-token-2"
+    demo_http.status = 429
+    with pytest.raises(ConfigurationError):
+        _buy(broker, "r1")
+    demo_http.status = 200
+    assert _buy(broker, "r2").id == "42"
+    assert demo_http.calls.count(PROBE) == 3
+
+
+def test_confirmed_live_reply_is_cached_as_rejected(demo_http, live_safety):
+    auth = _VolatileAuth()
+    broker = DBFI(account="synthetic-account", client=client(auth), virtual=True, safety=live_safety)
+    auth.token = "synthetic-live-token"
+    demo_http.probe = {"rsp_cd": "00000", "rsp_msg": "조회가 완료되었습니다."}
+    for key in ("l1", "l2"):
+        with pytest.raises(ConfigurationError):
+            _buy(broker, key)
+    assert demo_http.calls.count(PROBE) == 2
+
+
+def test_case_colliding_header_keys_are_refused(demo_http, live_safety):
+    class Dup(Auth):
+        def get_auth_header(self):
+            return {"Authorization": "Bearer a", "authorization": "Bearer b"}
+
+    with pytest.raises(ConfigurationError):
+        DBFI(account="synthetic-account", client=client(Dup()), virtual=True, safety=live_safety)
+    assert demo_http.calls == []

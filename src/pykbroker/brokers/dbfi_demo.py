@@ -54,6 +54,9 @@ def _verified_headers(auth: Any, *, account: str, credentials: Mapping[str, Any]
             raise ValueError
         if not any(k.lower() == "authorization" and v.strip() for k, v in headers.items()):
             raise ValueError
+        lowered = [k.lower() for k in headers]
+        if len(set(lowered)) != len(lowered):
+            raise ValueError
         headers = dict(headers)
         fingerprint = hashlib.sha256(json.dumps(
             [key, secret, account,
@@ -76,15 +79,15 @@ def _verified_headers(auth: Any, *, account: str, credentials: Mapping[str, Any]
                 json={"In": {"QryTp": "2"}}, timeout=(5, 10), allow_redirects=False,
             )
             body = response.json()
-            if (response.status_code != 200 or not isinstance(body, dict)
-                    or (body.get("rsp_cd"), body.get("rsp_msg")) not in _DEMO_PROOFS):
-                failed = True
-            else:
+            if response.status_code != 200 or not isinstance(body, dict):
+                failed = True  # transient/unknown: refuse this request only, cache nothing
+            elif (body.get("rsp_cd"), body.get("rsp_msg")) in _DEMO_PROOFS:
                 _verified.add(fingerprint)
+            else:
+                failed = True  # 200 + dict + not a demo reply: confirmed non-demo
+                _rejected.add(fingerprint)
         except Exception:
-            failed = True
-        if failed:
-            _rejected.add(fingerprint)
+            failed = True  # timeout/connection/non-JSON: this request only
     if failed:
         raise ConfigurationError(_REFUSED) from None
     return headers
