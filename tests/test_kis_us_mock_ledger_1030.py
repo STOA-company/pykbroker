@@ -192,3 +192,97 @@ def test_mock_integrated_buying_power_is_an_explicit_unsupported():
     with pytest.raises(NotSupportedError):
         broker.available_cash()
     assert scope.requests == []
+
+
+def test_us_mock_get_balance_reads_mock_cash_without_provider():
+    broker, scope = _broker()
+    broker._cash_provider = None
+    scope.us_cash_rows = [{"crcy_cd": "USD", "frcr_dncl_amt_2": "100.5", "frcr_drwg_psbl_amt_1": "80"}]
+    balance = broker.get_balance()
+    assert (balance.currency, balance.cash_available) == ("USD", Decimal("80"))
+    assert "VTRP6504R" in [r["tr_id"] for r in scope.requests]
+
+
+def test_us_mock_get_balance_missing_usd_row_fails_closed():
+    broker, scope = _broker()
+    broker._cash_provider = None
+    scope.us_cash_rows = []
+    with pytest.raises(InvalidResponseError):
+        broker.get_balance()
+
+
+def test_us_mock_get_balance_rt_cd_failure_fails_closed():
+    broker, scope = _broker()
+    broker._cash_provider = None
+    orig = scope._request
+
+    def bad(method, path, **kw):
+        r = orig(method, path, **kw)
+        return type(r)(status_code=200, headers=r.headers, json=lambda: {"rt_cd": "1", "msg_cd": "X", "msg1": "no"})
+
+    scope.client.request = bad
+    with pytest.raises(Exception) as exc:
+        broker.get_balance()
+    assert not isinstance(exc.value, ConfigurationError)
+
+
+def test_us_mock_get_balance_caller_provider_wins():
+    broker, scope = _broker()
+    broker._cash_provider = lambda _scope: Decimal("7")
+    assert broker.get_balance().cash_available == Decimal("7")
+    # cash came from the provider; the only mock TR call is the holdings read for position_value
+    assert [r["tr_id"] for r in scope.requests] == ["VTRP6504R"]
+
+
+def test_us_real_get_balance_never_uses_mock_tr():
+    broker, client, api = _us(False)
+    broker._cash_provider = None
+    called = []
+    broker._us_native_cash = lambda scope: called.append(1) or Decimal("5")
+    broker._us_mock_cash = lambda scope: (_ for _ in ()).throw(AssertionError("mock TR on real"))
+    assert broker.get_balance().cash_available == Decimal("5") and called
+
+
+def _usd(deposit, drawable, ccy="USD"):
+    return {"crcy_cd": ccy, "frcr_dncl_amt_2": deposit, "frcr_drwg_psbl_amt_1": drawable}
+
+
+def test_us_mock_get_balance_holdings_read_also_uses_vtrp6504r_never_ctrp6504r():
+    broker, scope = _broker()
+    broker._cash_provider = None
+    scope.us_cash_rows = [_usd("100", "80")]
+    broker.get_balance()
+    tr_ids = [r["tr_id"] for r in scope.requests]
+    assert tr_ids == ["VTRP6504R", "VTRP6504R"]  # cash + holdings
+    assert "CTRP6504R" not in tr_ids
+
+
+def test_us_mock_holdings_next_page_uses_vtrp6504r():
+    broker, scope = _broker()
+    scope.us_cash_rows = []
+    orig = scope._request
+    calls = []
+
+    def paged(method, path, **kw):
+        r = orig(method, path, **kw)
+        calls.append(dict(kw["headers"]))
+        r.headers = {"tr_cont": "M" if len(calls) == 1 else "D"}
+        return r
+
+    scope.client.request = paged
+    assert broker.get_positions() == []
+    assert [c["tr_id"] for c in calls] == ["VTRP6504R", "VTRP6504R"]
+    assert "tr_cont" not in calls[0] and calls[1]["tr_cont"] == "N"
+
+
+def test_us_mock_cash_picks_usd_row_even_when_krw_row_comes_first():
+    broker, scope = _broker()
+    scope.us_cash_rows = [_usd("5", "4", "KRW"), _usd("100", "80")]
+    assert broker.available_cash() == Decimal("80")
+
+
+def test_us_mock_cash_two_usd_rows_fail_closed():
+    broker, scope = _broker()
+    scope.us_cash_rows = [_usd("100", "80"), _usd("90", "70")]
+    with pytest.raises(InvalidResponseError):
+        broker.available_cash()

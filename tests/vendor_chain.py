@@ -55,7 +55,7 @@ class VendorAccountScope:
         if self.key.virtual_account and tr_id.startswith("T"):
             raise VendorRejected(f"{tr_id} is not routable on the mock domain")
         if path == "/uapi/overseas-stock/v1/trading/inquire-present-balance":
-            assert tr_id == "VTRP6504R"
+            assert tr_id == ("VTRP6504R" if self.key.virtual_account else "CTRP6504R")
             body = {"rt_cd": "0", "output1": [], "output2": self.us_cash_rows}
             return SimpleNamespace(status_code=200, headers={"tr_cont": "D"}, json=lambda: body)
         assert path == "/uapi/overseas-stock/v1/trading/inquire-ccnl"
@@ -151,6 +151,16 @@ class VendorOverseas:
             # The mock domain has no route for the real-account TR the vendor hardcodes.
             raise VendorRejected(f"{OVERSEAS_OPEN_ORDER_TR} is not routable on the mock domain")
         return self._fixtures["open_orders_overseas"]
+
+    def get_balances(self, kis_account: Any, **_: Any) -> Any:
+        """Present balance with no US holdings (output1) and the scope's USD cash rows (output2).
+
+        Vendor base/overseas.py:155 hardcodes real CTRP6504R; the mock domain refuses it (TR recorded).
+        """
+        if kis_account.key.virtual_account:
+            kis_account.requests.append({"tr_id": "CTRP6504R", "vendor": True})
+            raise VendorRejected("CTRP6504R is not routable on the mock domain")
+        return {"json_data": {"rt_cd": "0", "output1": [], "output2": kis_account.us_cash_rows}, "tr_cont": "D"}
 
 
 class VendorClient:
