@@ -82,6 +82,9 @@ class Order(Model):
     market: str = "KR"
     # True only when the submission went to a broker mock (virtual) account.
     virtual: bool = False
+    # Broker ledger order date (YYYYMMDD) when the broker reports one; (order_date, id) is the key
+    # when a ledger window spans two days and the same order number can repeat.
+    order_date: str | None = None
 
 
 class CancelRequest(Model):

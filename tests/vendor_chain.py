@@ -39,6 +39,37 @@ class VendorAccountScope:
         self.key = SimpleNamespace(virtual_account=virtual)
         self._fixtures = fixtures
         self.tr_ids: list[str] = []
+        # US mock ledger (official inquire_ccnl, VTTS3035R): pages of rows, set per test.
+        self.us_ledger_pages: list[list[dict[str, Any]]] = [[]]
+        # US mock cash (official inquire_present_balance, VTRP6504R) output2 rows, set per test.
+        self.us_cash_rows: list[dict[str, Any]] = []
+        self.requests: list[dict[str, Any]] = []
+        self.cancels: list[dict[str, Any]] = []
+        self.client = SimpleNamespace(request=self._request)
+        self.account = SimpleNamespace(build_body=lambda body: {"CANO": "00000000", "ACNT_PRDT_CD": "01", **body})
+
+    def _request(self, method: str, path: str, *, headers: dict[str, str], params: dict[str, str], response: Any):
+        """`client.request(..., response=None)`: a requests.Response-shaped answer, mock domain routing."""
+        tr_id = headers["tr_id"]
+        self.requests.append({"method": method, "path": path, "tr_id": tr_id, "params": params, "headers": headers})
+        if self.key.virtual_account and tr_id.startswith("T"):
+            raise VendorRejected(f"{tr_id} is not routable on the mock domain")
+        if path == "/uapi/overseas-stock/v1/trading/inquire-present-balance":
+            assert tr_id == "VTRP6504R"
+            body = {"rt_cd": "0", "output1": [], "output2": self.us_cash_rows}
+            return SimpleNamespace(status_code=200, headers={"tr_cont": "D"}, json=lambda: body)
+        assert path == "/uapi/overseas-stock/v1/trading/inquire-ccnl"
+        assert response is None
+        index = 0 if not params["CTX_AREA_NK200"] else int(params["CTX_AREA_NK200"])
+        more = index + 1 < len(self.us_ledger_pages)
+        body = {"rt_cd": "0", "output": self.us_ledger_pages[index],
+                "ctx_area_nk200": str(index + 1) if more else "", "ctx_area_fk200": ""}
+        return SimpleNamespace(status_code=200, headers={"tr_cont": "M" if more else "D"}, json=lambda: body)
+
+    def overseas_cancel(self, market: str, code: str, order: Any, qty: int, **_: Any) -> Any:
+        self.cancels.append({"tr_id": "VTTT1004U" if self.key.virtual_account else "TTTT1004U", "market": market,
+                             "code": code, "odno": order.odno, "branch": order.krx_fwdg_ord_orgno, "qty": qty})
+        return {"json_data": {"rt_cd": "0", "output": {"ODNO": "900"}}}
 
     # --- paths a mock account really has ---------------------------------
 

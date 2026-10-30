@@ -4,7 +4,7 @@ import inspect
 import threading
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from importlib import import_module
 from types import SimpleNamespace
@@ -36,8 +36,16 @@ KST = ZoneInfo("Asia/Seoul")
 # (VTTC8001R, daily_order.py:71), so the mock path reads that instead -- and says
 # through `realtime_open_orders` that it is a ledger, not a live snapshot.
 UNFILLED = "미체결"
-# base/overseas.py:377 hardcodes TTTS3018R, a real-account TR with no mock branch,
-# so US open orders have no mock route at all. That is declared, never faked.
+# base/overseas.py:377 hardcodes TTTS3018R, and the official overseas_stock/inquire_nccs example
+# (open-trading-api, inquire_nccs.py:92) also has `tr_id = "TTTS3018R"` with no mock branch: the
+# vendor documents no mock open-order TR for US. What the official docs do serve on the mock domain
+# is the order ledger (overseas_stock/inquire_ccnl, inquire_ccnl.py:127-131: TTTS3035R real,
+# VTTS3035R mock; mock accepts only the all-rows filters, inquire_ccnl.py:57-63) and the mock
+# cancel (order_rvsecncl.py:102-106: VTTT1004U, which Pykis already routes). So a US mock reads
+# the ledger and keeps the unfilled rows -- a ledger, not a live snapshot (realtime_open_orders False).
+US_MOCK_LEDGER_TR = "VTTS3035R"
+US_MOCK_LEDGER_PATH = "/uapi/overseas-stock/v1/trading/inquire-ccnl"
+US_TZ = ZoneInfo("America/New_York")
 
 
 # Pykis retries inside its transport: `_execute_request` is wrapped by tenacity (3 attempts on
@@ -139,6 +147,11 @@ def _kis_more(flag: Any) -> bool:
     raise InvalidResponseError("KIS continuation flag is invalid")
 
 
+def _ledger_date(row: Any) -> str | None:
+    value = field(row, "ord_dt")
+    return str(value).strip() or None if value is not None else None
+
+
 class KIS(BaseBroker):
     broker_code = "kis"
     supports_virtual = True
@@ -213,11 +226,11 @@ class KIS(BaseBroker):
             supports_spot=True,
             # KIS overseas has no market order; the executor must plan a limit price itself.
             supports_market_order=self.market == "KR",
-            supports_single_order_cancel=not (self.market == "US" and self.virtual),
+            supports_single_order_cancel=True,
             supports_virtual_account=True,
             virtual=self.virtual,
-            # A US mock account has no open-order TR; a KR one has the delayed daily ledger.
-            supports_order_history=not (self.market == "US" and self.virtual),
+            # Mock accounts have no live open-order TR: KR and US read the (delayed) order ledger.
+            supports_order_history=True,
             realtime_open_orders=not self.virtual,
             requires_venue=self.market == "US",
             venues=tuple(VENUES) if self.market == "US" else ("KRX",),
@@ -354,6 +367,11 @@ class KIS(BaseBroker):
         return self._call(read)
 
     def available_cash(self) -> Decimal:
+        if self.virtual and (self.market == "US" or self.is_integrated):
+            if self.market != "US" or self.is_integrated:
+                # Official intgr_margin (TTTC0869R) has no mock TR: never send it to the mock host.
+                raise NotSupportedError("KIS mock does not support integrated buying power")
+            return self._call(lambda: self._us_mock_cash(self._connect()[0]))
         if self.market == "US" or self.is_integrated:
             return self._call(lambda: self._us_cash(self._connect()[0]))
         return super().available_cash()
@@ -362,6 +380,34 @@ class KIS(BaseBroker):
         _, api = self._connect()
         data = check_response(api.get_balances(kis_account=scope, NATN_CD="840", TR_MKET_CD="00"), "kis")
         rows = field(data, "output2")
+        if not isinstance(rows, list):
+            raise InvalidResponseError("KIS native cash block missing")
+        usd = [row for row in rows if field(row, "crcy_cd") == "USD"]
+        if len(usd) != 1:
+            raise InvalidResponseError("KIS native cash requires one USD row")
+        return min(decimal(field(usd[0], "frcr_dncl_amt_2")), decimal(field(usd[0], "frcr_drwg_psbl_amt_1")))
+
+    @staticmethod
+    def _us_mock_cash(scope: Any) -> Decimal:
+        """US mock USD cash through the official mock TR VTRP6504R (inquire_present_balance.py:106-108).
+
+        Same path and parameters as the real CTRP6504R read; output2 USD row, the smaller of deposit and
+        withdrawable (same rule as the real native-cash read). Official inquire_psamount (VTTS3007R) is
+        per symbol and price, so it cannot answer a symbol-less cash question.
+        """
+        response = scope.client.request(
+            "get", "/uapi/overseas-stock/v1/trading/inquire-present-balance",
+            headers={"tr_id": "VTRP6504R"},
+            params=scope.account.build_body({
+                "WCRC_FRCR_DVSN_CD": "02", "NATN_CD": "840", "TR_MKET_CD": "00", "INQR_DVSN_CD": "01",
+            }), response=None,
+        )
+        if field(response, "status_code") != 200:
+            raise InvalidResponseError("KIS US mock cash HTTP request failed")
+        envelope = check_response({"json_data": response.json()}, "kis")
+        if str(field(envelope, "rt_cd")) != "0":
+            raise InvalidResponseError("KIS US mock cash response lacks a success status")
+        rows = field(envelope, "output2")
         if not isinstance(rows, list):
             raise InvalidResponseError("KIS native cash block missing")
         usd = [row for row in rows if field(row, "crcy_cd") == "USD"]
@@ -465,12 +511,12 @@ class KIS(BaseBroker):
         return self._call(read)
 
     def list_orders(self, symbol: str | None = None) -> list[Order]:
-        if not self.capabilities().supports_order_history:
-            raise NotSupportedError("KIS has no mock-account route for US open orders")
         if symbol is not None:
             symbol = self._symbol(symbol, self.market)
         if self.market == "KR" and self.virtual:
             return self._call(lambda: self._ledger_orders(symbol))
+        if self.market == "US" and self.virtual:
+            return self._call(lambda: self._us_mock_open_orders(symbol))
 
         def read() -> list[Order]:
             scope, api = self._connect()
@@ -532,23 +578,103 @@ class KIS(BaseBroker):
             )
         return result
 
+    def _us_mock_ledger_rows(self, scope: Any) -> list[Any]:
+        """Mock order ledger, VTTS3035R, all-rows filters only, US local yesterday..today.
+
+        A KST submission lands on the previous US local date (the trader reads from submission day - 1).
+        """
+        now = datetime.now(US_TZ)
+        start, today = (now - timedelta(days=1)).strftime("%Y%m%d"), now.strftime("%Y%m%d")
+        rows = PageRows(("odno", "rvse_cncl_dvsn", "ord_dt", "ord_tmd", "orgn_odno"), "KIS US mock ledger")
+        cont: dict[str, str] = {"CTX_AREA_NK200": "", "CTX_AREA_FK200": ""}
+        for page in range(1, KIS_MAX_PAGES + 1):
+            response = scope.client.request(
+                "get", US_MOCK_LEDGER_PATH,
+                headers={"tr_id": US_MOCK_LEDGER_TR, "tr_cont": "" if page == 1 else "N"},
+                params=scope.account.build_body({
+                    "PDNO": "", "ORD_STRT_DT": start, "ORD_END_DT": today, "SLL_BUY_DVSN": "00",
+                    "CCLD_NCCS_DVSN": "00", "OVRS_EXCG_CD": "", "SORT_SQN": "DS", "ORD_DT": "",
+                    "ORD_GNO_BRNO": "", "ODNO": "", **cont,
+                }), response=None,
+            )
+            if not isinstance(response, Mapping):
+                if field(response, "status_code") != 200:
+                    raise InvalidResponseError("KIS US mock ledger HTTP request failed")
+                headers = field(response, "headers") or {}
+                body = {"json_data": response.json(), "tr_cont": headers.get("tr_cont")}
+            else:
+                body = response
+            envelope = check_response(body, "kis")
+            if str(field(envelope, "rt_cd")) != "0":
+                raise InvalidResponseError("KIS US mock ledger response lacks a success status")
+            block = field(envelope, "output")
+            if not isinstance(block, list):
+                raise InvalidResponseError("KIS US mock ledger block missing")
+            rows.add(block)
+            if not _kis_more(field(body, "tr_cont")):
+                return rows.rows
+            cont = {"CTX_AREA_NK200": str(field(envelope, "ctx_area_nk200", "") or ""),
+                    "CTX_AREA_FK200": str(field(envelope, "ctx_area_fk200", "") or "")}
+        raise InvalidResponseError("KIS US mock ledger exceeded the page limit; refusing a truncated result")
+
+    @staticmethod
+    def _us_open_rows(rows: list[Any]) -> list[Any]:
+        """Original rows still open: their own nccs_qty > 0 is the only evidence.
+
+        Cancel-request rows (rvse_cncl_dvsn 02) are never read: the official inquire_ccnl output does not
+        list prcs_stat_name / rjct_rson values, so an accepted, pending or rejected cancel cannot be told
+        apart by text. A live original (nccs_qty > 0) stays open whatever cancel rows follow it.
+        """
+        return [row for row in rows
+                if field(row, "rvse_cncl_dvsn") != "02" and whole(field(row, "nccs_qty")) > 0]
+
+    def _us_mock_open_orders(self, symbol: str | None) -> list[Order]:
+        scope, _ = self._connect()
+        result = []
+        for row in self._us_open_rows(self._us_mock_ledger_rows(scope)):
+            code = field(row, "pdno")
+            if symbol is not None and code != symbol:
+                continue
+            order_id = field(row, "odno")
+            if order_id is None or not str(order_id).strip():
+                raise InvalidResponseError("KIS order identifier missing")
+            quantity, filled = whole(field(row, "ft_ord_qty")), whole(field(row, "ft_ccld_qty"))
+            remaining = whole(field(row, "nccs_qty"))
+            if filled + remaining > quantity:
+                raise InvalidResponseError("KIS ledger quantities exceed the order")
+            result.append(Order(id=str(order_id), symbol=code, market="US", quantity=quantity, filled=filled,
+                                remaining=remaining, status=_ledger_status(False, filled, remaining),
+                                virtual=True, order_date=_ledger_date(row)))
+        return result
+
     def status(self, order: Order) -> Order:
         """Read the broker ledger, including filled orders absent from the open-order snapshot."""
         symbol = self._symbol(order.symbol, order.market)
         if order.market != self.market:
             raise ConfigurationError("Order market disagrees with the adapter")
-        if self.market == "US" and self.virtual:
-            raise NotSupportedError("KIS has no verified US mock ledger helper")
 
         def read() -> Order:
             scope, api = self._connect()
             if self.market == "KR":
                 today = datetime.now(KST)
                 rows = field(scope.daily_order_all(start_date=today, end_date=today, code=symbol), "orders")
+            elif self.virtual:
+                rows = self._us_mock_ledger_rows(scope)
             else:
                 rows = check_response(api.get_orders_overseas_all(kis_account=scope, code=symbol), "kis")["output"]
+            us_mock = self.market == "US" and self.virtual
+            if us_mock and order.order_date is None:
+                dates = {_ledger_date(row) for row in rows
+                         if str(field(row, "odno")) == order.id and field(row, "pdno") == symbol
+                         and field(row, "rvse_cncl_dvsn") != "02"}
+                if len(dates) > 1:
+                    # Same order number on two ledger days and no order date: never guess which one.
+                    return order.model_copy(update={"status": "unknown"})
             for row in rows:
                 if str(field(row, "odno")) != order.id or field(row, "pdno") != symbol:
+                    continue
+                if us_mock and (field(row, "rvse_cncl_dvsn") == "02"
+                                or (order.order_date is not None and _ledger_date(row) != order.order_date)):
                     continue
                 kr = self.market == "KR"
                 quantity = whole(field(row, "ord_qty" if kr else "ft_ord_qty"))
@@ -557,14 +683,21 @@ class KIS(BaseBroker):
                 if filled + remaining > quantity:
                     raise InvalidResponseError("KIS ledger quantities exceed the order")
                 cancelled = field(row, "cncl_yn") if kr else field(row, "rvse_cncl_dvsn") == "02"
+                if not kr and self.virtual and not cancelled:
+                    # Mock ledger: cancel-request rows are never read (skipped above); only the original
+                    # row's own quantities count (nothing left open, not all filled).
+                    cancelled = remaining == 0 and filled < quantity
                 state = _ledger_status(cancelled, filled, remaining)
                 # Partial fills plus zero remaining can be a cancellation/rejection: no invented full fill.
                 if state == "filled" and filled != quantity:
                     state = "unknown"
                 average = (optional_price(field(row, "avg_prvs")) if kr and filled else
                            optional_price(field(row, "ft_ccld_unpr3")) if not kr and filled == 1 else None)
-                return Order.model_validate({**order.model_dump(), "quantity": quantity, "filled": filled,
-                    "remaining": remaining, "fill_price": average, "status": state})
+                update = {"quantity": quantity, "filled": filled, "remaining": remaining,
+                          "fill_price": average, "status": state}
+                if us_mock:
+                    update["order_date"] = _ledger_date(row)
+                return Order.model_validate({**order.model_dump(), **update})
             return order.model_copy(update={"status": "unknown"})
 
         return self._call(read)
@@ -580,6 +713,8 @@ class KIS(BaseBroker):
                     code=symbol, ccld=UNFILLED), "orders")
             else:
                 rows = field(api.get_open_orders_domestic(kis_account=scope), "orders")
+        elif self.virtual:
+            rows = self._us_open_rows(self._us_mock_ledger_rows(scope))
         else:
             rows = check_response(api.get_open_orders_overseas_all(
                 kis_account=scope, market=VENUES[self.venue][1]), "kis")["output"]

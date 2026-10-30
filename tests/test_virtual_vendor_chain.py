@@ -7,12 +7,11 @@ instead, so the refusals are present and have to be handled rather than mocked a
 """
 
 from datetime import UTC, datetime
-from unittest.mock import Mock
 
 import pytest
 
 from pykbroker.brokers.kis import KIS
-from pykbroker.exceptions import DryRunError, NotSupportedError
+from pykbroker.exceptions import DryRunError
 from pykbroker.models import CancelRequest
 
 from .conftest import load_fixture
@@ -102,25 +101,16 @@ def test_kr_mock_admits_the_ledger_is_not_a_realtime_snapshot():
     assert _kr(virtual=True)[0].capabilities().supports_order_history is True
 
 
-# --- US mock: declared unsupported and refused before the vendor is called
+# --- US mock: no live open-order TR (official inquire_nccs is real-only); reads the ledger TR
 
 
-def test_us_mock_listing_is_declared_unsupported_and_refuses():
-    broker, _, api = _us(virtual=True)
-    assert broker.capabilities().supports_order_history is False
-    with pytest.raises(NotSupportedError):
-        broker.list_orders()
+def test_us_mock_listing_reads_the_mock_ledger_tr_never_the_real_open_order_tr():
+    broker, client, api = _us(virtual=True)
+    assert broker.capabilities().supports_order_history is True
+    assert broker.capabilities().realtime_open_orders is False
+    assert broker.list_orders() == []
+    assert [r["tr_id"] for r in client.scope.requests] == ["VTTS3035R"]
     assert api.calls == 0
-
-
-def test_us_mock_status_refuses_rather_than_reporting_a_stale_order():
-    """Bypass 1: status() must not launder an unsupported listing into 'unknown'."""
-    broker, _, api = _us(virtual=True)
-    order = broker.place_order  # noqa: B018 - broker is constructed
-    with pytest.raises(NotSupportedError):
-        broker.status(Mock(id="42", symbol="TEST"))
-    assert api.calls == 0
-    assert order is not None
 
 
 def test_us_real_listing_still_works():
@@ -136,11 +126,8 @@ def test_a_capability_claim_is_never_wider_than_the_behaviour():
     """Bypass 2: whatever capabilities() claims, the call must actually do it."""
     for market, virtual in (("KR", True), ("KR", False), ("US", True), ("US", False)):
         broker = (_kr if market == "KR" else _us)(virtual)[0]
-        if broker.capabilities().supports_order_history:
-            broker.list_orders()
-        else:
-            with pytest.raises(NotSupportedError):
-                broker.list_orders()
+        assert broker.capabilities().supports_order_history is True
+        broker.list_orders()
 
 
 def test_kr_single_cancel_is_declared_but_stays_behind_dry_run():
