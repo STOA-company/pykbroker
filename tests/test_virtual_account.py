@@ -6,7 +6,7 @@ from unittest.mock import Mock
 import pytest
 
 from pykbroker.brokers.kis import KIS
-from pykbroker.exceptions import ConfigurationError, DryRunError, NotSupportedError
+from pykbroker.exceptions import ConfigurationError, DryRunError
 from pykbroker.models import OrderRequest
 
 from .conftest import load_fixture
@@ -128,13 +128,12 @@ def test_real_order_is_not_labelled_virtual(live_safety, request_order):
     assert broker.place_order(request_order).virtual is False
 
 
-def test_us_virtual_submits_but_admits_it_cannot_list_orders(live_safety):
-    """The US mock domain has no open-order TR at all, so the claim is withdrawn, not faked."""
+def test_us_virtual_lists_orders_from_the_mock_ledger(live_safety):
+    """The US mock domain has no open-order TR, but the official ledger TR (VTTS3035R) serves it."""
     client, _, api = _vendor(True)
     broker = KIS(account="fixture", market="US", venue="NASDAQ", client=client, api=api, virtual=True)
     assert broker.capabilities().virtual is True
-    assert broker.capabilities().supports_order_history is False
-    with pytest.raises(NotSupportedError):
-        broker.list_orders()
+    assert broker.capabilities().supports_order_history is True
+    assert broker.list_orders() == []
     assert api.calls == 0
     OrderRequest(symbol="TEST", side="buy", quantity=1, price="1", market="US", venue="NASDAQ", client_key="k")
