@@ -28,6 +28,14 @@ _REFUSED = "DBFI demo key was not positively verified; execution refused"
 _verified: set[bytes] = set()
 _rejected: set[bytes] = set()
 _lock = RLock()
+# Per-request random/transport columns (Pydb adds uuid4 X-Session-ID, a rotating
+# User-Agent and, 1 in 5, X-Forwarded-For). They carry no credential identity, so
+# they must not make every request look like a new session. Every other header,
+# Authorization above all, still belongs to the fingerprint.
+_VOLATILE_HEADERS = frozenset({
+    "x-session-id", "user-agent", "x-forwarded-for", "x-real-ip", "x-request-id",
+    "x-correlation-id", "x-trace-id", "traceparent", "tracestate",
+})
 
 
 def _verified_headers(auth: Any, *, account: str, credentials: Mapping[str, Any]) -> dict[str, str]:
@@ -46,9 +54,14 @@ def _verified_headers(auth: Any, *, account: str, credentials: Mapping[str, Any]
             raise ValueError
         if not any(k.lower() == "authorization" and v.strip() for k, v in headers.items()):
             raise ValueError
+        lowered = [k.lower() for k in headers]
+        if len(set(lowered)) != len(lowered):
+            raise ValueError
         headers = dict(headers)
         fingerprint = hashlib.sha256(json.dumps(
-            [key, secret, account, sorted(headers.items())], ensure_ascii=True
+            [key, secret, account,
+             sorted((k.lower(), v) for k, v in headers.items() if k.lower() not in _VOLATILE_HEADERS)],
+            ensure_ascii=True
         ).encode()).digest()
     except Exception:
         raise ConfigurationError("DBFI demo credentials/session cannot be established") from None
@@ -66,15 +79,15 @@ def _verified_headers(auth: Any, *, account: str, credentials: Mapping[str, Any]
                 json={"In": {"QryTp": "2"}}, timeout=(5, 10), allow_redirects=False,
             )
             body = response.json()
-            if (response.status_code != 200 or not isinstance(body, dict)
-                    or (body.get("rsp_cd"), body.get("rsp_msg")) not in _DEMO_PROOFS):
-                failed = True
-            else:
+            if response.status_code != 200 or not isinstance(body, dict):
+                failed = True  # transient/unknown: refuse this request only, cache nothing
+            elif (body.get("rsp_cd"), body.get("rsp_msg")) in _DEMO_PROOFS:
                 _verified.add(fingerprint)
+            else:
+                failed = True  # 200 + dict + not a demo reply: confirmed non-demo
+                _rejected.add(fingerprint)
         except Exception:
-            failed = True
-        if failed:
-            _rejected.add(fingerprint)
+            failed = True  # timeout/connection/non-JSON: this request only
     if failed:
         raise ConfigurationError(_REFUSED) from None
     return headers
