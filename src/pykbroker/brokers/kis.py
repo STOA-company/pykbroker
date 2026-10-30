@@ -453,7 +453,9 @@ class KIS(BaseBroker):
         KIS_MAX_PAGES is refused, never cut short: a missing later page would read a held symbol as 0.
         A row repeated on a later page counts once; a conflicting repeat is refused (PageRows).
         """
-        raw = api.get_balances(kis_account=scope, NATN_CD="840", TR_MKET_CD="00")
+        # Vendor get_balances hardcodes real CTRP6504R (no virtual branch): a mock account reads VTRP6504R directly.
+        raw = (self._us_present_balance_next(scope, virtual=True, first=True) if self.virtual
+               else api.get_balances(kis_account=scope, NATN_CD="840", TR_MKET_CD="00"))
         rows = PageRows(KIS_US_ROW_KEY, "KIS US")
         for page in range(1, KIS_MAX_PAGES + 1):
             block = check_response(raw, "kis")["output1"]
@@ -463,15 +465,19 @@ class KIS(BaseBroker):
             if not _kis_more(field(raw, "tr_cont")):
                 return rows.rows
             if page < KIS_MAX_PAGES:
-                raw = self._us_present_balance_next(scope)
+                raw = self._us_present_balance_next(scope, virtual=self.virtual)
         raise InvalidResponseError("KIS US holdings exceeded the page limit; refusing a truncated result")
 
     @staticmethod
-    def _us_present_balance_next(scope: Any) -> dict[str, Any]:
+    def _us_present_balance_next(scope: Any, virtual: bool = False, first: bool = False) -> dict[str, Any]:
         # Same TR and parameters as Pykis.base.overseas.get_balances, plus the continuation header.
+        # Mock: VTRP6504R only (official inquire_present_balance.py:105-108); first page has no tr_cont.
+        headers = {"tr_id": "VTRP6504R" if virtual else "CTRP6504R"}
+        if not first:
+            headers["tr_cont"] = "N"
         response = scope.client.request(
             "get", "/uapi/overseas-stock/v1/trading/inquire-present-balance",
-            headers={"tr_id": "CTRP6504R", "tr_cont": "N"},
+            headers=headers,
             params=scope.account.build_body({
                 "WCRC_FRCR_DVSN_CD": "02", "NATN_CD": "840", "TR_MKET_CD": "00", "INQR_DVSN_CD": "01",
             }), response=None,
