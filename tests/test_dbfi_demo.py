@@ -63,6 +63,7 @@ def test_demo_prefixed_success_reply_is_demo_proof(demo_http, reply):
 ])
 def test_unproven_key_constructor_refuses_with_zero_order_posts(demo_http, reply):
     demo_http.probe = reply
+    demo_http.clock.step = 0  # same instant: cooldown (or cache) keeps the second request off the host
     for _ in range(2):
         with pytest.raises(ConfigurationError):
             DBFI(account="synthetic-account", client=client(), virtual=True)
@@ -71,7 +72,7 @@ def test_unproven_key_constructor_refuses_with_zero_order_posts(demo_http, reply
 
 @pytest.mark.parametrize("reply", [[], b"", b"{broken"])
 def test_non_dict_or_non_json_reply_refuses_each_request_without_caching(demo_http, reply):
-    demo_http.probe = reply
+    demo_http.probe = reply  # clock jumps past the cooldown each read: nothing is cached
     for _ in range(2):
         with pytest.raises(ConfigurationError):
             DBFI(account="synthetic-account", client=client(), virtual=True)
@@ -230,6 +231,7 @@ def test_unproven_authorization_is_refused_without_order(demo_http, live_safety)
     broker = DBFI(account="synthetic-account", client=client(auth), virtual=True, safety=live_safety)
     demo_http.probe = {"rsp_cd": "00000"}
     auth.token = "synthetic-live-token"
+    demo_http.clock.step = 0  # unconfirmed reply: not cached, the cooldown keeps "y" off the host
     with pytest.raises(ConfigurationError):
         _buy(broker, "x")
     assert "/api/v1/trading/kr-stock/order" not in demo_http.calls
@@ -295,3 +297,63 @@ def test_case_colliding_header_keys_are_refused(demo_http, live_safety):
     with pytest.raises(ConfigurationError):
         DBFI(account="synthetic-account", client=client(Dup()), virtual=True, safety=live_safety)
     assert demo_http.calls == []
+
+
+def _fail_then_ask_again(demo_http, probe):
+    demo_http.probe = probe
+    demo_http.clock.step = 0
+    for _ in range(3):
+        with pytest.raises(ConfigurationError):
+            DBFI(account="synthetic-account", client=client(), virtual=True)
+    assert demo_http.calls == [PROBE]  # cooldown: one probe, zero orders
+
+
+def test_failed_probe_cooldown_refuses_without_probe_then_reprobes_and_orders(demo_http, live_safety):
+    from pykbroker.brokers import dbfi_demo
+    auth = _VolatileAuth()
+    broker = DBFI(account="synthetic-account", client=client(auth), virtual=True, safety=live_safety)
+    auth.token = "synthetic-demo-token-2"
+    base = demo_http.calls.count(PROBE)
+    demo_http.status = 503
+    demo_http.clock.step = 0
+    for key in ("c1", "c2", "c3"):
+        with pytest.raises(ConfigurationError):
+            _buy(broker, key)
+    assert demo_http.calls.count(PROBE) == base + 1
+    assert "/api/v1/trading/kr-stock/order" not in demo_http.calls
+    demo_http.status = 200
+    demo_http.clock.now += dbfi_demo._PROBE_COOLDOWN_SECONDS - 0.1
+    with pytest.raises(ConfigurationError):
+        _buy(broker, "c4")
+    assert demo_http.calls.count(PROBE) == base + 1
+    demo_http.clock.now += 0.2  # cooldown over: re-probe, prove, order goes through
+    demo_http.probe = DEMO_SUCCESS
+    assert _buy(broker, "c5").id == "42"
+    assert demo_http.calls.count(PROBE) == base + 2
+
+
+@pytest.mark.parametrize("probe", [
+    {}, {"rsp_cd": "99999", "rsp_msg": "업무 오류"}, {"rsp_cd": "EGW00123", "rsp_msg": "토큰 만료"},
+    {"rsp_cd": "00000", "rsp_msg": "모의투자 조회실패"},
+])
+def test_unconfirmed_200_reply_is_not_cached_as_rejected(demo_http, probe):
+    from pykbroker.brokers import dbfi_demo
+    _fail_then_ask_again(demo_http, probe)
+    assert not dbfi_demo._rejected
+    demo_http.clock.now += dbfi_demo._PROBE_COOLDOWN_SECONDS + 1
+    demo_http.probe = DEMO_SUCCESS
+    DBFI(account="synthetic-account", client=client(), virtual=True)
+    assert demo_http.calls == [PROBE, PROBE]
+
+
+def test_confirmed_live_reply_is_cached_with_zero_reprobes(demo_http):
+    from pykbroker.brokers import dbfi_demo
+    demo_http.probe = {"rsp_cd": "00000", "rsp_msg": "조회가 완료되었습니다."}
+    demo_http.clock.step = 0
+    for _ in range(2):
+        with pytest.raises(ConfigurationError):
+            DBFI(account="synthetic-account", client=client(), virtual=True)
+    demo_http.clock.now += 10_000  # long after the cooldown: still cached, no re-probe
+    with pytest.raises(ConfigurationError):
+        DBFI(account="synthetic-account", client=client(), virtual=True)
+    assert demo_http.calls == [PROBE] and len(dbfi_demo._rejected) == 1

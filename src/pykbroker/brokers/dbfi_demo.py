@@ -10,6 +10,7 @@ Never log credentials, headers, response bodies or the process-local fingerprint
 """
 import hashlib
 import json
+import time
 from copy import copy
 from threading import RLock
 from typing import Any, Mapping
@@ -24,6 +25,14 @@ _DEMO_PROOFS = frozenset({
     ("00000", "모의투자 조회가 완료되었습니다."),
     ("00000", "모의투자 데이터가 없습니다."),
 })
+# Only these exact pairs confirm a LIVE key (official live success text, no demo prefix).
+_LIVE_CONFIRMED = frozenset({("00000", "조회가 완료되었습니다.")})
+# After a failed probe, refuse the same fingerprint without probing for this long, so a
+# DB outage/rate limit is not hammered by one probe per customer request. Short on purpose:
+# a demo customer recovers within one window after DB recovers. Process-local, per fingerprint.
+_PROBE_COOLDOWN_SECONDS = 5.0
+_now = time.monotonic  # injectable clock for tests
+_cooldown_until: dict[bytes, float] = {}
 _REFUSED = "DBFI demo key was not positively verified; execution refused"
 _verified: set[bytes] = set()
 _rejected: set[bytes] = set()
@@ -71,6 +80,11 @@ def _verified_headers(auth: Any, *, account: str, credentials: Mapping[str, Any]
             return headers
         if fingerprint in _rejected:
             raise ConfigurationError(_REFUSED) from None
+        until = _cooldown_until.get(fingerprint)
+        if until is not None:
+            if _now() < until:
+                raise ConfigurationError(_REFUSED) from None
+            del _cooldown_until[fingerprint]
         try:
             import requests
             response = requests.request(
@@ -84,10 +98,14 @@ def _verified_headers(auth: Any, *, account: str, credentials: Mapping[str, Any]
             elif (body.get("rsp_cd"), body.get("rsp_msg")) in _DEMO_PROOFS:
                 _verified.add(fingerprint)
             else:
-                failed = True  # 200 + dict + not a demo reply: confirmed non-demo
-                _rejected.add(fingerprint)
+                failed = True
+                if (body.get("rsp_cd"), body.get("rsp_msg")) in _LIVE_CONFIRMED:
+                    _rejected.add(fingerprint)  # live key confirmed: cache the refusal
+                # else (empty body, business error, limit, token expiry): this request only
         except Exception:
             failed = True  # timeout/connection/non-JSON: this request only
+        if failed:
+            _cooldown_until[fingerprint] = _now() + _PROBE_COOLDOWN_SECONDS
     if failed:
         raise ConfigurationError(_REFUSED) from None
     return headers
