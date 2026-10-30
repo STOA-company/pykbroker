@@ -41,6 +41,8 @@ class VendorAccountScope:
         self.tr_ids: list[str] = []
         # US mock ledger (official inquire_ccnl, VTTS3035R): pages of rows, set per test.
         self.us_ledger_pages: list[list[dict[str, Any]]] = [[]]
+        # US mock cash (official inquire_present_balance, VTRP6504R) output2 rows, set per test.
+        self.us_cash_rows: list[dict[str, Any]] = []
         self.requests: list[dict[str, Any]] = []
         self.cancels: list[dict[str, Any]] = []
         self.client = SimpleNamespace(request=self._request)
@@ -52,6 +54,10 @@ class VendorAccountScope:
         self.requests.append({"method": method, "path": path, "tr_id": tr_id, "params": params, "headers": headers})
         if self.key.virtual_account and tr_id.startswith("T"):
             raise VendorRejected(f"{tr_id} is not routable on the mock domain")
+        if path == "/uapi/overseas-stock/v1/trading/inquire-present-balance":
+            assert tr_id == "VTRP6504R"
+            body = {"rt_cd": "0", "output1": [], "output2": self.us_cash_rows}
+            return SimpleNamespace(status_code=200, headers={"tr_cont": "D"}, json=lambda: body)
         assert path == "/uapi/overseas-stock/v1/trading/inquire-ccnl"
         assert response is None
         index = 0 if not params["CTX_AREA_NK200"] else int(params["CTX_AREA_NK200"])

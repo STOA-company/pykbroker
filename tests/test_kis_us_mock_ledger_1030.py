@@ -6,6 +6,8 @@ Official basis (koreainvestment/open-trading-api, examples_llm/overseas_stock):
 * order_rvsecncl.py:102-106 -- TTTT1004U real / VTTT1004U mock.
 """
 
+from decimal import Decimal
+
 import pytest
 
 from pykbroker.brokers.kis import KIS
@@ -60,22 +62,41 @@ def test_cancelled_order_is_not_open_and_status_is_cancelled():
     assert broker.status(Order(id="7", symbol="TEST", market="US")).status == "cancelled"
 
 
-def test_accepted_cancel_row_hides_original_whose_nccs_is_not_yet_zeroed():
-    broker, _ = _broker([_row("7", 3, 0, 3), _row("9", 3, 0, 0, cancel="02", orgn="7")])
-    assert broker.list_orders() == []
-
-
-def test_rejected_cancel_row_does_not_hide_a_live_original():
-    for reject in ({"rjct_rson": "1234"}, {"prcs_stat_name": "거부"}):
-        broker, _ = _broker([_row("7", 3, 0, 3), {**_row("9", 3, 0, 0, cancel="02", orgn="7"), **reject}])
+def test_cancel_rows_never_decide_a_live_original_stays_open():
+    # nccs_qty of the original is the evidence: any cancel row (accepted, pending or rejected) is ignored
+    for extra in ({}, {"rjct_rson": "1234"}, {"prcs_stat_name": "접수"}, {"prcs_stat_name": "거부"}):
+        broker, _ = _broker([_row("7", 3, 0, 3), {**_row("9", 3, 0, 0, cancel="02", orgn="7"), **extra}])
         assert [o.id for o in broker.list_orders()] == ["7"]
         assert broker.status(Order(id="7", symbol="TEST", market="US")).status == "open"
 
 
-def test_rejected_cancel_row_on_a_fully_filled_order_stays_filled():
-    broker, _ = _broker([_row("7", 3, 3, 0), _row("9", 3, 0, 0, cancel="02", orgn="7", )])
+def test_cancel_row_on_a_fully_filled_order_stays_filled():
+    broker, _ = _broker([_row("7", 3, 3, 0), _row("9", 3, 0, 0, cancel="02", orgn="7")])
     assert broker.list_orders() == []
     assert broker.status(Order(id="7", symbol="TEST", market="US")).status == "filled"
+
+
+def test_same_order_number_on_two_days_is_keyed_by_date():
+    yesterday = {**_row("7", 3, 0, 0), "ord_dt": "20261029"}          # cancelled yesterday
+    today = {**_row("7", 5, 0, 5), "ord_dt": "20261030"}              # live today, same number
+    broker, _ = _broker([yesterday, today])
+    (live,) = broker.list_orders()
+    assert (live.id, live.order_date, live.remaining) == ("7", "20261030", 5)
+    got = broker.status(Order(id="7", symbol="TEST", market="US", order_date="20261030"))
+    assert (got.status, got.quantity) == ("open", 5)
+    old = broker.status(Order(id="7", symbol="TEST", market="US", order_date="20261029"))
+    assert (old.status, old.quantity) == ("cancelled", 3)
+    # no date and two candidate days: never guess
+    assert broker.status(Order(id="7", symbol="TEST", market="US")).status == "unknown"
+
+
+def test_cancel_matches_only_the_open_row_not_yesterdays_same_number(live_safety):
+    yesterday = {**_row("7", 3, 3, 0), "ord_dt": "20261029"}
+    today = {**_row("7", 2, 0, 2), "ord_dt": "20261030"}
+    broker, scope = _broker([yesterday, today], live_safety=live_safety)
+    broker.cancel_order(CancelRequest(order_id="7", symbol="TEST", quantity=2, client_key="c9",
+                                      market="US", venue="NASDAQ"))
+    assert scope.cancels[0]["qty"] == 2
 
 
 def test_ledger_window_starts_one_day_before_today():
@@ -139,3 +160,35 @@ def test_real_us_path_is_unchanged():
     assert [o.id for o in broker.list_orders()] == ["42"]
     assert api.calls == 1 and client.scope.requests == []
     assert isinstance(broker, KIS)
+
+
+def test_real_us_partial_fill_with_nothing_open_keeps_base_verdict():
+    # real account: only the row's own rvse_cncl_dvsn decides; partial fill + nccs 0 is not "cancelled"
+    broker, client, api = _us(False)
+    api.get_orders_overseas_all = lambda **_: {"output": [_row("42", 3, 1, 0)]}
+    assert broker.status(Order(id="42", symbol="TEST", market="US")).status == "unknown"
+    mock, _ = _broker([_row("42", 3, 1, 0)])
+    assert mock.status(Order(id="42", symbol="TEST", market="US")).status == "cancelled"
+
+
+def test_us_mock_cash_uses_the_official_mock_tr_not_the_real_margin_tr():
+    broker, scope = _broker()
+    scope.us_cash_rows = [{"crcy_cd": "USD", "frcr_dncl_amt_2": "100.5", "frcr_drwg_psbl_amt_1": "80"}]
+    assert broker.available_cash() == Decimal("80")
+    assert [r["tr_id"] for r in scope.requests] == ["VTRP6504R"]
+    assert scope.requests[0]["path"] == "/uapi/overseas-stock/v1/trading/inquire-present-balance"
+
+
+def test_us_mock_cash_needs_exactly_one_usd_row():
+    broker, scope = _broker()
+    scope.us_cash_rows = []
+    with pytest.raises(InvalidResponseError):
+        broker.available_cash()
+
+
+def test_mock_integrated_buying_power_is_an_explicit_unsupported():
+    broker, scope = _broker()
+    broker.is_integrated = True
+    with pytest.raises(NotSupportedError):
+        broker.available_cash()
+    assert scope.requests == []
