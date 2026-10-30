@@ -135,10 +135,10 @@ MUTATIONS = (
     # --- second round: the four bypasses the first-round review actually walked through
     Mutation(
         "A'2-1",
-        "a US mock account claims an open-order route the vendor does not have",
+        "a US mock account reads open orders through the real-account TR the mock domain refuses",
         SRC / "brokers/kis.py",
-        '            supports_order_history=not (self.market == "US" and self.virtual),',
-        "            supports_order_history=True,",
+        '        if self.market == "US" and self.virtual:\n            return self._call(lambda: self._us_mock_open_orders(symbol))',
+        '        if False:\n            return self._call(lambda: self._us_mock_open_orders(symbol))',
     ),
     Mutation(
         "A'2-1",

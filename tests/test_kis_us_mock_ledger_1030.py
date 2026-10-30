@@ -35,7 +35,7 @@ def test_zero_open_orders():
     p = request["params"]
     # mock-only filters per the official doc: all rows, no symbol/exchange, no order-number search
     assert (p["PDNO"], p["SLL_BUY_DVSN"], p["CCLD_NCCS_DVSN"], p["OVRS_EXCG_CD"], p["ODNO"]) == ("", "00", "00", "", "")
-    assert p["ORD_STRT_DT"] == p["ORD_END_DT"] and len(p["ORD_STRT_DT"]) == 8
+    assert p["ORD_STRT_DT"] < p["ORD_END_DT"] and len(p["ORD_STRT_DT"]) == 8
 
 
 def test_one_open_order_and_symbol_filter():
@@ -54,9 +54,36 @@ def test_partial_fill_is_partial():
 
 
 def test_cancelled_order_is_not_open_and_status_is_cancelled():
-    broker, _ = _broker([_row("7", 3, 0, 3), _row("9", 3, 0, 0, cancel="02", orgn="7")])
+    # trader observation: after an accepted cancel the original row's nccs_qty is 0
+    broker, _ = _broker([_row("7", 3, 0, 0), _row("9", 3, 0, 0, cancel="02", orgn="7")])
     assert broker.list_orders() == []
     assert broker.status(Order(id="7", symbol="TEST", market="US")).status == "cancelled"
+
+
+def test_accepted_cancel_row_hides_original_whose_nccs_is_not_yet_zeroed():
+    broker, _ = _broker([_row("7", 3, 0, 3), _row("9", 3, 0, 0, cancel="02", orgn="7")])
+    assert broker.list_orders() == []
+
+
+def test_rejected_cancel_row_does_not_hide_a_live_original():
+    for reject in ({"rjct_rson": "1234"}, {"prcs_stat_name": "거부"}):
+        broker, _ = _broker([_row("7", 3, 0, 3), {**_row("9", 3, 0, 0, cancel="02", orgn="7"), **reject}])
+        assert [o.id for o in broker.list_orders()] == ["7"]
+        assert broker.status(Order(id="7", symbol="TEST", market="US")).status == "open"
+
+
+def test_rejected_cancel_row_on_a_fully_filled_order_stays_filled():
+    broker, _ = _broker([_row("7", 3, 3, 0), _row("9", 3, 0, 0, cancel="02", orgn="7", )])
+    assert broker.list_orders() == []
+    assert broker.status(Order(id="7", symbol="TEST", market="US")).status == "filled"
+
+
+def test_ledger_window_starts_one_day_before_today():
+    broker, scope = _broker([_row("1", 2, 2, 0)])
+    broker.list_orders()
+    p = scope.requests[0]["params"]
+    from datetime import datetime
+    assert (datetime.strptime(p["ORD_END_DT"], "%Y%m%d") - datetime.strptime(p["ORD_STRT_DT"], "%Y%m%d")).days == 1
 
 
 def test_status_filled_and_absent():
@@ -97,6 +124,14 @@ def test_cancel_more_than_remaining_or_unknown_order_is_refused(live_safety):
         broker.cancel_order(CancelRequest(order_id="55", symbol="TEST", quantity=1, client_key="c3",
                                           market="US", venue="NASDAQ"))
     assert scope.cancels == []
+
+
+def test_real_us_status_ignores_cancel_rows_like_base():
+    # base reads only the matched row's own rvse_cncl_dvsn: a cancel row naming a filled original is no cancel
+    broker, client, api = _us(False)
+    rows = [_row("42", 3, 3, 0), _row("43", 3, 0, 0, cancel="02", orgn="42")]
+    api.get_orders_overseas_all = lambda **_: {"output": rows}
+    assert broker.status(Order(id="42", symbol="TEST", market="US")).status == "filled"
 
 
 def test_real_us_path_is_unchanged():

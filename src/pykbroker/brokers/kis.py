@@ -4,7 +4,7 @@ import inspect
 import threading
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from importlib import import_module
 from types import SimpleNamespace
@@ -541,8 +541,12 @@ class KIS(BaseBroker):
         return result
 
     def _us_mock_ledger_rows(self, scope: Any) -> list[Any]:
-        """Every page of today's (US local date) mock order ledger, VTTS3035R, all-rows filters only."""
-        today = datetime.now(US_TZ).strftime("%Y%m%d")
+        """Mock order ledger, VTTS3035R, all-rows filters only, US local yesterday..today.
+
+        A KST submission lands on the previous US local date (the trader reads from submission day - 1).
+        """
+        now = datetime.now(US_TZ)
+        start, today = (now - timedelta(days=1)).strftime("%Y%m%d"), now.strftime("%Y%m%d")
         rows = PageRows(("odno", "rvse_cncl_dvsn", "ord_dt", "ord_tmd", "orgn_odno"), "KIS US mock ledger")
         cont: dict[str, str] = {"CTX_AREA_NK200": "", "CTX_AREA_FK200": ""}
         for page in range(1, KIS_MAX_PAGES + 1):
@@ -550,7 +554,7 @@ class KIS(BaseBroker):
                 "get", US_MOCK_LEDGER_PATH,
                 headers={"tr_id": US_MOCK_LEDGER_TR, "tr_cont": "" if page == 1 else "N"},
                 params=scope.account.build_body({
-                    "PDNO": "", "ORD_STRT_DT": today, "ORD_END_DT": today, "SLL_BUY_DVSN": "00",
+                    "PDNO": "", "ORD_STRT_DT": start, "ORD_END_DT": today, "SLL_BUY_DVSN": "00",
                     "CCLD_NCCS_DVSN": "00", "OVRS_EXCG_CD": "", "SORT_SQN": "DS", "ORD_DT": "",
                     "ORD_GNO_BRNO": "", "ODNO": "", **cont,
                 }), response=None,
@@ -577,9 +581,17 @@ class KIS(BaseBroker):
 
     @staticmethod
     def _us_open_rows(rows: list[Any]) -> list[Any]:
-        """Ledger rows still open: remaining > 0, not a cancel row, not named by a cancel row."""
+        """Original rows still open: their own nccs_qty > 0 is the evidence (cancel rows are never open).
+
+        A cancel row that the vendor rejected (rjct_rson / prcs_stat_name, official inquire_ccnl output)
+        has the same shape as an accepted one and must not hide a live original; an accepted one hides
+        an original whose nccs_qty the ledger has not yet zeroed.
+        """
+        def rejected(row: Any) -> bool:
+            return bool(str(field(row, "rjct_rson") or "").strip()) or "거부" in str(field(row, "prcs_stat_name") or "")
+
         cancelled = {str(field(row, "orgn_odno")) for row in rows
-                     if field(row, "rvse_cncl_dvsn") == "02" and field(row, "orgn_odno")}
+                     if field(row, "rvse_cncl_dvsn") == "02" and field(row, "orgn_odno") and not rejected(row)}
         return [row for row in rows
                 if field(row, "rvse_cncl_dvsn") != "02" and str(field(row, "odno")) not in cancelled
                 and whole(field(row, "nccs_qty")) > 0]
@@ -618,10 +630,6 @@ class KIS(BaseBroker):
                 rows = self._us_mock_ledger_rows(scope)
             else:
                 rows = check_response(api.get_orders_overseas_all(kis_account=scope, code=symbol), "kis")["output"]
-            # A US mock cancel is its own ledger row naming the original in orgn_odno.
-            named_cancelled = {str(field(r, "orgn_odno")) for r in rows
-                               if field(r, "rvse_cncl_dvsn") == "02" and field(r, "orgn_odno")} \
-                if self.market == "US" else set()
             for row in rows:
                 if str(field(row, "odno")) != order.id or field(row, "pdno") != symbol:
                     continue
@@ -631,8 +639,11 @@ class KIS(BaseBroker):
                 remaining = whole(field(row, "rmn_qty" if kr else "nccs_qty"))
                 if filled + remaining > quantity:
                     raise InvalidResponseError("KIS ledger quantities exceed the order")
-                cancelled = field(row, "cncl_yn") if kr else (
-                    field(row, "rvse_cncl_dvsn") == "02" or str(field(row, "odno")) in named_cancelled)
+                cancelled = field(row, "cncl_yn") if kr else field(row, "rvse_cncl_dvsn") == "02"
+                if not kr and self.virtual and not cancelled:
+                    # Mock ledger: a cancel request row (accepted or rejected) looks the same, so it is never
+                    # read; only the original row's own quantities count (nothing left open, not all filled).
+                    cancelled = remaining == 0 and filled < quantity
                 state = _ledger_status(cancelled, filled, remaining)
                 # Partial fills plus zero remaining can be a cancellation/rejection: no invented full fill.
                 if state == "filled" and filled != quantity:
