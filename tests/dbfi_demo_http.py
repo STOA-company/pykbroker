@@ -45,6 +45,17 @@ def demo_http(monkeypatch):
     from pykbroker.brokers import dbfi_demo
     monkeypatch.setattr(dbfi_demo, "_verified", set())
     monkeypatch.setattr(dbfi_demo, "_rejected", set())
+    monkeypatch.setattr(dbfi_demo, "_cooldown_until", {})
+    # Injected clock: advances `step` per read (default far beyond the cooldown, so tests
+    # that re-probe on purpose are not blocked); cooldown tests set step=0 and move `now`.
+    clock = SimpleNamespace(now=0.0, step=1000.0)
+
+    def tick():
+        clock.now += clock.step
+        return clock.now
+
+    monkeypatch.setattr(dbfi_demo, "_now", tick)
+    state.clock = clock
     try:
         yield state
     finally:
