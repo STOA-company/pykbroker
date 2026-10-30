@@ -175,3 +175,61 @@ def test_live_path_does_not_probe_or_claim_virtual(demo_http, live_safety):
     assert not order.virtual
     assert demo_http.calls == ["/api/v1/trading/kr-stock/order"]
     assert not broker.virtual and not broker.demo_verified
+
+
+class _VolatileAuth(Auth):
+    """Mimics Pydb: fresh random session/UA (and sometimes X-Forwarded-For) per call."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.n = 0
+
+    def get_auth_header(self):
+        self.n += 1
+        headers = {"Authorization": "Bearer " + self.token, "X-Session-ID": f"sid-{self.n}",
+                   "User-Agent": f"ua-{self.n}"}
+        if self.n % 5 == 0:
+            headers["X-Forwarded-For"] = f"10.0.0.{self.n}"
+        return headers
+
+
+def _buy(broker, key):
+    return broker.place(OrderRequest(symbol="005930", side="buy", quantity=1, price=100, client_key=key))
+
+
+def test_volatile_headers_only_never_add_probes(demo_http, live_safety):
+    broker = DBFI(account="synthetic-account", client=client(_VolatileAuth()), virtual=True, safety=live_safety)
+    for i in range(10):
+        _buy(broker, f"vol-{i}")
+    assert demo_http.calls.count(PROBE) == 1
+    assert demo_http.calls.count("/api/v1/trading/kr-stock/order") == 10
+
+
+def test_token_reissue_adds_exactly_one_probe(demo_http, live_safety):
+    auth = _VolatileAuth()
+    broker = DBFI(account="synthetic-account", client=client(auth), virtual=True, safety=live_safety)
+    _buy(broker, "a")
+    auth.token = "synthetic-demo-token-2"
+    _buy(broker, "b")
+    _buy(broker, "c")
+    assert demo_http.calls.count(PROBE) == 2
+
+
+def test_unproven_authorization_is_refused_without_order(demo_http, live_safety):
+    auth = _VolatileAuth()
+    broker = DBFI(account="synthetic-account", client=client(auth), virtual=True, safety=live_safety)
+    demo_http.probe = {"rsp_cd": "00000"}
+    auth.token = "synthetic-live-token"
+    with pytest.raises(ConfigurationError):
+        _buy(broker, "x")
+    assert "/api/v1/trading/kr-stock/order" not in demo_http.calls
+    with pytest.raises(ConfigurationError):
+        _buy(broker, "y")
+    assert demo_http.calls.count(PROBE) == 2
+
+
+def test_probe_header_hides_nothing_volatile_in_fingerprint_only(demo_http, live_safety):
+    broker = DBFI(account="synthetic-account", client=client(_VolatileAuth()), virtual=True, safety=live_safety)
+    _buy(broker, "h")
+    sent = demo_http.headers[-1]
+    assert sent.get("Authorization") == "Bearer synthetic-demo-token"

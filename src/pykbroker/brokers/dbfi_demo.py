@@ -28,6 +28,14 @@ _REFUSED = "DBFI demo key was not positively verified; execution refused"
 _verified: set[bytes] = set()
 _rejected: set[bytes] = set()
 _lock = RLock()
+# Per-request random/transport columns (Pydb adds uuid4 X-Session-ID, a rotating
+# User-Agent and, 1 in 5, X-Forwarded-For). They carry no credential identity, so
+# they must not make every request look like a new session. Every other header,
+# Authorization above all, still belongs to the fingerprint.
+_VOLATILE_HEADERS = frozenset({
+    "x-session-id", "user-agent", "x-forwarded-for", "x-real-ip", "x-request-id",
+    "x-correlation-id", "x-trace-id", "traceparent", "tracestate",
+})
 
 
 def _verified_headers(auth: Any, *, account: str, credentials: Mapping[str, Any]) -> dict[str, str]:
@@ -48,7 +56,9 @@ def _verified_headers(auth: Any, *, account: str, credentials: Mapping[str, Any]
             raise ValueError
         headers = dict(headers)
         fingerprint = hashlib.sha256(json.dumps(
-            [key, secret, account, sorted(headers.items())], ensure_ascii=True
+            [key, secret, account,
+             sorted((k.lower(), v) for k, v in headers.items() if k.lower() not in _VOLATILE_HEADERS)],
+            ensure_ascii=True
         ).encode()).digest()
     except Exception:
         raise ConfigurationError("DBFI demo credentials/session cannot be established") from None
