@@ -152,6 +152,10 @@ class VendorOverseas:
             raise VendorRejected(f"{OVERSEAS_OPEN_ORDER_TR} is not routable on the mock domain")
         return self._fixtures["open_orders_overseas"]
 
+    def get_balances(self, kis_account: Any, **_: Any) -> Any:
+        """Present balance with no US holdings (output1) and the scope's USD cash rows (output2)."""
+        return {"json_data": {"rt_cd": "0", "output1": [], "output2": kis_account.us_cash_rows}, "tr_cont": "D"}
+
 
 class VendorClient:
     """`PyKis`: holds the key that decides real vs. mock domain."""

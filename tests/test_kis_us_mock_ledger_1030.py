@@ -192,3 +192,51 @@ def test_mock_integrated_buying_power_is_an_explicit_unsupported():
     with pytest.raises(NotSupportedError):
         broker.available_cash()
     assert scope.requests == []
+
+
+def test_us_mock_get_balance_reads_mock_cash_without_provider():
+    broker, scope = _broker()
+    broker._cash_provider = None
+    scope.us_cash_rows = [{"crcy_cd": "USD", "frcr_dncl_amt_2": "100.5", "frcr_drwg_psbl_amt_1": "80"}]
+    balance = broker.get_balance()
+    assert (balance.currency, balance.cash_available) == ("USD", Decimal("80"))
+    assert "VTRP6504R" in [r["tr_id"] for r in scope.requests]
+
+
+def test_us_mock_get_balance_missing_usd_row_fails_closed():
+    broker, scope = _broker()
+    broker._cash_provider = None
+    scope.us_cash_rows = []
+    with pytest.raises(InvalidResponseError):
+        broker.get_balance()
+
+
+def test_us_mock_get_balance_rt_cd_failure_fails_closed():
+    broker, scope = _broker()
+    broker._cash_provider = None
+    orig = scope._request
+
+    def bad(method, path, **kw):
+        r = orig(method, path, **kw)
+        return type(r)(status_code=200, headers=r.headers, json=lambda: {"rt_cd": "1", "msg_cd": "X", "msg1": "no"})
+
+    scope.client.request = bad
+    with pytest.raises(Exception) as exc:
+        broker.get_balance()
+    assert not isinstance(exc.value, ConfigurationError)
+
+
+def test_us_mock_get_balance_caller_provider_wins():
+    broker, scope = _broker()
+    broker._cash_provider = lambda _scope: Decimal("7")
+    assert broker.get_balance().cash_available == Decimal("7")
+    assert "VTRP6504R" not in [r["tr_id"] for r in scope.requests]
+
+
+def test_us_real_get_balance_never_uses_mock_tr():
+    broker, client, api = _us(False)
+    broker._cash_provider = None
+    called = []
+    broker._us_native_cash = lambda scope: called.append(1) or Decimal("5")
+    broker._us_mock_cash = lambda scope: (_ for _ in ()).throw(AssertionError("mock TR on real"))
+    assert broker.get_balance().cash_available == Decimal("5") and called

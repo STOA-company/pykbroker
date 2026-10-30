@@ -349,12 +349,16 @@ class KIS(BaseBroker):
         def read() -> Balance:
             scope, _ = self._connect()
             if self.market == "US":
-                if self._cash_provider is None and self.virtual:
-                    raise ConfigurationError("US mock cash requires a caller-supplied cash_provider")
+                if self._cash_provider is not None:
+                    cash = decimal(self._cash_provider(scope))
+                elif self.virtual:
+                    # No caller provider on a mock account: official mock TR VTRP6504R (same as available_cash).
+                    cash = self._us_mock_cash(scope)
+                else:
+                    cash = self._us_native_cash(scope)
                 return Balance(
                     currency="USD",
-                    cash_available=(decimal(self._cash_provider(scope))
-                                    if self._cash_provider else self._us_native_cash(scope)),
+                    cash_available=cash,
                     position_value=sum((p.market_value for p in self.get_positions()), Decimal(0)),
                 )
             balance, amount = scope.balance_all(), scope.amount(code=None)
