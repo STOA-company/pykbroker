@@ -721,7 +721,7 @@ class Meritz(BaseBroker):
             orders.append(
                 Order(
                     id=number,
-                    symbol=str(row["iscd"]).strip().split(".")[0],
+                    symbol=str(row["iscd"]).strip().rsplit(".", 1)[0],
                     side=_side(row["seln_byov_clcd"], "1", "2"),
                     order_type="limit" if str(row.get("aspr_type_code")) == "2" else None,
                     quantity=quantity,
@@ -838,7 +838,7 @@ class Meritz(BaseBroker):
             for row in listed
             if str(row.get("oder_rctf_cncl_cls_code")) in {"0", "1"}
             and _order_number(row["oder_no"]) == order_id
-            and str(row["iscd"]).strip().split(".")[0] == code
+            and str(row["iscd"]).strip().rsplit(".", 1)[0] == code
         ]
         # Official corrections: a US change must name the LATEST modify's number. A number that a live modify row
         # already points at is stale: sending it would act on the wrong order.
