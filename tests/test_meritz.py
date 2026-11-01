@@ -29,7 +29,7 @@ from pykbroker.models import CancelRequest, Order, OrderRequest
 
 FIX = Path(__file__).parent / "fixtures" / "meritz"
 NOW = datetime(2026, 11, 2, 1, 0, tzinfo=UTC)  # 월 10:00 KST
-OPTIONS = {"app_key": "fixture-app-key", "app_secret": "fixture-app-secret"}
+OPTIONS = {"app_key": "fixture-app-key", "app_secret": "fixture-app-secret", "mac_address": "001122AABBCC"}
 HISTORY = "/trading/v1/orders/history"
 US_HISTORY = "/trading/v1/overseas/orders/history"
 
@@ -158,6 +158,8 @@ def test_virtual_account_is_refused():
         {"app_key": "k", "app_secret": "s", "surprise": 1},
         {"app_key": "k", "app_secret": "s", "token_type": "Basic"},
         {"app_key": "k", "app_secret": "s", "mac_address": "not-a-mac"},
+        {"app_key": "k", "app_secret": "s"},  # no mac_address: no invented default, refuse before any request
+        {"app_key": "k", "app_secret": "s", "mac_address": ""},
     ],
 )
 def test_bad_client_options_are_refused(options):

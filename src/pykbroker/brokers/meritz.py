@@ -24,7 +24,6 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-import uuid
 from collections.abc import Callable, Mapping
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -118,11 +117,6 @@ def _safe_code(value: Any) -> str | None:
 
 def _digest(app_key: str) -> str:
     return hashlib.sha256(app_key.encode()).hexdigest()
-
-
-def default_mac_address() -> str:
-    """The official example's device value (uuid.getnode), 12 upper-case hex digits."""
-    return f"{uuid.getnode():012X}"[-12:]
 
 
 class _MeritzRestClient:
@@ -243,7 +237,10 @@ class Meritz(BaseBroker):
             raise ConfigurationError("expires_at must be a datetime")
         if isinstance(expires_at, datetime) and expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=KST)  # the stored value is a KST wall clock
-        mac = options.get("mac_address") or default_mac_address()
+        mac = options.get("mac_address")
+        if not mac:
+            # no invented default: an unregistered device value is refused or bound by the gateway
+            raise ConfigurationError("mac_address is required (set MERITZ_MAC_ADDRESS to the sending host's NIC MAC)")
         if not isinstance(mac, str) or not _MAC.fullmatch(mac):
             raise ConfigurationError("mac_address must be 12 upper-case hex digits")
         self.venue = venue
