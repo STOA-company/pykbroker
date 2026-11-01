@@ -871,3 +871,23 @@ def test_us_replacement_order_is_listed_and_the_superseded_parent_is_unknown(unl
         CancelRequest(order_id="79", symbol="AAPL", quantity=2, market="US", venue="NASDAQ", client_key="c2")
     )
     assert client.count(*cancel) == 1 and client.calls[-1]["body"]["orgl_oder_no"] == 79
+
+
+def test_connect_reads_the_deposit_once_and_returns_the_token_row():
+    broker, client, _ = make({("GET", "/accounts/v1/me/deposit"): [fx("deposit")]})
+    got = broker.connect()
+    assert got["token"] == "fixture-access-token" and got["token_type"] == "Bearer"
+    assert got["expires_dt"] == "20261109100000"  # NOW(01:00 UTC) + 7 days, as a KST wall clock
+    assert client.count("GET", "/accounts/v1/me/deposit") == 1 and client.count("POST", "/oauth2/token") == 1
+
+
+def test_connect_names_the_refusal_without_vendor_text():
+    broker, _, _ = make({("GET", "/accounts/v1/me/deposit"): [(500, fx("error_no_permission"))]})
+    with pytest.raises(BrokerRejectedError) as caught:
+        broker.connect()
+    assert caught.value.code == "0760" and "fixture" not in str(caught.value)
+    module._TOKENS.clear()  # the first half cached a token for this app key
+    broker, _, _ = make({("POST", "/oauth2/token"): [(403, fx("error_bad_key"))]})
+    with pytest.raises(BrokerRejectedError) as caught:
+        broker.connect()
+    assert caught.value.code == "EGW00103"

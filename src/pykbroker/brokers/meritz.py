@@ -47,6 +47,7 @@ from pykbroker.safety.rate_limit import RateLimiter, credential_rate_limiter
 from ._common import BaseBroker, PageRows, decimal, optional_price, whole
 
 MERITZ_SPEC_VERIFIED = False  # Global veto only; True never enables live orders by itself.
+_SCHEME = "Bearer"
 MERITZ_API_BASE_URL = "https://openapi.imeritz.com:9443"  # the only server in the spec (no mock exists)
 
 CLIENT_OPTION_KEYS = {"app_key", "app_secret", "token", "token_type", "expires_at", "mac_address"}
@@ -458,6 +459,25 @@ class Meritz(BaseBroker):
         if self.venue not in _US_VENUES:
             raise ConfigurationError("Meritz US requires NYSE, NASDAQ or AMEX venue")
         return _US_VENUES[self.venue]
+
+    def connect(self) -> dict[str, str]:
+        """등록 확인용: one real read (the deposit) proves the key, its permission and the device header together.
+
+        Returns the token as the account row stores it (token, token_type, expires_dt = KST 14 digits). The deposit
+        answer names no account number, so the registered number cannot be matched here (research unknown 10).
+        """
+
+        def run() -> dict[str, str]:
+            self._read("/accounts/v1/me/deposit")
+            with _TOKEN_LOCK:
+                cached = _TOKENS.get(_digest(self._app_key))
+            token, expires = cached if cached is not None else (self._token, self._expires_at)
+            if not token:
+                raise InvalidResponseError("Meritz token is not held after a successful read")
+            expires_dt = expires.astimezone(KST).strftime("%Y%m%d%H%M%S") if expires is not None else ""
+            return {"token": token, "token_type": _SCHEME, "expires_dt": expires_dt}
+
+        return self._call(run)
 
     # ------------------------------------------------------------------ reads
     def get_quote(self, symbol: str, *, market: str = "KR") -> Quote:
