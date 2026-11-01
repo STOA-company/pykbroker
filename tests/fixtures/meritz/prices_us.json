@@ -1,0 +1,11 @@
+{
+  "_fixture_note": "SYNTHETIC: built from the openapi.json (2026-10-28) response schema; not a real Meritz response. Values are meaningless.",
+  "rsp_cd": "0000",
+  "rsp_msg": "ok",
+  "data": {
+    "iscd": "AAPL",
+    "prpr": "190.00",
+    "crnc_code": "USD",
+    "prdy_clpr": "189.00"
+  }
+}

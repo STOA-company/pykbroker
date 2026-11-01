@@ -141,7 +141,7 @@ def test_experimental_brokers_are_not_reachable_through_the_factory(module_name,
 
 
 def test_the_factory_ships_exactly_the_registered_adapters():
-    assert set(BROKERS) == {"kis", "dbfi", "toss", "kiwoom", "ls", "nh"}
+    assert set(BROKERS) == {"kis", "dbfi", "toss", "kiwoom", "ls", "nh", "kb", "meritz"}
 
 
 # --- B′-0: 거래소 선언 정합 --------------------------------------------------
