@@ -5,6 +5,7 @@
   "data": {
     "iscd": "AAPL",
     "prpr": "190.00",
-    "crnc_code": "USD"
+    "crnc_code": "USD",
+    "prdy_clpr": "189.00"
   }
 }

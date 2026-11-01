@@ -487,17 +487,19 @@ class Meritz(BaseBroker):
             if self.market == "US":
                 quote_code, _ = self._us_codes()
                 base = {"mrkt_div_code": "OV", "mrkt_cls_code": quote_code, "iscd": code, "dely_rltm_cls_code": "0"}
-                last = decimal(self._read("/market/v1/overseas/prices", params=base)["data"]["prpr"])
+                row = self._read("/market/v1/overseas/prices", params=base)["data"]
+                last, prev = decimal(row["prpr"]), optional_price(row.get("prdy_clpr"))  # 전일 종가
                 book = self._read("/market/v1/overseas/orderbook", params=base)["data"]
                 bid, ask = optional_price(book.get("bidp1")), optional_price(book.get("askp1"))
             else:
                 base = {"mrkt_div_code": "J", "iscd": code}
-                last = decimal(self._read("/market/v1/prices", params=base)["data"]["stck_prpr"])
+                row = self._read("/market/v1/prices", params=base)["data"]
+                last, prev = decimal(row["stck_prpr"]), optional_price(row.get("sdpr"))  # 기준가 = 전일 종가
                 book = self._read("/market/v1/orderbook", params=base)["data"]
                 bid, ask = optional_price(book.get("bidp")), optional_price(book.get("askp"))
             if bid is not None and ask is not None and bid > ask:
                 bid = ask = None  # a crossed pair is not a spread anyone can trade on
-            return Quote(symbol=code, market=self.market, last=last, bid=bid, ask=ask)
+            return Quote(symbol=code, market=self.market, last=last, bid=bid, ask=ask, prev_close=prev)
 
         return self._call(read)
 

@@ -458,6 +458,7 @@ def test_kr_quote_rules_cash():
     )
     quote = broker.get_quote("A005930")
     assert (quote.symbol, quote.last, quote.bid, quote.ask) == ("005930", 70000, 69900, 70100)
+    assert quote.prev_close == Decimal(70000)  # sdpr: the reference price is the previous close
     rules = broker.get_rules("005930", now=NOW)
     assert rules.halted is False and rules.limit_up == 91000 and rules.limit_down == 49000
     assert broker.available_cash() == Decimal(900000)
@@ -665,6 +666,7 @@ def test_us_quote_cash_positions():
     )
     quote = broker.get_quote("AAPL", market="US")
     assert (quote.last, quote.bid, quote.ask, quote.market) == (190, Decimal("189.95"), Decimal("190.05"), "US")
+    assert quote.prev_close == Decimal("189.00")  # prdy_clpr
     assert broker.available_cash() == Decimal("4800.00")
     positions = broker.get_positions()
     assert [(p.symbol, p.quantity, p.sellable, p.market) for p in positions] == [("AAPL", 4, 4, "US")]

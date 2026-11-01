@@ -4894,6 +4894,1129 @@
         "x-tr-id": "obtro_oder_103r",
         "x-tps": "10"
       }
+    },
+    "/market/v1/orderbook": {
+      "get": {
+        "operationId": "market_orderbook",
+        "summary": "호가 조회",
+        "tags": [
+          "domestic_market"
+        ],
+        "description": "국내주식 한 종목의 매도·매수 호가와 잔량을 10단계까지 조회합니다.",
+        "parameters": [
+          {
+            "name": "mac_address",
+            "in": "header",
+            "required": true,
+            "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+            "schema": {
+              "type": "string",
+              "title": "사용자 MAC_ADDRESS",
+              "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+              "maxLength": 12
+            }
+          },
+          {
+            "name": "mrkt_div_code",
+            "in": "query",
+            "required": true,
+            "description": "어느 시장의 호가를 볼지 정합니다.\n\"J\": KRX\n\"NJ\": 대체거래소(NXT)\n\"TJ\": KRX + NXT 통합\n\n위 세 값만 넣으십시오. 그 밖의 값도 오류 없이 정상 응답코드로 내려오므로 보내는 값을 먼저 확인하십시오.",
+            "schema": {
+              "type": "string",
+              "title": "시장 구분 코드",
+              "description": "어느 시장의 호가를 볼지 정합니다.\n\"J\": KRX\n\"NJ\": 대체거래소(NXT)\n\"TJ\": KRX + NXT 통합\n\n위 세 값만 넣으십시오. 그 밖의 값도 오류 없이 정상 응답코드로 내려오므로 보내는 값을 먼저 확인하십시오.",
+              "maxLength": 2
+            },
+            "example": "J"
+          },
+          {
+            "name": "iscd",
+            "in": "query",
+            "required": true,
+            "description": "종목 코드입니다. 6자리(005930) 또는 대문자 A 를 붙인 7자리(A005930)로 넣으십시오. 등록되지 않은 종목코드도 오류 없이 정상 응답코드로 내려올 수 있으므로, 응답의 단축종목코드(shrn_iscd)가 채워져 있는지 확인하십시오.",
+            "schema": {
+              "type": "string",
+              "title": "종목 코드",
+              "description": "종목 코드입니다. 6자리(005930) 또는 대문자 A 를 붙인 7자리(A005930)로 넣으십시오. 등록되지 않은 종목코드도 오류 없이 정상 응답코드로 내려올 수 있으므로, 응답의 단축종목코드(shrn_iscd)가 채워져 있는지 확인하십시오.",
+              "maxLength": 12
+            },
+            "example": "000660"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "rsp_cd": {
+                      "type": "string",
+                      "title": "응답코드",
+                      "description": "이 API 의 성공 응답 코드입니다.\n\"0000\": 정상 처리\n\n조회 결과가 없을 때도 \"0000\" 이 내려옵니다. 목록을 내려주는 조회는 빈 배열이, 한 건을 내려주는 조회는 값이 0 이거나 빈 내용이 \"0000\" 과 함께 옵니다. 결과 건수나 값으로 직접 확인하십시오.\n\n오류는 종류와 무관하게 HTTP 500 으로 반환됩니다. 성공·실패는 HTTP 상태가 아니라 이 값으로 판정하시고, 다른 계열 API 는 성공 코드가 \"0000\" 이 아닐 수 있으니 API 마다 확인하십시오.",
+                      "maxLength": 8
+                    },
+                    "rsp_msg": {
+                      "type": "string",
+                      "title": "응답메시지",
+                      "description": "응답 메시지입니다. 오류일 때 원인이 담깁니다.\n오류 응답에는 data·tr_cont 가 없으므로 data 를 읽기 전에 HTTP 상태와 rsp_cd 를 먼저 확인하십시오. 조치에 필요한 정보는 rsp_sub_msg 에 담길 수 있습니다.",
+                      "maxLength": 200
+                    },
+                    "rsp_sub_msg": {
+                      "type": "string",
+                      "title": "응답 상세 메시지",
+                      "description": "오류일 때 내려올 수 있는 상세 사유입니다. 조치에 필요한 정보가 담깁니다. 정상 응답에는 포함되지 않습니다.",
+                      "maxLength": 200
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "prpr_hour": {
+                          "type": "string",
+                          "title": "현재가시간",
+                          "description": "호가 시각(HHMMSS)",
+                          "maxLength": 6
+                        },
+                        "askp": {
+                          "type": "number",
+                          "title": "매도호가",
+                          "description": "매도호가 1단계 가격입니다.\n\n실시간 국내주식 호가(/websocket/ohhts-stck-aspr)에서는 같은 항목이 askp1 로 내려옵니다."
+                        },
+                        "askp2": {
+                          "type": "number",
+                          "title": "매도호가2",
+                          "description": "매도호가 2단계 가격"
+                        },
+                        "askp3": {
+                          "type": "number",
+                          "title": "매도호가3",
+                          "description": "매도호가 3단계 가격"
+                        },
+                        "askp4": {
+                          "type": "number",
+                          "title": "매도호가4",
+                          "description": "매도호가 4단계 가격"
+                        },
+                        "askp5": {
+                          "type": "number",
+                          "title": "매도호가5",
+                          "description": "매도호가 5단계 가격"
+                        },
+                        "askp6": {
+                          "type": "number",
+                          "title": "매도호가6",
+                          "description": "매도호가 6단계 가격"
+                        },
+                        "askp7": {
+                          "type": "number",
+                          "title": "매도호가7",
+                          "description": "매도호가 7단계 가격"
+                        },
+                        "askp8": {
+                          "type": "number",
+                          "title": "매도호가8",
+                          "description": "매도호가 8단계 가격"
+                        },
+                        "askp9": {
+                          "type": "number",
+                          "title": "매도호가9",
+                          "description": "매도호가 9단계 가격"
+                        },
+                        "askp10": {
+                          "type": "number",
+                          "title": "매도호가10",
+                          "description": "매도호가 10단계 가격"
+                        },
+                        "bidp": {
+                          "type": "number",
+                          "title": "매수호가",
+                          "description": "매수호가 1단계 가격입니다.\n\n실시간 국내주식 호가(/websocket/ohhts-stck-aspr)에서는 같은 항목이 bidp1 로 내려옵니다."
+                        },
+                        "bidp2": {
+                          "type": "number",
+                          "title": "매수호가2",
+                          "description": "매수호가 2단계 가격"
+                        },
+                        "bidp3": {
+                          "type": "number",
+                          "title": "매수호가3",
+                          "description": "매수호가 3단계 가격"
+                        },
+                        "bidp4": {
+                          "type": "number",
+                          "title": "매수호가4",
+                          "description": "매수호가 4단계 가격"
+                        },
+                        "bidp5": {
+                          "type": "number",
+                          "title": "매수호가5",
+                          "description": "매수호가 5단계 가격"
+                        },
+                        "bidp6": {
+                          "type": "number",
+                          "title": "매수호가6",
+                          "description": "매수호가 6단계 가격"
+                        },
+                        "bidp7": {
+                          "type": "number",
+                          "title": "매수호가7",
+                          "description": "매수호가 7단계 가격"
+                        },
+                        "bidp8": {
+                          "type": "number",
+                          "title": "매수호가8",
+                          "description": "매수호가 8단계 가격"
+                        },
+                        "bidp9": {
+                          "type": "number",
+                          "title": "매수호가9",
+                          "description": "매수호가 9단계 가격"
+                        },
+                        "bidp10": {
+                          "type": "number",
+                          "title": "매수호가10",
+                          "description": "매수호가 10단계 가격"
+                        },
+                        "askp_rsqn1": {
+                          "type": "number",
+                          "title": "매도호가잔량1",
+                          "description": "1번째로 싼 매도호가에 걸려 있는 수량입니다. 1단계가 가장 싼 매도호가이며, 번호가 커질수록 가격이 높아집니다."
+                        },
+                        "askp_rsqn2": {
+                          "type": "number",
+                          "title": "매도호가잔량2",
+                          "description": "2번째로 싼 매도호가에 걸려 있는 수량입니다. 1단계가 가장 싼 매도호가이며, 번호가 커질수록 가격이 높아집니다."
+                        },
+                        "askp_rsqn3": {
+                          "type": "number",
+                          "title": "매도호가잔량3",
+                          "description": "3번째로 싼 매도호가에 걸려 있는 수량입니다. 1단계가 가장 싼 매도호가이며, 번호가 커질수록 가격이 높아집니다."
+                        },
+                        "askp_rsqn4": {
+                          "type": "number",
+                          "title": "매도호가잔량4",
+                          "description": "4번째로 싼 매도호가에 걸려 있는 수량입니다. 1단계가 가장 싼 매도호가이며, 번호가 커질수록 가격이 높아집니다."
+                        },
+                        "askp_rsqn5": {
+                          "type": "number",
+                          "title": "매도호가잔량5",
+                          "description": "5번째로 싼 매도호가에 걸려 있는 수량입니다. 1단계가 가장 싼 매도호가이며, 번호가 커질수록 가격이 높아집니다."
+                        },
+                        "askp_rsqn6": {
+                          "type": "number",
+                          "title": "매도호가잔량6",
+                          "description": "6번째로 싼 매도호가에 걸려 있는 수량입니다. 1단계가 가장 싼 매도호가이며, 번호가 커질수록 가격이 높아집니다."
+                        },
+                        "askp_rsqn7": {
+                          "type": "number",
+                          "title": "매도호가잔량7",
+                          "description": "7번째로 싼 매도호가에 걸려 있는 수량입니다. 1단계가 가장 싼 매도호가이며, 번호가 커질수록 가격이 높아집니다."
+                        },
+                        "askp_rsqn8": {
+                          "type": "number",
+                          "title": "매도호가잔량8",
+                          "description": "8번째로 싼 매도호가에 걸려 있는 수량입니다. 1단계가 가장 싼 매도호가이며, 번호가 커질수록 가격이 높아집니다."
+                        },
+                        "askp_rsqn9": {
+                          "type": "number",
+                          "title": "매도호가잔량9",
+                          "description": "9번째로 싼 매도호가에 걸려 있는 수량입니다. 1단계가 가장 싼 매도호가이며, 번호가 커질수록 가격이 높아집니다."
+                        },
+                        "askp_rsqn10": {
+                          "type": "number",
+                          "title": "매도호가잔량10",
+                          "description": "10번째로 싼 매도호가에 걸려 있는 수량입니다. 1단계가 가장 싼 매도호가이며, 번호가 커질수록 가격이 높아집니다."
+                        },
+                        "bidp_rsqn1": {
+                          "type": "number",
+                          "title": "매수호가잔량1",
+                          "description": "1번째로 비싼 매수호가에 걸려 있는 수량입니다. 1단계가 가장 비싼 매수호가이며, 번호가 커질수록 가격이 낮아집니다."
+                        },
+                        "bidp_rsqn2": {
+                          "type": "number",
+                          "title": "매수호가잔량2",
+                          "description": "2번째로 비싼 매수호가에 걸려 있는 수량입니다. 1단계가 가장 비싼 매수호가이며, 번호가 커질수록 가격이 낮아집니다."
+                        },
+                        "bidp_rsqn3": {
+                          "type": "number",
+                          "title": "매수호가잔량3",
+                          "description": "3번째로 비싼 매수호가에 걸려 있는 수량입니다. 1단계가 가장 비싼 매수호가이며, 번호가 커질수록 가격이 낮아집니다."
+                        },
+                        "bidp_rsqn4": {
+                          "type": "number",
+                          "title": "매수호가잔량4",
+                          "description": "4번째로 비싼 매수호가에 걸려 있는 수량입니다. 1단계가 가장 비싼 매수호가이며, 번호가 커질수록 가격이 낮아집니다."
+                        },
+                        "bidp_rsqn5": {
+                          "type": "number",
+                          "title": "매수호가잔량5",
+                          "description": "5번째로 비싼 매수호가에 걸려 있는 수량입니다. 1단계가 가장 비싼 매수호가이며, 번호가 커질수록 가격이 낮아집니다."
+                        },
+                        "bidp_rsqn6": {
+                          "type": "number",
+                          "title": "매수호가잔량6",
+                          "description": "6번째로 비싼 매수호가에 걸려 있는 수량입니다. 1단계가 가장 비싼 매수호가이며, 번호가 커질수록 가격이 낮아집니다."
+                        },
+                        "bidp_rsqn7": {
+                          "type": "number",
+                          "title": "매수호가잔량7",
+                          "description": "7번째로 비싼 매수호가에 걸려 있는 수량입니다. 1단계가 가장 비싼 매수호가이며, 번호가 커질수록 가격이 낮아집니다."
+                        },
+                        "bidp_rsqn8": {
+                          "type": "number",
+                          "title": "매수호가잔량8",
+                          "description": "8번째로 비싼 매수호가에 걸려 있는 수량입니다. 1단계가 가장 비싼 매수호가이며, 번호가 커질수록 가격이 낮아집니다."
+                        },
+                        "bidp_rsqn9": {
+                          "type": "number",
+                          "title": "매수호가잔량9",
+                          "description": "9번째로 비싼 매수호가에 걸려 있는 수량입니다. 1단계가 가장 비싼 매수호가이며, 번호가 커질수록 가격이 낮아집니다."
+                        },
+                        "bidp_rsqn10": {
+                          "type": "number",
+                          "title": "매수호가잔량10",
+                          "description": "10번째로 비싼 매수호가에 걸려 있는 수량입니다. 1단계가 가장 비싼 매수호가이며, 번호가 커질수록 가격이 낮아집니다."
+                        },
+                        "askp_rsqn_icdc1": {
+                          "type": "number",
+                          "title": "매도호가잔량증감1",
+                          "description": "매도호가 1단계 잔량 증감"
+                        },
+                        "askp_rsqn_icdc2": {
+                          "type": "number",
+                          "title": "매도호가잔량증감2",
+                          "description": "매도호가 2단계 잔량 증감"
+                        },
+                        "askp_rsqn_icdc3": {
+                          "type": "number",
+                          "title": "매도호가잔량증감3",
+                          "description": "매도호가 3단계 잔량 증감"
+                        },
+                        "askp_rsqn_icdc4": {
+                          "type": "number",
+                          "title": "매도호가잔량증감4",
+                          "description": "매도호가 4단계 잔량 증감"
+                        },
+                        "askp_rsqn_icdc5": {
+                          "type": "number",
+                          "title": "매도호가잔량증감5",
+                          "description": "매도호가 5단계 잔량 증감"
+                        },
+                        "askp_rsqn_icdc6": {
+                          "type": "number",
+                          "title": "매도호가잔량증감6",
+                          "description": "매도호가 6단계 잔량 증감"
+                        },
+                        "askp_rsqn_icdc7": {
+                          "type": "number",
+                          "title": "매도호가잔량증감7",
+                          "description": "매도호가 7단계 잔량 증감"
+                        },
+                        "askp_rsqn_icdc8": {
+                          "type": "number",
+                          "title": "매도호가잔량증감8",
+                          "description": "매도호가 8단계 잔량 증감"
+                        },
+                        "askp_rsqn_icdc9": {
+                          "type": "number",
+                          "title": "매도호가잔량증감9",
+                          "description": "매도호가 9단계 잔량 증감"
+                        },
+                        "askp_rsqn_icdc10": {
+                          "type": "number",
+                          "title": "매도호가잔량증감10",
+                          "description": "매도호가 10단계 잔량 증감"
+                        },
+                        "bidp_rsqn_icdc1": {
+                          "type": "number",
+                          "title": "매수호가잔량증감1",
+                          "description": "매수호가 1단계 잔량 증감"
+                        },
+                        "bidp_rsqn_icdc2": {
+                          "type": "number",
+                          "title": "매수호가잔량증감2",
+                          "description": "매수호가 2단계 잔량 증감"
+                        },
+                        "bidp_rsqn_icdc3": {
+                          "type": "number",
+                          "title": "매수호가잔량증감3",
+                          "description": "매수호가 3단계 잔량 증감"
+                        },
+                        "bidp_rsqn_icdc4": {
+                          "type": "number",
+                          "title": "매수호가잔량증감4",
+                          "description": "매수호가 4단계 잔량 증감"
+                        },
+                        "bidp_rsqn_icdc5": {
+                          "type": "number",
+                          "title": "매수호가잔량증감5",
+                          "description": "매수호가 5단계 잔량 증감"
+                        },
+                        "bidp_rsqn_icdc6": {
+                          "type": "number",
+                          "title": "매수호가잔량증감6",
+                          "description": "매수호가 6단계 잔량 증감"
+                        },
+                        "bidp_rsqn_icdc7": {
+                          "type": "number",
+                          "title": "매수호가잔량증감7",
+                          "description": "매수호가 7단계 잔량 증감"
+                        },
+                        "bidp_rsqn_icdc8": {
+                          "type": "number",
+                          "title": "매수호가잔량증감8",
+                          "description": "매수호가 8단계 잔량 증감"
+                        },
+                        "bidp_rsqn_icdc9": {
+                          "type": "number",
+                          "title": "매수호가잔량증감9",
+                          "description": "매수호가 9단계 잔량 증감"
+                        },
+                        "bidp_rsqn_icdc10": {
+                          "type": "number",
+                          "title": "매수호가잔량증감10",
+                          "description": "매수호가 10단계 잔량 증감"
+                        },
+                        "total_askp_rsqn": {
+                          "type": "number",
+                          "title": "총매도호가잔량",
+                          "description": "총 매도호가 잔량입니다."
+                        },
+                        "total_bidp_rsqn": {
+                          "type": "number",
+                          "title": "총매수호가잔량",
+                          "description": "총 매수호가 잔량입니다."
+                        },
+                        "total_askp_rsqn_icdc": {
+                          "type": "number",
+                          "title": "총매도호가잔량증감",
+                          "description": "매도 총잔량 증감입니다."
+                        },
+                        "total_bidp_rsqn_icdc": {
+                          "type": "number",
+                          "title": "총매수호가잔량증감",
+                          "description": "매수 총잔량 증감입니다."
+                        },
+                        "ovtm_total_askp_icdc": {
+                          "type": "number",
+                          "title": "시간외총매도호가증감",
+                          "description": "시간외 총 매도호가 잔량 증감"
+                        },
+                        "ovtm_total_bidp_icdc": {
+                          "type": "number",
+                          "title": "시간외총매수호가증감",
+                          "description": "시간외 총 매수호가 잔량 증감"
+                        },
+                        "ovtm_total_askp_rsqn": {
+                          "type": "number",
+                          "title": "시간외총매도호가잔량",
+                          "description": "시간외 총 매도호가 잔량입니다."
+                        },
+                        "ovtm_total_bidp_rsqn": {
+                          "type": "number",
+                          "title": "시간외총매수호가잔량",
+                          "description": "시간외 총 매수호가 잔량입니다."
+                        },
+                        "total_ntby_rsqn": {
+                          "type": "number",
+                          "title": "총순매수잔량",
+                          "description": "총 순매수 잔량입니다."
+                        },
+                        "lp_total_askp_rsqn": {
+                          "type": "number",
+                          "title": "LP총매도호가잔량",
+                          "description": "유동성공급자(LP) 총 매도호가 잔량"
+                        },
+                        "lp_total_bidp_rsqn": {
+                          "type": "number",
+                          "title": "LP총매수호가잔량",
+                          "description": "유동성공급자(LP) 총 매수호가 잔량"
+                        },
+                        "mdtm_prc": {
+                          "type": "number",
+                          "title": "중간가격",
+                          "description": "중간가 주문을 위한 기준 가격 항목입니다."
+                        },
+                        "seln_mdtm_aspr_total_rsqn": {
+                          "type": "number",
+                          "title": "매도중간호가총잔량",
+                          "description": "중간가 매도 주문의 총 잔량입니다."
+                        },
+                        "shnu_mdtm_aspr_total_rsqn": {
+                          "type": "number",
+                          "title": "매수중간호가총잔량",
+                          "description": "중간가 매수 주문의 총 잔량입니다."
+                        },
+                        "ats_mdtm_prc": {
+                          "type": "number",
+                          "title": "대체거래소중간가격",
+                          "description": "대체거래소(ATS)의 중간가 기준 가격 항목입니다. 시장 구분을 \"NJ\" 로 넣어 조회해도 0 으로 내려올 수 있습니다.\n\n0 을 대체거래소 자료 없음으로 읽지 마시고, 대체거래소 시세가 필요하시면 같은 응답의 현재가(stck_prpr)와 호가 항목을 \"NJ\" 로 조회해 쓰십시오."
+                        },
+                        "ats_seln_mdtm_aspr_rsqn": {
+                          "type": "number",
+                          "title": "대체거래소매도중간호가잔량",
+                          "description": "대체거래소(ATS) 중간가 매도호가 잔량"
+                        },
+                        "ats_shnu_mdtm_aspr_rsqn": {
+                          "type": "number",
+                          "title": "대체거래소매수중간호가잔량",
+                          "description": "대체거래소(ATS) 중간가 매수호가 잔량"
+                        },
+                        "shrn_mkop_cls_code": {
+                          "type": "string",
+                          "title": "단축장운영구분코드",
+                          "description": "장 운영 구분입니다. 시장(mrkt_div_code)마다 값이 다르며 빈 값으로 내려올 수 있습니다.",
+                          "maxLength": 3
+                        },
+                        "shrn_iscd": {
+                          "type": "string",
+                          "title": "단축종목코드",
+                          "description": "단축 종목코드(6자리)",
+                          "maxLength": 9
+                        },
+                        "stck_prpr": {
+                          "type": "number",
+                          "title": "주식현재가",
+                          "description": "가장 최근 체결된 가격입니다."
+                        },
+                        "oprc": {
+                          "type": "number",
+                          "title": "시가",
+                          "description": "당일 첫 체결 가격(시가)입니다."
+                        },
+                        "hprc": {
+                          "type": "number",
+                          "title": "고가",
+                          "description": "당일 장중 가장 높았던 체결 가격(고가)입니다."
+                        },
+                        "lprc": {
+                          "type": "number",
+                          "title": "저가",
+                          "description": "당일 장중 가장 낮았던 체결 가격(저가)입니다."
+                        },
+                        "sdpr": {
+                          "type": "number",
+                          "title": "기준가",
+                          "description": "당일 기준가(전일 종가)"
+                        },
+                        "antc_cnpr": {
+                          "type": "number",
+                          "title": "예상체결가",
+                          "description": "예상 체결가입니다."
+                        },
+                        "antc_cntg_vrss_sign": {
+                          "type": "string",
+                          "title": "예상체결대비부호",
+                          "description": "예상 체결의 전일 대비 부호입니다.\n\"1\": 상한\n\"2\": 상승\n\"3\": 보합\n\"4\": 하한\n\"5\": 하락\n\n예상 체결가(antc_cnpr)가 채워지지 않는 동안에는 빈 값 또는 \"0\" 이 내려옵니다. 다섯 값만 담긴다고 보고 변환하지 마시고 빈 값과 \"0\" 을 함께 처리하십시오.",
+                          "maxLength": 2
+                        },
+                        "antc_cntg_vrss": {
+                          "type": "number",
+                          "title": "예상체결대비",
+                          "description": "예상 체결 대비 등락 금액"
+                        },
+                        "antc_cntg_prdy_ctrt": {
+                          "type": "string",
+                          "title": "예상체결전일대비율",
+                          "description": "예상 체결 전일 대비율(%)",
+                          "maxLength": 9
+                        },
+                        "antc_vol": {
+                          "type": "number",
+                          "title": "예상거래량",
+                          "description": "지금 주문대로 체결된다면 나올 예상 체결 수량입니다."
+                        },
+                        "d5_mvbl_avrg_prc": {
+                          "type": "number",
+                          "title": "5일이동평균가격",
+                          "description": "5일 이동평균 가격입니다."
+                        },
+                        "wghn_avrg_prc": {
+                          "type": "string",
+                          "title": "가중평균가격",
+                          "description": "당일 가중평균 가격입니다.\n\n실시간 국내주식 현재가(/websocket/ohhts-stck-cntg)에서는 같은 항목이 wghn_avrg_stck_prc 라는 다른 이름으로 옵니다. 조회로 첫 화면을 채우고 실시간으로 이어 붙이실 때는 이름을 맞춰 주십시오.",
+                          "maxLength": 11
+                        },
+                        "nw_mkop_cls_code": {
+                          "type": "string",
+                          "title": "신장운영구분코드",
+                          "description": "장 운영 상태 코드입니다(2자리, 빈 값 가능).\n같은 항목이 실시간 구독에서는 mkop_clcd 라는 이름으로 내려옵니다.",
+                          "maxLength": 2
+                        },
+                        "mxpr": {
+                          "type": "number",
+                          "title": "상한가",
+                          "description": "당일 주문 가능한 최고 가격(상한가)입니다."
+                        },
+                        "llam": {
+                          "type": "number",
+                          "title": "하한가",
+                          "description": "당일 주문 가능한 최저 가격(하한가)입니다."
+                        }
+                      },
+                      "title": "호가 정보"
+                    }
+                  }
+                },
+                "example": {
+                  "data": {
+                    "prpr_hour": "200000",
+                    "askp": 8589000,
+                    "askp2": 8591000,
+                    "askp3": 8592000,
+                    "askp4": 8593000,
+                    "askp5": 8594000,
+                    "askp6": 8595000,
+                    "askp7": 8596000,
+                    "askp8": 8597000,
+                    "askp9": 8598000,
+                    "askp10": 8599000,
+                    "bidp": 8442000,
+                    "bidp2": 8360000,
+                    "bidp3": 8338000,
+                    "bidp4": 8332000,
+                    "bidp5": 8331000,
+                    "bidp6": 8323000,
+                    "bidp7": 8320000,
+                    "bidp8": 8316000,
+                    "bidp9": 8312000,
+                    "bidp10": 8311000,
+                    "askp_rsqn1": 3,
+                    "askp_rsqn2": 1,
+                    "askp_rsqn3": 1,
+                    "askp_rsqn4": 2,
+                    "askp_rsqn5": 3,
+                    "askp_rsqn6": 1,
+                    "askp_rsqn7": 3,
+                    "askp_rsqn8": 4,
+                    "askp_rsqn9": 3,
+                    "askp_rsqn10": 2,
+                    "bidp_rsqn1": 1,
+                    "bidp_rsqn2": 1,
+                    "bidp_rsqn3": 1,
+                    "bidp_rsqn4": 1,
+                    "bidp_rsqn5": 1,
+                    "bidp_rsqn6": 1,
+                    "bidp_rsqn7": 1,
+                    "bidp_rsqn8": 1,
+                    "bidp_rsqn9": 1,
+                    "bidp_rsqn10": 1,
+                    "askp_rsqn_icdc1": 0,
+                    "askp_rsqn_icdc2": 0,
+                    "askp_rsqn_icdc3": 0,
+                    "askp_rsqn_icdc4": 0,
+                    "askp_rsqn_icdc5": 0,
+                    "askp_rsqn_icdc6": 0,
+                    "askp_rsqn_icdc7": 0,
+                    "askp_rsqn_icdc8": 0,
+                    "askp_rsqn_icdc9": 0,
+                    "askp_rsqn_icdc10": 0,
+                    "bidp_rsqn_icdc1": 0,
+                    "bidp_rsqn_icdc2": 0,
+                    "bidp_rsqn_icdc3": 0,
+                    "bidp_rsqn_icdc4": 0,
+                    "bidp_rsqn_icdc5": 0,
+                    "bidp_rsqn_icdc6": 0,
+                    "bidp_rsqn_icdc7": 0,
+                    "bidp_rsqn_icdc8": 0,
+                    "bidp_rsqn_icdc9": 0,
+                    "bidp_rsqn_icdc10": 0,
+                    "total_askp_rsqn": 23,
+                    "total_bidp_rsqn": 10,
+                    "total_askp_rsqn_icdc": 0,
+                    "total_bidp_rsqn_icdc": 0,
+                    "ovtm_total_askp_icdc": 0,
+                    "ovtm_total_bidp_icdc": 0,
+                    "ovtm_total_askp_rsqn": 0,
+                    "ovtm_total_bidp_rsqn": 971,
+                    "total_ntby_rsqn": -13,
+                    "lp_total_askp_rsqn": 0,
+                    "lp_total_bidp_rsqn": 0,
+                    "mdtm_prc": 0,
+                    "seln_mdtm_aspr_total_rsqn": 0,
+                    "shnu_mdtm_aspr_total_rsqn": 0,
+                    "ats_mdtm_prc": 0,
+                    "ats_seln_mdtm_aspr_rsqn": 0,
+                    "ats_shnu_mdtm_aspr_rsqn": 0,
+                    "shrn_mkop_cls_code": "AC2",
+                    "shrn_iscd": "000660",
+                    "stck_prpr": 8389000,
+                    "oprc": 6668000,
+                    "hprc": 12382000,
+                    "lprc": 6668000,
+                    "sdpr": 9525000,
+                    "antc_cnpr": 0,
+                    "antc_cntg_vrss_sign": "",
+                    "antc_cntg_vrss": 0,
+                    "antc_cntg_prdy_ctrt": "0.00",
+                    "antc_vol": 0,
+                    "d5_mvbl_avrg_prc": 8847400,
+                    "wghn_avrg_prc": "8467688",
+                    "nw_mkop_cls_code": "20",
+                    "mxpr": 12382000,
+                    "llam": 6668000
+                  },
+                  "rsp_cd": "0000",
+                  "rsp_msg": "정상 처리 되었습니다."
+                }
+              }
+            }
+          }
+        },
+        "x-tr-id": "ohhts_1001_005r",
+        "x-tps": "10"
+      }
+    },
+    "/market/v1/overseas/orderbook": {
+      "get": {
+        "operationId": "ovs_market_orderbook",
+        "summary": "해외주식 호가 조회",
+        "tags": [
+          "overseas_market"
+        ],
+        "description": "해외주식 한 종목의 매도·매수 호가와 잔량을 조회합니다.",
+        "parameters": [
+          {
+            "name": "mac_address",
+            "in": "header",
+            "required": true,
+            "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+            "schema": {
+              "type": "string",
+              "title": "사용자 MAC_ADDRESS",
+              "description": "호출 단말의 MAC 주소입니다. 12자리로 넣습니다. 넣지 않으시면 요청이 거부됩니다.",
+              "maxLength": 12
+            }
+          },
+          {
+            "name": "mrkt_div_code",
+            "in": "query",
+            "required": true,
+            "description": "해외 시세는 \"OV\"를 넣습니다.\n\n(query string)",
+            "schema": {
+              "type": "string",
+              "title": "시장 구분 코드",
+              "description": "해외 시세는 \"OV\"를 넣습니다.\n\n(query string)",
+              "maxLength": 2
+            },
+            "example": "OV"
+          },
+          {
+            "name": "mrkt_cls_code",
+            "in": "query",
+            "required": true,
+            "description": "거래소 구분입니다.\n\"OQ\": 나스닥\n\"NY\": 뉴욕\n\"AX\": 아멕스\n\"HK\": 홍콩증권거래소\n\"SH\": 상하이증권거래소\n\"SZ\": 심천증권거래소\n\"JP\": 도쿄증권거래소 (query string)",
+            "schema": {
+              "type": "string",
+              "title": "거래소 구분 코드",
+              "description": "거래소 구분입니다.\n\"OQ\": 나스닥\n\"NY\": 뉴욕\n\"AX\": 아멕스\n\"HK\": 홍콩증권거래소\n\"SH\": 상하이증권거래소\n\"SZ\": 심천증권거래소\n\"JP\": 도쿄증권거래소 (query string)",
+              "maxLength": 2
+            },
+            "example": "OQ"
+          },
+          {
+            "name": "iscd",
+            "in": "query",
+            "required": true,
+            "description": "해외 종목 심볼을 입력합니다. (예: AAPL)\n\n(query string)",
+            "schema": {
+              "type": "string",
+              "title": "종목 코드",
+              "description": "해외 종목 심볼을 입력합니다. (예: AAPL)\n\n(query string)",
+              "maxLength": 16
+            },
+            "example": "AAPL"
+          },
+          {
+            "name": "dely_rltm_cls_code",
+            "in": "query",
+            "required": true,
+            "description": "시세 종류입니다.\n\"0\": 실시간\n\"1\": 지연\n\n지연(\"1\")으로 조회하면 미국 종목(AAPL)의 호가·잔량이 모두 0 으로 내려옵니다. (query string)",
+            "schema": {
+              "type": "string",
+              "title": "지연실시간구분코드",
+              "description": "시세 종류입니다.\n\"0\": 실시간\n\"1\": 지연\n\n지연(\"1\")으로 조회하면 미국 종목(AAPL)의 호가·잔량이 모두 0 으로 내려옵니다. (query string)",
+              "maxLength": 1
+            },
+            "example": "0"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "성공",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "rsp_cd": {
+                      "type": "string",
+                      "title": "응답코드",
+                      "description": "이 API 의 성공 응답 코드입니다.\n\"0000\": 정상 처리\n\n오류는 종류와 무관하게 HTTP 500 으로 반환되므로, 성공·실패는 HTTP 상태가 아니라 이 값으로 판정하십시오.",
+                      "maxLength": 8
+                    },
+                    "rsp_msg": {
+                      "type": "string",
+                      "title": "응답메시지",
+                      "description": "응답 메시지입니다. 오류일 때 원인이 담깁니다.\n\n오류 응답에는 data 와 tr_cont 가 담기지 않습니다. 오류일 때 본문은 rsp_cd·rsp_msg(일부 API 는 rsp_sub_msg 포함)로 이루어지므로, rsp_cd 를 먼저 확인한 뒤 data 를 읽으십시오.",
+                      "maxLength": 200
+                    },
+                    "rsp_sub_msg": {
+                      "type": "string",
+                      "title": "응답 상세 메시지",
+                      "description": "오류일 때 내려올 수 있는 상세 사유 항목입니다. 정상 응답에는 포함되지 않습니다.",
+                      "maxLength": 200
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "prdy_clpr": {
+                          "type": "string",
+                          "title": "전일종가",
+                          "description": "전일 종가입니다. 등락 계산의 기준이 되는 값입니다.",
+                          "maxLength": 14
+                        },
+                        "prpr": {
+                          "type": "string",
+                          "title": "현재가",
+                          "description": "가장 최근 체결된 가격(현재가)입니다. 전일 종가가 아니므로 등락 계산의 기준은 전일종가(prdy_clpr)를 쓰십시오.\n\n이 응답에는 소수점수(dcpn_cnt)가 없으므로 해외주식 현재가 조회(/market/v1/overseas/prices)의 dcpn_cnt 를 쓰시거나 숫자로 변환해 쓰십시오.",
+                          "maxLength": 14
+                        },
+                        "askp1": {
+                          "type": "string",
+                          "title": "매도호가1",
+                          "description": "매도호가 1단계 가격입니다. 시장에서 가장 싼 매도 주문이며 번호가 커질수록 가격이 높아집니다. 호가가 없는 단계는 0 입니다.",
+                          "maxLength": 14
+                        },
+                        "askp2": {
+                          "type": "string",
+                          "title": "매도호가2",
+                          "description": "매도호가 2단계 가격입니다. 호가가 없는 단계는 0 입니다.",
+                          "maxLength": 14
+                        },
+                        "askp3": {
+                          "type": "string",
+                          "title": "매도호가3",
+                          "description": "매도호가 3단계 가격입니다. 호가가 없는 단계는 0 입니다.",
+                          "maxLength": 14
+                        },
+                        "askp4": {
+                          "type": "string",
+                          "title": "매도호가4",
+                          "description": "매도호가 4단계 가격입니다. 호가가 없는 단계는 0 입니다.",
+                          "maxLength": 14
+                        },
+                        "askp5": {
+                          "type": "string",
+                          "title": "매도호가5",
+                          "description": "매도호가 5단계 가격입니다. 호가가 없는 단계는 0 입니다.",
+                          "maxLength": 14
+                        },
+                        "askp6": {
+                          "type": "string",
+                          "title": "매도호가6",
+                          "description": "매도호가 6단계 가격입니다. 호가가 없는 단계는 0 입니다.",
+                          "maxLength": 14
+                        },
+                        "askp7": {
+                          "type": "string",
+                          "title": "매도호가7",
+                          "description": "매도호가 7단계 가격입니다. 호가가 없는 단계는 0 입니다.",
+                          "maxLength": 14
+                        },
+                        "askp8": {
+                          "type": "string",
+                          "title": "매도호가8",
+                          "description": "매도호가 8단계 가격입니다. 호가가 없는 단계는 0 입니다.",
+                          "maxLength": 14
+                        },
+                        "askp9": {
+                          "type": "string",
+                          "title": "매도호가9",
+                          "description": "매도호가 9단계 가격입니다. 호가가 없는 단계는 0 입니다.",
+                          "maxLength": 14
+                        },
+                        "askp10": {
+                          "type": "string",
+                          "title": "매도호가10",
+                          "description": "매도호가 10단계 가격입니다. 호가가 없는 단계는 0 입니다.",
+                          "maxLength": 14
+                        },
+                        "bidp1": {
+                          "type": "string",
+                          "title": "매수호가1",
+                          "description": "매수호가 1단계 가격입니다. 시장에서 가장 비싼 매수 주문이며 번호가 커질수록 가격이 낮아집니다. 호가가 없는 단계는 0 입니다.",
+                          "maxLength": 14
+                        },
+                        "bidp2": {
+                          "type": "string",
+                          "title": "매수호가2",
+                          "description": "매수호가 2단계 가격입니다. 호가가 없는 단계는 0 입니다.",
+                          "maxLength": 14
+                        },
+                        "bidp3": {
+                          "type": "string",
+                          "title": "매수호가3",
+                          "description": "매수호가 3단계 가격입니다. 호가가 없는 단계는 0 입니다.",
+                          "maxLength": 14
+                        },
+                        "bidp4": {
+                          "type": "string",
+                          "title": "매수호가4",
+                          "description": "매수호가 4단계 가격입니다. 호가가 없는 단계는 0 입니다.",
+                          "maxLength": 14
+                        },
+                        "bidp5": {
+                          "type": "string",
+                          "title": "매수호가5",
+                          "description": "매수호가 5단계 가격입니다. 호가가 없는 단계는 0 입니다.",
+                          "maxLength": 14
+                        },
+                        "bidp6": {
+                          "type": "string",
+                          "title": "매수호가6",
+                          "description": "매수호가 6단계 가격입니다. 호가가 없는 단계는 0 입니다.",
+                          "maxLength": 14
+                        },
+                        "bidp7": {
+                          "type": "string",
+                          "title": "매수호가7",
+                          "description": "매수호가 7단계 가격입니다. 호가가 없는 단계는 0 입니다.",
+                          "maxLength": 14
+                        },
+                        "bidp8": {
+                          "type": "string",
+                          "title": "매수호가8",
+                          "description": "매수호가 8단계 가격입니다. 호가가 없는 단계는 0 입니다.",
+                          "maxLength": 14
+                        },
+                        "bidp9": {
+                          "type": "string",
+                          "title": "매수호가9",
+                          "description": "매수호가 9단계 가격입니다. 호가가 없는 단계는 0 입니다.",
+                          "maxLength": 14
+                        },
+                        "bidp10": {
+                          "type": "string",
+                          "title": "매수호가10",
+                          "description": "매수호가 10단계 가격입니다. 호가가 없는 단계는 0 입니다.",
+                          "maxLength": 14
+                        },
+                        "askp_rsqn1": {
+                          "type": "number",
+                          "title": "매도호가잔량1",
+                          "description": "1번째로 싼 매도호가에 걸려 있는 수량입니다. 1단계가 가장 싼 매도호가이며, 번호가 커질수록 가격이 높아집니다."
+                        },
+                        "askp_rsqn2": {
+                          "type": "number",
+                          "title": "매도호가잔량2",
+                          "description": "2번째로 싼 매도호가에 걸려 있는 수량입니다. 1단계가 가장 싼 매도호가이며, 번호가 커질수록 가격이 높아집니다."
+                        },
+                        "askp_rsqn3": {
+                          "type": "number",
+                          "title": "매도호가잔량3",
+                          "description": "3번째로 싼 매도호가에 걸려 있는 수량입니다. 1단계가 가장 싼 매도호가이며, 번호가 커질수록 가격이 높아집니다."
+                        },
+                        "askp_rsqn4": {
+                          "type": "number",
+                          "title": "매도호가잔량4",
+                          "description": "4번째로 싼 매도호가에 걸려 있는 수량입니다. 1단계가 가장 싼 매도호가이며, 번호가 커질수록 가격이 높아집니다."
+                        },
+                        "askp_rsqn5": {
+                          "type": "number",
+                          "title": "매도호가잔량5",
+                          "description": "5번째로 싼 매도호가에 걸려 있는 수량입니다. 1단계가 가장 싼 매도호가이며, 번호가 커질수록 가격이 높아집니다."
+                        },
+                        "askp_rsqn6": {
+                          "type": "number",
+                          "title": "매도호가잔량6",
+                          "description": "6번째로 싼 매도호가에 걸려 있는 수량입니다. 1단계가 가장 싼 매도호가이며, 번호가 커질수록 가격이 높아집니다."
+                        },
+                        "askp_rsqn7": {
+                          "type": "number",
+                          "title": "매도호가잔량7",
+                          "description": "7번째로 싼 매도호가에 걸려 있는 수량입니다. 1단계가 가장 싼 매도호가이며, 번호가 커질수록 가격이 높아집니다."
+                        },
+                        "askp_rsqn8": {
+                          "type": "number",
+                          "title": "매도호가잔량8",
+                          "description": "8번째로 싼 매도호가에 걸려 있는 수량입니다. 1단계가 가장 싼 매도호가이며, 번호가 커질수록 가격이 높아집니다."
+                        },
+                        "askp_rsqn9": {
+                          "type": "number",
+                          "title": "매도호가잔량9",
+                          "description": "9번째로 싼 매도호가에 걸려 있는 수량입니다. 1단계가 가장 싼 매도호가이며, 번호가 커질수록 가격이 높아집니다."
+                        },
+                        "askp_rsqn10": {
+                          "type": "number",
+                          "title": "매도호가잔량10",
+                          "description": "10번째로 싼 매도호가에 걸려 있는 수량입니다. 1단계가 가장 싼 매도호가이며, 번호가 커질수록 가격이 높아집니다."
+                        },
+                        "bidp_rsqn1": {
+                          "type": "number",
+                          "title": "매수호가잔량1",
+                          "description": "1번째로 비싼 매수호가에 걸려 있는 수량입니다. 1단계가 가장 비싼 매수호가이며, 번호가 커질수록 가격이 낮아집니다."
+                        },
+                        "bidp_rsqn2": {
+                          "type": "number",
+                          "title": "매수호가잔량2",
+                          "description": "2번째로 비싼 매수호가에 걸려 있는 수량입니다. 1단계가 가장 비싼 매수호가이며, 번호가 커질수록 가격이 낮아집니다."
+                        },
+                        "bidp_rsqn3": {
+                          "type": "number",
+                          "title": "매수호가잔량3",
+                          "description": "3번째로 비싼 매수호가에 걸려 있는 수량입니다. 1단계가 가장 비싼 매수호가이며, 번호가 커질수록 가격이 낮아집니다."
+                        },
+                        "bidp_rsqn4": {
+                          "type": "number",
+                          "title": "매수호가잔량4",
+                          "description": "4번째로 비싼 매수호가에 걸려 있는 수량입니다. 1단계가 가장 비싼 매수호가이며, 번호가 커질수록 가격이 낮아집니다."
+                        },
+                        "bidp_rsqn5": {
+                          "type": "number",
+                          "title": "매수호가잔량5",
+                          "description": "5번째로 비싼 매수호가에 걸려 있는 수량입니다. 1단계가 가장 비싼 매수호가이며, 번호가 커질수록 가격이 낮아집니다."
+                        },
+                        "bidp_rsqn6": {
+                          "type": "number",
+                          "title": "매수호가잔량6",
+                          "description": "6번째로 비싼 매수호가에 걸려 있는 수량입니다. 1단계가 가장 비싼 매수호가이며, 번호가 커질수록 가격이 낮아집니다."
+                        },
+                        "bidp_rsqn7": {
+                          "type": "number",
+                          "title": "매수호가잔량7",
+                          "description": "7번째로 비싼 매수호가에 걸려 있는 수량입니다. 1단계가 가장 비싼 매수호가이며, 번호가 커질수록 가격이 낮아집니다."
+                        },
+                        "bidp_rsqn8": {
+                          "type": "number",
+                          "title": "매수호가잔량8",
+                          "description": "8번째로 비싼 매수호가에 걸려 있는 수량입니다. 1단계가 가장 비싼 매수호가이며, 번호가 커질수록 가격이 낮아집니다."
+                        },
+                        "bidp_rsqn9": {
+                          "type": "number",
+                          "title": "매수호가잔량9",
+                          "description": "9번째로 비싼 매수호가에 걸려 있는 수량입니다. 1단계가 가장 비싼 매수호가이며, 번호가 커질수록 가격이 낮아집니다."
+                        },
+                        "bidp_rsqn10": {
+                          "type": "number",
+                          "title": "매수호가잔량10",
+                          "description": "10번째로 비싼 매수호가에 걸려 있는 수량입니다. 1단계가 가장 비싼 매수호가이며, 번호가 커질수록 가격이 낮아집니다."
+                        },
+                        "total_askp_rsqn": {
+                          "type": "number",
+                          "title": "총매도호가잔량",
+                          "description": "매도호가 총 잔량입니다."
+                        },
+                        "total_bidp_rsqn": {
+                          "type": "number",
+                          "title": "총매수호가잔량",
+                          "description": "매수호가 총 잔량입니다."
+                        },
+                        "oprc": {
+                          "type": "string",
+                          "title": "시가",
+                          "description": "당일 첫 체결 가격(시가)입니다.",
+                          "maxLength": 14
+                        },
+                        "hprc": {
+                          "type": "string",
+                          "title": "고가",
+                          "description": "당일 최고 체결 가격(고가)입니다.",
+                          "maxLength": 14
+                        },
+                        "lprc": {
+                          "type": "string",
+                          "title": "저가",
+                          "description": "당일 최저 체결 가격(저가)입니다.",
+                          "maxLength": 14
+                        },
+                        "acpl_hour": {
+                          "type": "string",
+                          "title": "현지시간",
+                          "description": "호가 시각(현지 기준)입니다. HHMMSS 형식입니다.",
+                          "maxLength": 6
+                        },
+                        "sdpr": {
+                          "type": "string",
+                          "title": "기준가",
+                          "description": "기준 가격입니다. 전일 종가(prdy_clpr)와 다를 수 있으므로 등락 계산의 기준은 전일 종가를 쓰십시오.",
+                          "maxLength": 14
+                        },
+                        "korea_hour": {
+                          "type": "string",
+                          "title": "한국시간",
+                          "description": "호가 시각(국내 기준)입니다. HHMMSS 형식입니다.",
+                          "maxLength": 6
+                        }
+                      },
+                      "title": "호가 정보"
+                    }
+                  }
+                },
+                "example": {
+                  "data": {
+                    "prdy_clpr": "326.5700",
+                    "prpr": "326.5700",
+                    "askp1": "0.0000",
+                    "askp2": "0.0000",
+                    "askp3": "0.0000",
+                    "askp4": "0.0000",
+                    "askp5": "0.0000",
+                    "askp6": "0.0000",
+                    "askp7": "0.0000",
+                    "askp8": "0.0000",
+                    "askp9": "0.0000",
+                    "askp10": "0.0000",
+                    "bidp1": "0.0000",
+                    "bidp2": "0.0000",
+                    "bidp3": "0.0000",
+                    "bidp4": "0.0000",
+                    "bidp5": "0.0000",
+                    "bidp6": "0.0000",
+                    "bidp7": "0.0000",
+                    "bidp8": "0.0000",
+                    "bidp9": "0.0000",
+                    "bidp10": "0.0000",
+                    "askp_rsqn1": 0,
+                    "askp_rsqn2": 0,
+                    "askp_rsqn3": 0,
+                    "askp_rsqn4": 0,
+                    "askp_rsqn5": 0,
+                    "askp_rsqn6": 0,
+                    "askp_rsqn7": 0,
+                    "askp_rsqn8": 0,
+                    "askp_rsqn9": 0,
+                    "askp_rsqn10": 0,
+                    "bidp_rsqn1": 0,
+                    "bidp_rsqn2": 0,
+                    "bidp_rsqn3": 0,
+                    "bidp_rsqn4": 0,
+                    "bidp_rsqn5": 0,
+                    "bidp_rsqn6": 0,
+                    "bidp_rsqn7": 0,
+                    "bidp_rsqn8": 0,
+                    "bidp_rsqn9": 0,
+                    "bidp_rsqn10": 0,
+                    "total_askp_rsqn": 0,
+                    "total_bidp_rsqn": 0,
+                    "oprc": "326.5700",
+                    "hprc": "326.5700",
+                    "lprc": "326.5700",
+                    "acpl_hour": "034840",
+                    "sdpr": "326.5700",
+                    "korea_hour": "164840"
+                  },
+                  "rsp_cd": "0000",
+                  "rsp_msg": "정상 처리 되었습니다."
+                }
+              }
+            }
+          }
+        },
+        "x-tr-id": "ohhts_6000_002r",
+        "x-tps": "10"
+      }
     }
   }
 }
