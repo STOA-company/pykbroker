@@ -45,8 +45,10 @@ class FakeClient:
     def __init__(self, base_url, responses):
         self.base_url, self.calls, self.responses = base_url, [], {k: list(v) for k, v in responses.items()}
 
-    def request(self, method, path, *, headers, params=None, body=None):
-        self.calls.append({"method": method, "path": path, "headers": dict(headers), "params": params, "body": body})
+    def request(self, method, path, *, headers, params=None, body=None, form=False):
+        self.calls.append(
+            {"method": method, "path": path, "headers": dict(headers), "params": params, "body": body, "form": form}
+        )
         queue = self.responses[(method, path)]
         item = queue.pop(0) if len(queue) > 1 else queue[0]
         if isinstance(item, Exception):
@@ -361,6 +363,27 @@ def test_stored_token_is_used_until_its_margin_and_then_reissued():
     assert client.count("POST", "/oauth2/token") == 1
 
 
+def test_token_request_is_form_encoded_as_the_spec_says():
+    broker, client, _ = make(
+        {("GET", "/market/v1/prices"): [fx("prices_kr")], ("GET", "/market/v1/orderbook"): [fx("orderbook_kr")]}
+    )
+    broker.get_quote("005930")
+    assert (
+        client.calls[0]["form"] is True
+        and client.calls[0]["headers"]["content-type"] == "application/x-www-form-urlencoded"
+    )
+
+
+def test_quote_with_a_damaged_rsp_cd_is_judged_by_its_data():
+    body = copy.deepcopy(fx("prices_kr"))
+    body["rsp_cd"] = "00\x000\x00"
+    broker, _, _ = make({("GET", "/market/v1/prices"): [body], ("GET", "/market/v1/orderbook"): [fx("orderbook_kr")]})
+    assert broker.get_quote("005930").last == Decimal(70000)
+    broker, _, _ = make({("GET", "/market/v1/prices"): [{"rsp_cd": "9999", "rsp_msg": "x"}]})
+    with pytest.raises(BrokerRejectedError):  # no data: not a success
+        broker.get_quote("005930")
+
+
 def test_token_issue_sends_the_documented_body_and_bad_key_is_a_refusal():
     broker, client, _ = make(
         {("POST", "/oauth2/token"): [(403, fx("error_bad_key"))], ("GET", "/market/v1/prices"): [fx("prices_kr")]}
@@ -573,7 +596,7 @@ def test_order_statuses_from_the_list():
     )
     assert got[("1")] == ("open", 0, 3) and got["2"] == ("partial", 1, 2) and got["3"] == ("filled", 3, 0)
     assert got["4"][0] == "rejected" and got["5"] == ("cancelled", 1, 0) and got["6"] == ("cancelled", 0, 0)
-    assert got["7"][0] == "cancelled" and "50" not in got and "70" not in got
+    assert got["7"] == ("unknown", 0, None) and "50" not in got and "70" not in got  # KR modify chains: never guessed
 
 
 def test_numbers_that_do_not_add_up_are_unknown():
@@ -821,3 +844,30 @@ def test_every_constructor_argument_is_keyword_only():
     assert parameters and all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in parameters)
     with pytest.raises(TypeError):
         Meritz("fixture-account", OPTIONS)  # type: ignore[misc]
+
+
+def test_us_replacement_order_is_listed_and_the_superseded_parent_is_unknown(unlocked, us_safety):
+    base = fx("history_us")["data"][0]
+    child = {
+        **base,
+        "oder_no": 79,
+        "orgl_oder_no": 77,
+        "oder_rctf_cncl_cls_code": "1",
+        "oder_dqty": "2.0000",
+        "ovrs_stck_oder_prc": "189.0000",
+    }
+    page = {"rsp_cd": "5766", "tr_cont": "0", "data": [base, child]}
+    cancel = ("POST", "/trading/v1/overseas/orders/cancel")
+    broker, client, _ = make({cancel: [fx("order_accept")], ("GET", US_HISTORY): [page]}, safety=us_safety, **US)
+    assert broker.status(Order(id="77", symbol="AAPL", status="accepted", market="US")).status == "unknown"
+    assert broker.status(Order(id="79", symbol="AAPL", status="accepted", market="US")).status == "open"
+    # a US change must name the latest modify: the stale number 77 sends nothing, 79 goes out
+    with pytest.raises(BrokerRejectedError):
+        broker.cancel_order(
+            CancelRequest(order_id="77", symbol="AAPL", quantity=2, market="US", venue="NASDAQ", client_key="c1")
+        )
+    assert client.count(*cancel) == 0
+    broker.cancel_order(
+        CancelRequest(order_id="79", symbol="AAPL", quantity=2, market="US", venue="NASDAQ", client_key="c2")
+    )
+    assert client.count(*cancel) == 1 and client.calls[-1]["body"]["orgl_oder_no"] == 79

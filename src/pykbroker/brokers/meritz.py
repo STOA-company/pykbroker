@@ -52,6 +52,8 @@ MERITZ_API_BASE_URL = "https://openapi.imeritz.com:9443"  # the only server in t
 CLIENT_OPTION_KEYS = {"app_key", "app_secret", "token", "token_type", "expires_at", "mac_address"}
 TOKEN_MARGIN = timedelta(seconds=60)  # the official example refreshes 60 s before expiry
 MAX_PAGES = 20
+# official corrections.json: the KR quote APIs answer HTTP 200 with good data and a corrupted rsp_cd
+DATA_SUCCESS_PATHS = frozenset({"/market/v1/prices", "/market/v1/orderbook"})
 READ_RATE_RETRIES = 2
 
 SUCCESS_CODES = frozenset({"0000", "0001", "5620", "5762", "5766", "5820", "5822"})
@@ -138,11 +140,17 @@ class _MeritzRestClient:
         headers: Mapping[str, str],
         params: Mapping[str, str] | None = None,
         body: Mapping[str, Any] | None = None,
+        form: bool = False,
     ) -> tuple[int, Any]:
         url = self.base_url + path
         if params:
             url += "?" + urllib.parse.urlencode(params)
-        data = None if body is None else json.dumps(body, ensure_ascii=False).encode("utf-8")
+        if body is None:
+            data = None
+        elif form:
+            data = urllib.parse.urlencode(body).encode("utf-8")
+        else:
+            data = json.dumps(body, ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(url, data=data, headers=dict(headers), method=method)
         try:
             with urlopen(request, timeout=self._timeout) as response:
@@ -294,7 +302,11 @@ class Meritz(BaseBroker):
         }
         self._limiter.wait("/oauth2/token")
         status, answer = self._client.request(
-            "POST", "/oauth2/token", headers={"content-type": "application/json"}, body=body
+            "POST",
+            "/oauth2/token",
+            headers={"content-type": "application/x-www-form-urlencoded"},  # the spec's only token content type
+            body=body,
+            form=True,
         )
         if not isinstance(answer, Mapping):
             raise InvalidResponseError("Meritz token response is not an object")
@@ -346,13 +358,17 @@ class Meritz(BaseBroker):
             headers["content-type"] = "application/json"
         self._limiter.wait(path)
         status, answer = self._client.request(method, path, headers=headers, params=params, body=body)
-        return self._judge(answer, write=write, status=status)
+        return self._judge(answer, write=write, path=path)
 
-    def _judge(self, answer: Any, *, write: bool, status: int) -> Mapping[str, Any]:
+    def _judge(self, answer: Any, *, write: bool, path: str) -> Mapping[str, Any]:
         if not isinstance(answer, Mapping) or not isinstance(answer.get("rsp_cd"), str):
             raise InvalidResponseError("Meritz response has no readable rsp_cd; reconcile before retrying")
         code = answer["rsp_cd"]
         data = answer.get("data")
+        if not write and path in DATA_SUCCESS_PATHS and isinstance(data, Mapping) and data:
+            # corrections.json: these quote APIs send a healthy `data` with a damaged rsp_cd (NUL bytes). An error
+            # answer carries no `data`, so a non-empty object is the evidence of success here.
+            return answer
         if write and isinstance(data, Mapping) and "warn_cls_code" in data and data["warn_cls_code"] != "0":
             # Checked before rsp_cd: a «0001» with a warning is NOT an accepted order. Never auto-resent.
             error = BrokerRejectedError(
@@ -598,22 +614,27 @@ class Meritz(BaseBroker):
         for row in originals:
             number = _order_number(row["oder_no"])
             quantity, filled = whole(row["odqt"]), whole(row["total_cntg_qty"])
-            cancelled = rewritten = 0
+            cancelled = 0
+            modified = False
             for other in touched.get(number, []):
                 if str(other.get("oder_pros_stat_cls_code")) == "3":
                     continue  # a refused cancel/modify changed nothing
                 if str(other["rctf_cncl_cls_code"]) == "3":
                     cancelled += whole(other["cncl_qty"])
                 else:
-                    rewritten += whole(other["rctf_qty"])
+                    modified = True
             status, remaining = self._derive(
                 rejected=str(row.get("oder_pros_stat_cls_code")) == "3",
                 quantity=quantity,
                 filled=filled,
-                cancelled=cancelled + rewritten,
+                cancelled=cancelled,
                 venue_remaining=whole(row["ncnt_qty"]),
                 touched=bool(touched.get(number)),
             )
+            if modified:
+                # Official corrections: KR changes all point at the FIRST order, so how a modify and a later cancel
+                # split the quantity is not shown by the ledger. Unknown, never a guess.
+                status, remaining = "unknown", None
             orders.append(
                 Order(
                     id=number,
@@ -665,7 +686,8 @@ class Meritz(BaseBroker):
             "cntg_cls_code": "0",
         }
         rows = self._paged("/trading/v1/overseas/orders/history", params)
-        originals = [row for row in rows if str(row.get("oder_rctf_cncl_cls_code")) == "0"]
+        # A US modify is itself an order with its own number (the next change must name it); a cancel is not.
+        originals = [row for row in rows if str(row.get("oder_rctf_cncl_cls_code")) in {"0", "1"}]
         touched: dict[str, list[Mapping[str, Any]]] = {}
         for row in rows:
             if str(row.get("oder_rctf_cncl_cls_code")) in {"1", "2"}:
@@ -675,10 +697,14 @@ class Meritz(BaseBroker):
             number = _order_number(row["oder_no"])
             quantity, filled = whole(row["oder_dqty"]), whole(row["cntg_dqty"])
             cancelled = 0
+            modified = False
             for other in touched.get(number, []):
                 if str(other.get("ovrs_stck_oder_stat_cls_code")) in {"1", "2", "4"}:
                     continue
-                cancelled += whole(other["oder_dqty"])
+                if str(other.get("oder_rctf_cncl_cls_code")) == "1":
+                    modified = True
+                else:
+                    cancelled += whole(other["oder_dqty"])
             stat = str(row.get("ovrs_stck_oder_stat_cls_code"))
             status, remaining = self._derive(
                 rejected=stat in {"1", "2"},
@@ -690,6 +716,8 @@ class Meritz(BaseBroker):
             )
             if stat == "3" and status in {"open", "partial"}:
                 status, remaining = "cancelled", 0  # 자동취소(체결후): the rest was cancelled by the venue
+            if modified:
+                status, remaining = "unknown", None  # superseded by its replacement: that number carries the order
             orders.append(
                 Order(
                     id=number,
@@ -804,14 +832,23 @@ class Meritz(BaseBroker):
             "seln_byov_clcd": "0",
             "cntg_cls_code": "0",
         }
+        listed = self._paged("/trading/v1/overseas/orders/history", params)
         rows = [
             row
-            for row in self._paged("/trading/v1/overseas/orders/history", params)
-            if str(row.get("oder_rctf_cncl_cls_code")) == "0"
+            for row in listed
+            if str(row.get("oder_rctf_cncl_cls_code")) in {"0", "1"}
             and _order_number(row["oder_no"]) == order_id
             and str(row["iscd"]).strip().split(".")[0] == code
         ]
-        if len(rows) != 1:
+        # Official corrections: a US change must name the LATEST modify's number. A number that a live modify row
+        # already points at is stale: sending it would act on the wrong order.
+        superseded = any(
+            str(row.get("oder_rctf_cncl_cls_code")) == "1"
+            and str(row.get("ovrs_stck_oder_stat_cls_code")) not in {"1", "2", "4"}
+            and _order_number(row["orgl_oder_no"]) == order_id
+            for row in listed
+        )
+        if len(rows) != 1 or superseded:
             raise BrokerRejectedError(
                 "Meritz order not found exactly once", code="order_not_found", kind="rejected", reason="order_not_found"
             )
