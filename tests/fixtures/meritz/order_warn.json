@@ -1,0 +1,11 @@
+{
+  "_fixture_note": "SYNTHETIC: built from the openapi.json (2026-10-28) response schema; not a real Meritz response. Values are meaningless.",
+  "rsp_cd": "0001",
+  "rsp_msg": "주문접수",
+  "tr_cont": "0",
+  "data": {
+    "oder_no": 0,
+    "warn_cls_code": "1",
+    "warn_msg": "fixture warning text"
+  }
+}
