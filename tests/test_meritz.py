@@ -895,3 +895,26 @@ def test_connect_names_the_refusal_without_vendor_text():
     with pytest.raises(BrokerRejectedError) as caught:
         broker.connect()
     assert caught.value.code == "EGW00103"
+
+
+@pytest.mark.parametrize("warn", [0, 1, None, "", " ", False])
+def test_non_string_or_empty_warning_code_is_unknown_not_a_definite_rejection(unlocked, live_safety, warn):
+    body = copy.deepcopy(fx("order_warn"))
+    body["data"]["warn_cls_code"] = warn
+    broker, client, _ = make({ORDER_BUY: [body]}, safety=live_safety)
+    with pytest.raises(InvalidResponseError) as caught:
+        broker.place_order(buy())
+    assert not isinstance(caught.value, BrokerRejectedError)
+    assert client.count(*ORDER_BUY) == 1
+
+
+def test_string_zero_warning_code_is_accepted_and_string_one_is_rejected(unlocked, live_safety):
+    ok = copy.deepcopy(fx("order_accept"))
+    ok["data"]["warn_cls_code"] = "0"
+    broker, _, _ = make({ORDER_BUY: [ok]}, safety=live_safety)
+    assert broker.place_order(buy()).status == "accepted"
+    bad = copy.deepcopy(fx("order_warn"))
+    bad["data"]["warn_cls_code"] = "1"
+    broker, _, _ = make({ORDER_BUY: [bad]}, safety=live_safety)
+    with pytest.raises(BrokerRejectedError):
+        broker.place_order(buy('k2'))

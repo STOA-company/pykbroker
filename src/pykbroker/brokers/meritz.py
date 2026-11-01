@@ -110,6 +110,10 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def _is_clear_str(value: Any) -> bool:
+    return isinstance(value, str) and value == "0"
+
+
 def _safe_code(value: Any) -> str | None:
     text = str(value).strip() if value is not None else ""
     return text if _SAFE_CODE.fullmatch(text) else None
@@ -367,7 +371,12 @@ class Meritz(BaseBroker):
             # corrections.json: these quote APIs send a healthy `data` with a damaged rsp_cd (NUL bytes). An error
             # answer carries no `data`, so a non-empty object is the evidence of success here.
             return answer
-        if write and isinstance(data, Mapping) and "warn_cls_code" in data and data["warn_cls_code"] != "0":
+        if write and isinstance(data, Mapping) and "warn_cls_code" in data and not _is_clear_str(data["warn_cls_code"]):
+            if not isinstance(data["warn_cls_code"], str) or not data["warn_cls_code"].strip():
+                # Spec says string. A number 0, null or "" is the vendor drifting from it: accepted or not is
+                # unknown, so never call it a definite rejection (a resend would double the order). Only the
+                # order list may settle it.
+                raise InvalidResponseError("Meritz warn_cls_code is not a readable string; reconcile before retrying")
             # Checked before rsp_cd: a «0001» with a warning is NOT an accepted order. Never auto-resent.
             error = BrokerRejectedError(
                 "Meritz did not accept the order (warning)",
