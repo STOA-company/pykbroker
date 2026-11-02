@@ -360,7 +360,7 @@ def test_every_official_order_field_limit_is_checked_at_final_transport_boundary
         # Some official outputs are business failures; receipt by the fake
         # transport proves the length boundary passed, not broker acceptance.
         if official["output"]["dataHeader"]["processFlag"] == "B":
-            # SSAM1801 1853 (+ zero order number) is a listed definite refusal (reject_codes.py kb); other B stays unknown.
+            # SSAM1801 1853 (+ zero order number) is a listed definite refusal (reject_codes.py kb); other B: unknown.
             error = BrokerRejectedError if tr == "ssam1801" else InvalidResponseError
             with pytest.raises(error):
                 b._response(tr, body)
