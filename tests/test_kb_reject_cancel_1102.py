@@ -1,4 +1,4 @@
-"""KB: SSAM1801 공식 거절 샘플만 확정 거절, SSQM2341 연결 취소 행으로 부분체결 잔량 취소 확정 (F2 D10839)."""
+"""KB: SSAM1801 공식 거절 샘플만 확정 거절, SSQM2341 정정취소 구분값 미확정으로 잔량 취소는 모름 유지 (F2 D10839)."""
 from unittest.mock import Mock
 
 import pytest
@@ -72,12 +72,14 @@ def _list(live_safety, rows):
 CANCEL = dict(orgn_ordr_no="1001", crct_cncl_ccd="2", rfsl_rsn_nm="", crct_q="0")
 
 
+@pytest.mark.xfail(strict=True, reason="KB 정정취소구분 값 미확정, 회사 시험계좌 실측 필요")
 def test_partial_with_linked_cancel_row_is_cancelled(live_safety):
     got = _list(live_safety, [_row("1001", 3, 1, 0), _row("1002", 2, 0, 0, **CANCEL)])
     assert got["1001"] == "cancelled"
 
 
 @pytest.mark.parametrize("bad_cancel", [
+    {**CANCEL, "crct_cncl_ccd": "1"}, {**CANCEL, "crct_cncl_ccd": "2"},
     {**CANCEL, "rfsl_rsn_nm": "거부"}, {**CANCEL, "crct_cncl_ccd": ""}, {**CANCEL, "orgn_ordr_no": "9999"},
 ])
 def test_partial_without_valid_cancel_evidence_stays_unknown(live_safety, bad_cancel):

@@ -597,38 +597,6 @@ class KB(BaseBroker):
         # Zero remaining can mean rejection/cancellation; absence is never a fill.
         return "unknown"
 
-    @staticmethod
-    def _blank(value):
-        return value is None or (isinstance(value, str) and not value.strip("0 "))
-
-    @staticmethod
-    def _kr_cancel_closed(row, number, quantity, filled, remaining, rows):
-        """Partial-fill remainder cancelled, read only from the official SSQM2341 columns.
-
-        SSQM2341 (guide/excel/b2c, read 2026-11-02) lists Record1 per order with orgn_ordr_no(원주문번호),
-        crct_cncl_ccd(정정취소구분코드), rfsl_rsn_nm(거부사유명), ordr_q/tl_ccls_q/nccls_q. The original row closes as
-        cancelled only when all of these agree: it is an original order (no orgn_ordr_no), 0 < filled < ordered,
-        nothing open, no refusal reason, AND a linked row (orgn_ordr_no == its number) carries a 정정취소 code, no
-        refusal, ordered exactly the unfilled rest and has itself neither filled nor open quantity (a live correction
-        would). The code's value set is not published, so only non-blank is read. Anything else stays unknown.
-        """
-        if not (quantity > 0 and 0 < filled < quantity and remaining == 0):
-            return False
-        if not KB._blank(row.get("orgn_ordr_no")) or not KB._blank(row.get("rfsl_rsn_nm")) \
-                or not KB._blank(row.get("crct_q")):
-            return False
-        links = [item for item in rows if isinstance(item.get("orgn_ordr_no"), str)
-                 and item["orgn_ordr_no"].strip().lstrip("0") == number.lstrip("0")]
-        if len(links) != 1:
-            return False
-        link = links[0]
-        try:
-            return (str(link.get("crct_cncl_ccd") or "").strip() != "" and KB._blank(link.get("rfsl_rsn_nm"))
-                    and whole(link["ordr_q"]) == quantity - filled
-                    and whole(link["tl_ccls_q"]) == 0 and whole(link["nccls_q"]) == 0)
-        except (KeyError, TypeError, ValueError, InvalidResponseError):
-            return False
-
     def list_orders(self, symbol: str | None = None) -> list[Order]:
         wanted = self._symbol(symbol, self.market) if symbol is not None else None
         def read():
@@ -640,8 +608,6 @@ class KB(BaseBroker):
                                                "ccls_clsf": "0", "trd_clsf": "99", "dl_clsf": "1"},
                                     "Record1", "grid_cnt")
             result, seen = [], set()
-            pages = list(pages)
-            page_rows = [item for page in pages for item in page]
             for page in pages:
                 for row in page:
                     if self.market == "KR":
@@ -665,9 +631,9 @@ class KB(BaseBroker):
                         raise InvalidResponseError("KB ledger repeats an order identity")
                     seen.add(number)
                     status = self._quantity_status(quantity, filled, remaining)
-                    if status == "unknown" and self.market == "KR" and self._kr_cancel_closed(
-                            row, number, quantity, filled, remaining, page_rows):
-                        status = "cancelled"
+                    # SSQM2341 sheet38:49 names crct_cncl_ccd but defines no values.
+                    # SSAM1805/1806 crct_clsf is a different field; a linked row
+                    # cannot prove exchange cancellation. Preserve unknown.
                     result.append(Order(id=number, symbol=code, market=self.market, side=side, quantity=quantity,
                                         price=price, filled=filled, remaining=remaining,
                                         fill_price=fill_price if filled == 1 else None, status=status))
