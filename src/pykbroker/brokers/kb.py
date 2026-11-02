@@ -26,6 +26,7 @@ from pykbroker.exceptions import (
     TransportError,
 )
 from pykbroker.models import Balance, CancelRequest, Capabilities, Order, OrderRequest, Position, Quote
+from pykbroker.reject_codes import kb_order_rejection
 from pykbroker.rules.kr import equity_rules
 from pykbroker.safety.rate_limit import credential_rate_limiter
 
@@ -247,7 +248,13 @@ class KB(BaseBroker):
                      "Authorization": "bearer " + self._token},
             body={"dataHeader": {"ipAddr": ip, "macAddr": mac}, "dataBody": body},
         )
-        return _response_body(result)
+        try:
+            return _response_body(result)
+        except InvalidResponseError:
+            rejected = kb_order_rejection(tr, result)
+            if rejected is not None:
+                raise rejected from None
+            raise
 
     def get_quote(self, symbol: str, *, market: str = "KR") -> Quote:
         symbol = self._symbol(symbol, market)
@@ -624,6 +631,9 @@ class KB(BaseBroker):
                         raise InvalidResponseError("KB ledger repeats an order identity")
                     seen.add(number)
                     status = self._quantity_status(quantity, filled, remaining)
+                    # SSQM2341 sheet38:49 names crct_cncl_ccd but defines no values.
+                    # SSAM1805/1806 crct_clsf is a different field; a linked row
+                    # cannot prove exchange cancellation. Preserve unknown.
                     result.append(Order(id=number, symbol=code, market=self.market, side=side, quantity=quantity,
                                         price=price, filled=filled, remaining=remaining,
                                         fill_price=fill_price if filled == 1 else None, status=status))

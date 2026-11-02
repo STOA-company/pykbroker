@@ -114,3 +114,42 @@ def definitive_rejection(broker: str, exc: BaseException):
         return BrokerRejectedError("Broker rejected the request; inspect vendor status securely",
                                    code=code, kind=REJECTED, reason="broker_rejected")
     return None
+
+
+_KB_ORDER_REJECTS: dict[str, RejectCode] = {
+    # HTTP 200 envelope resultCode "200" + processFlag "B" + zero ordr_no on the order TR (see kb_order_rejection).
+    # Only codes whose official B2C JSON sample is an order TR refusal are listed; every other B/processCode
+    # (insufficient funds, price/qty, market closed on ssam1802/skam2101) has no published sample and stays unknown.
+    "1853": RejectCode(REJECTED, "broker_rejected",
+                       "https://openapi.kbsec.com/api/kbs/guide/json/b2c SSAM1801.json (read 2026-11-02): "
+                       "processFlag B, processCode 1853, ordr_no 0000000000, o_msg «제권리 수량이 없습니다.» "
+                       "(tests/fixtures/kb/official/SSAM1801.json)"),
+}
+
+
+#: KB order TRs whose official sample proves a refusal for the listed processCode (code -> TR set).
+_KB_REJECT_TRS = {"1853": {"ssam1801"}}
+
+
+def kb_order_rejection(tr: str, result: Any):
+    """BrokerRejectedError for a KB order answer that the official sample proves «not accepted», else None.
+
+    Requires HTTP-200 envelope resultCode "200", processFlag "B", a listed processCode on its documented TR,
+    and an all-zero/absent order number: a positive order number means the order may exist (stays unknown).
+    """
+    from pykbroker.exceptions import BrokerRejectedError
+
+    if not isinstance(result, Mapping):
+        return None
+    header, data = result.get("dataHeader"), result.get("dataBody")
+    if not isinstance(header, Mapping) or header.get("resultCode") != "200" or header.get("processFlag") != "B":
+        return None
+    code = _safe(header.get("processCode"))
+    entry = _KB_ORDER_REJECTS.get(code) if code else None
+    if entry is None or tr not in _KB_REJECT_TRS.get(code, ()):
+        return None
+    number = data.get("ordr_no") if isinstance(data, Mapping) else None
+    if not isinstance(number, str) or number.strip("0 ") or not number.strip():
+        return None
+    return BrokerRejectedError("KB did not accept the order request; no order replay occurred",
+                               code=code, kind=entry.kind, reason=entry.reason)
