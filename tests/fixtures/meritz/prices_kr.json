@@ -1,0 +1,15 @@
+{
+  "_fixture_note": "SYNTHETIC: built from the openapi.json (2026-10-28) response schema; not a real Meritz response. Values are meaningless.",
+  "rsp_cd": "0000",
+  "rsp_msg": "ok",
+  "data": {
+    "stck_prpr": 70000,
+    "mxpr": 91000,
+    "llam": 49000,
+    "sdpr": 70000,
+    "tmpr_susp_yn": "N",
+    "aspr_unit": 100,
+    "issu_stat_cls_code": "00",
+    "kor_isnm": "fixture-co"
+  }
+}

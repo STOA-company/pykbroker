@@ -14,6 +14,7 @@ from pykbroker.brokers.kb import KB, KB_API_BASE_URL
 from pykbroker.brokers.kis import KIS
 from pykbroker.brokers.kiwoom import Kiwoom
 from pykbroker.brokers.ls import LS, LS_API_BASE_URL
+from pykbroker.brokers.meritz import Meritz
 from pykbroker.brokers.nh import NH
 from pykbroker.brokers.toss import Toss
 from pykbroker.exceptions import ConfigurationError, NotSupportedError, SpecUnverifiedError
@@ -25,7 +26,7 @@ def _locked_client(module_name):
     return {"client": SimpleNamespace(base_url="https://openapi.ls-sec.co.kr:8080")} if module_name == "ls" else {}
 
 
-SHIPPED = [KIS, DBFI, Toss, NH, Kiwoom, LS, KB]
+SHIPPED = [KIS, DBFI, Toss, NH, Kiwoom, LS, KB, Meritz]
 LOCKED = [("ls", "LS"), ("kiwoom", "Kiwoom"), ("nh", "NH"), ("kb", "KB")]
 # Every question the settlement-aware executor asks a broker, whatever the asset class.
 CONTRACT = (
@@ -33,6 +34,12 @@ CONTRACT = (
     "get_quote get_balance get_positions get_rules list_orders capabilities "
     "available_cash available_qty close"
 ).split()
+
+
+@pytest.fixture(autouse=True)
+def _meritz_verified_for_uniformity(monkeypatch):
+    # This module checks the enabled contract; Meritz's own tests retain the default-lock checks.
+    monkeypatch.setattr("pykbroker.brokers.meritz.MERITZ_SPEC_VERIFIED", True)
 
 
 def _built(broker_type, **kwargs):
@@ -43,6 +50,16 @@ def _built(broker_type, **kwargs):
             account="fixture",
             client_options={"app_key": "fixture-key", "token": "fixture", "acct_type": "01"},
             client_factory=lambda **options: SimpleNamespace(**options),
+            allow_live_orders=True,
+            **kwargs,
+        )
+    if broker_type is Meritz:
+        return Meritz(
+            account="fixture",
+            client_options={"app_key": "fixture-key", "token": "fixture-token", "mac_address": "001122AABBCC"},
+            client_factory=lambda **options: SimpleNamespace(
+                **options, request=Mock(side_effect=AssertionError("uniformity must not send HTTP")),
+            ),
             allow_live_orders=True,
             **kwargs,
         )
@@ -165,7 +182,7 @@ def test_experimental_brokers_are_not_reachable_through_the_factory(module_name,
 
 
 def test_the_factory_ships_exactly_the_registered_adapters():
-    assert set(BROKERS) == {"kis", "dbfi", "toss", "kiwoom", "ls", "nh", "kb"}
+    assert set(BROKERS) == {"kis", "dbfi", "toss", "kiwoom", "ls", "nh", "kb", "meritz"}
     assert set(BROKERS.values()) == set(SHIPPED)
 
 

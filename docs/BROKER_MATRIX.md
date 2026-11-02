@@ -16,6 +16,7 @@ lang: ko
 | Kiwoom | KR(KRX) / US 지정가 | 지원(KR 확인취소 수량 대사·US 전량) | 미지원 | 미지원 | REST 어댑터 등록·오프라인 계약 |
 | NH | KR(KRX·NXT) / US 현금 지정가 | 지원(접수 응답만) | 미지원 | KRX·NXT | 나무·N2 REST 등록·공식 스키마 오프라인 계약; 실주문 기본 잠금 |
 | KB | KR(KRX) / US 지정가 | 수량 지정 KR / 전체 잔량 US(접수만) | 미지원 | 미지원 | REST 등록·공식 표본 오프라인 검사; 쓰기 기본 잠금·모의 없음·국내 수량 미확정·미국 보유 표본 불완전 |
+| Meritz | KR(KRX) / US(NYSE·NASDAQ·AMEX) 지정가·정정·취소 | 지원(접수 응답만) | 미지원(실서버 확인 전) | 미지원 | REST 어댑터 등록·합성 fixture 오프라인 계약; 모의계좌 없음(virtual 거절); 쓰기 `MERITZ_SPEC_VERIFIED = False` + `allow_live_orders` 이중 잠금 |
 
 KIS는 정정·취소 가능 주문 목록을, Toss는 열린 주문 목록을 제공합니다. 이 목록에서 사라진 주문을 체결 완료로 추정하지 않습니다. DB 조회는 SDK가 반환한 연속 조회 페이지를 검증·병합합니다. DB의 잔량 0만으로 최종 상태를 확정하지 않습니다.
 

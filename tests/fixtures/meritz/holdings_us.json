@@ -1,0 +1,22 @@
+{
+  "_fixture_note": "SYNTHETIC: built from the openapi.json (2026-10-28) response schema; not a real Meritz response. Values are meaningless.",
+  "rsp_cd": "5766",
+  "rsp_msg": "ok",
+  "tr_cont": "0",
+  "data": [
+    {
+      "iscd": "AAPL.OQ",
+      "ovrs_stck_symb_iscd": "AAPL",
+      "isnm": "fixture-us",
+      "rmnd_clcd": "1",
+      "rmnd_dqty": "4.0000000000",
+      "seln_able_dqty": "4.0000000000",
+      "avrg_unpr": "180.0",
+      "psnt_prc": "190.0",
+      "frcr_vltn_amt": "760.000",
+      "loan_date": "",
+      "loan_dtl_type_code": "",
+      "mtrt_date": ""
+    }
+  ]
+}
