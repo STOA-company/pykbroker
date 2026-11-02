@@ -85,3 +85,10 @@ def test_every_code_names_its_source():
         for code, entry in table.items():
             assert entry.source.strip(), (broker, code)
             assert entry.kind in {"rejected", "token_expired", "rate_limited"}
+
+
+def test_kb_order_code_is_not_a_common_definitive_rejection():
+    from pykbroker.reject_codes import definitive_rejection
+
+    assert "kb" not in DEFINITIVE_REJECTS
+    assert definitive_rejection("kb", _HTTPError({"rsp_cd": "1853"})) is None
