@@ -9,6 +9,8 @@
       "ovrs_stck_symb_iscd": "AAPL",
       "isnm": "fixture-us",
       "rmnd_clcd": "1",
+      "crcd": "USD",
+      "ovrs_exch_vndr_idno": "0537",
       "rmnd_dqty": "4.0000000000",
       "seln_able_dqty": "4.0000000000",
       "avrg_unpr": "180.0",
