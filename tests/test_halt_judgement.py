@@ -1,10 +1,7 @@
-"""A′2-2: a halt is only ever affirmed, never inferred from a code we cannot read.
+"""KIS halt-signal regressions for the official D12021 status-code table.
 
-First round read `iscd_stat_cls_code` alone and treated every value but 58 as
-«trading». 관리(51)·위험(52)·경고(53) are not halts, but they are not a clean bill of
-health either, and the vendor's own temporary-halt flag was ignored entirely. Both of
-those were fail-open: an unreadable state came out as `halted=False`, and `halted=False`
-is what an executor sends orders against.
+The official table transcript and provenance are saved under fixtures/kis/official.
+Unknown codes and temporary/provider halt signals retain their existing behavior.
 """
 
 from types import SimpleNamespace
@@ -16,7 +13,8 @@ from pykbroker.brokers.kis import KIS
 
 # _pykis/scope/stock/api/response/price.py:4,16 — both fields, on the same payload.
 NORMAL, HALTED = "00", "58"
-DESIGNATED = ["51", "52", "53", "54", "55", "57", "59", "  ", "99"]
+DESIGNATED = ["51", "52", "53", "54", "55", "57", "59"]
+UNKNOWN = ["", "  ", "56", "99", "unexpected"]
 
 
 def _kis(*, status=None, temp=None, **kwargs):
@@ -40,9 +38,9 @@ def _halted(**kwargs):
 
 
 @pytest.mark.parametrize("temp", [True, "Y", "y"])
-def test_the_temporary_halt_flag_alone_halts(temp):
-    assert _halted(temp=temp) is True
-    assert _halted(status=NORMAL, temp=temp) is True
+@pytest.mark.parametrize("status", [NORMAL, HALTED, *DESIGNATED, *UNKNOWN, None])
+def test_the_temporary_halt_flag_alone_halts(temp, status):
+    assert _halted(status=status, temp=temp) is True
 
 
 @pytest.mark.parametrize("temp", [False, "N"])
@@ -55,12 +53,20 @@ def test_the_halt_code_still_halts_on_its_own():
     assert _halted(status=HALTED, temp=False) is True
 
 
-# --- codes we have not verified stay unknown -------------------------------
+# --- published non-halt designations and unknown values --------------------
 
 
 @pytest.mark.parametrize("status", DESIGNATED)
-def test_a_code_that_is_not_58_or_00_is_unknown_not_trading(status):
-    """Bypass 1: 관리·위험·경고 종목이 «정지 아님»으로 통과하던 자리."""
+def test_a_published_non_halt_code_is_not_a_halt(status):
+    assert _halted(status=status) is False
+    assert _halted(status=status, temp="N") is False
+    assert _halted(status=status, temp="Y") is True
+    assert _halted(status=status, temp="maybe") is None
+
+
+@pytest.mark.parametrize("status", UNKNOWN)
+def test_an_undocumented_code_is_unknown_not_trading(status):
+    """Unpublished and empty codes cannot authorize trading."""
     assert _halted(status=status) is None
     assert _halted(status=status, temp=False) is None
     assert _kis(status=status).get_rules("005930").tradable is False
@@ -78,7 +84,7 @@ def test_a_silent_payload_stays_unknown():
 # --- a halt notice is never overwritten ------------------------------------
 
 
-@pytest.mark.parametrize("status", [NORMAL, *DESIGNATED, None])
+@pytest.mark.parametrize("status", [NORMAL, *DESIGNATED, *UNKNOWN, None])
 def test_a_halt_notice_survives_whatever_the_price_row_says(status):
     """Bypass 2: 통보가 온 정지를 거래소 행이 «정상»이라고 덮어쓰지 못한다."""
     assert _halted(status=status, halt_provider=lambda symbol: True) is True
