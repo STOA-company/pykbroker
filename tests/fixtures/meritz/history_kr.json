@@ -1,0 +1,24 @@
+{
+  "_fixture_note": "SYNTHETIC: built from the openapi.json (2026-10-28) response schema; not a real Meritz response. Values are meaningless.",
+  "rsp_cd": "5766",
+  "rsp_msg": "ok",
+  "tr_cont": "0",
+  "data": [
+    {
+      "oder_no": 1234,
+      "iscd": "A005930",
+      "deal_cls_code": "2",
+      "odqt": 3,
+      "oder_unpr": 70000,
+      "total_cntg_qty": 1,
+      "cntg_unpr": 70000,
+      "ncnt_qty": 2,
+      "oder_pros_stat_cls_code": "1",
+      "orgl_oder_no": 0,
+      "rctf_cncl_cls_code": "1",
+      "rctf_qty": 0,
+      "cncl_qty": 0,
+      "oder_cls_code": "01"
+    }
+  ]
+}

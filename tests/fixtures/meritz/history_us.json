@@ -1,0 +1,23 @@
+{
+  "_fixture_note": "SYNTHETIC: built from the openapi.json (2026-10-28) response schema; not a real Meritz response. Values are meaningless.",
+  "rsp_cd": "5766",
+  "rsp_msg": "ok",
+  "tr_cont": "0",
+  "data": [
+    {
+      "oder_date": "20261102",
+      "oder_no": 77,
+      "orgl_oder_no": 0,
+      "iscd": "AAPL.OQ",
+      "seln_byov_clcd": "2",
+      "oder_dqty": "2.0000",
+      "ovrs_stck_oder_prc": "190.0000",
+      "cntg_dqty": "0",
+      "cntg_crnc_prc": "0",
+      "ncnt_odqt": 2,
+      "ovrs_stck_oder_stat_cls_code": "0",
+      "oder_rctf_cncl_cls_code": "0",
+      "aspr_type_code": "2"
+    }
+  ]
+}

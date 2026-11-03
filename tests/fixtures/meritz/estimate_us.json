@@ -1,0 +1,13 @@
+{
+  "_fixture_note": "SYNTHETIC: built from the openapi.json (2026-10-28) response schema; not a real Meritz response. Values are meaningless.",
+  "rsp_cd": "5766",
+  "rsp_msg": "ok",
+  "tr_cont": "0",
+  "data": [
+    {
+      "crcd": "USD",
+      "stnd_deps_camt": "5000.00",
+      "oder_crnc_oder_able_camt": "4800.00"
+    }
+  ]
+}
