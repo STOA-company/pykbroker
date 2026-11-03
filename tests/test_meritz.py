@@ -569,6 +569,7 @@ def row(number, qty, filled, remaining, kind="1", origin=0, cancelled=0, rewritt
         "rctf_cncl_cls_code": kind,
         "rctf_qty": rewritten,
         "cncl_qty": cancelled,
+        "cnfr_qty": cancelled,
         "oder_cls_code": "01",
     }
 
@@ -590,11 +591,11 @@ def test_order_statuses_from_the_list():
             row(3, 3, 3, 0),
             row(4, 3, 0, 0, stat="3"),
             row(5, 3, 1, 0, cancelled=2),
-            row(50, 2, 0, 0, kind="3", origin=5, cancelled=2),
+            row(50, 2, 0, 0, kind="3", origin=5, cancelled=2, stat="2"),
             row(6, 3, 0, 0, cancelled=3),
-            row(60, 3, 0, 0, kind="3", origin=6, cancelled=3),
+            row(60, 3, 0, 0, kind="3", origin=6, cancelled=3, stat="2"),
             row(7, 3, 0, 3, rewritten=3),
-            row(70, 3, 0, 3, kind="2", origin=7, rewritten=3),
+            row(70, 3, 0, 3, kind="2", origin=7, rewritten=3, stat="2"),
         ]
     )
     assert got[("1")] == ("open", 0, 3) and got["2"] == ("partial", 1, 2) and got["3"] == ("filled", 3, 0)
@@ -605,7 +606,7 @@ def test_order_statuses_from_the_list():
 def test_numbers_that_do_not_add_up_are_unknown():
     assert status_of([row(1, 3, 1, 5)])["1"][0] == "unknown"  # the venue's remainder disagrees
     assert (
-        status_of([row(3, 3, 3, 0, cancelled=1), row(30, 1, 0, 0, kind="3", origin=3, cancelled=1)])["3"][0]
+        status_of([row(3, 3, 3, 0, cancelled=1), row(30, 1, 0, 0, kind="3", origin=3, cancelled=1, stat="2")])["3"][0]
         == "unknown"
     )
 
@@ -918,3 +919,71 @@ def test_string_zero_warning_code_is_accepted_and_string_one_is_rejected(unlocke
     broker, _, _ = make({ORDER_BUY: [bad]}, safety=live_safety)
     with pytest.raises(BrokerRejectedError):
         broker.place_order(buy('k2'))
+
+
+def test_us_balance_only_counts_known_usd_us_exchanges():
+    body = fx("holdings_us")
+    base = body["data"][0]
+    body["data"] = [{**base, "iscd": sym, "ovrs_stck_symb_iscd": sym, "crcd": cur,
+                     "ovrs_exch_vndr_idno": exch, "frcr_vltn_amt": val}
+                    for sym, cur, exch, val in [("NAS", "USD", "0537", "10"), ("NYS", "USD", "0321", "20"),
+                    ("AMX", "USD", "0066", "30"), ("TYO", "JPY", "0106", "2000"), ("HKG", "HKD", "0104", "3000")]]
+    broker, _, _ = make({("GET", "/accounts/v1/me/overseas/holdings"): [body],
+                        ("GET", "/trading/v1/overseas/orders/estimate"): [fx("estimate_us")]}, **US)
+    assert {p.symbol for p in broker.get_positions()} == {"NAS", "NYS", "AMX"}
+    assert broker.get_balance().position_value == Decimal(60)
+
+@pytest.mark.parametrize("field", ["crcd", "ovrs_exch_vndr_idno"])
+def test_us_balance_refuses_unidentifiable_position(field):
+    body = fx("holdings_us")
+    body["data"][0].pop(field)
+    broker, _, _ = make({("GET", "/accounts/v1/me/overseas/holdings"): [body]}, **US)
+    with pytest.raises(InvalidResponseError):
+        broker.get_positions()
+
+@pytest.mark.parametrize(
+    "stat, expected", [("0", "unknown"), ("1", "open"), ("2", "open"), ("3", "rejected"), ("9", "unknown")]
+)
+def test_kr_original_status_table(stat, expected):
+    assert status_of([row(1, 3, 0, 3, stat=stat)])["1"][0] == expected
+
+@pytest.mark.parametrize("kind", ["2", "3"])
+@pytest.mark.parametrize(
+    "stat, expected", [("0", "unknown"), ("1", "unknown"), ("2", "confirmed"), ("3", "open"), ("9", "unknown")]
+)
+def test_kr_child_status_table(kind, stat, expected):
+    parent_remaining = 0 if stat == "2" and kind == "3" else 3
+    child = row(2, 3, 0, 0, kind=kind, origin=1, cancelled=3, rewritten=3, stat=stat)
+    got = status_of([row(1, 3, 0, parent_remaining), child])["1"][0]
+    assert got == ({"confirmed": "cancelled" if kind == "3" else "unknown"}.get(expected, expected))
+
+def test_kr_cancel_requires_confirmed_quantity_and_consistent_remaining():
+    child = row(2, 3, 0, 0, kind="3", origin=1, cancelled=3, stat="2")
+    child["cnfr_qty"] = 2
+    assert status_of([row(1, 3, 0, 0), child])["1"][0] == "unknown"
+    child["cnfr_qty"] = 3
+    assert status_of([row(1, 3, 0, 3), child])["1"][0] == "unknown"
+
+@pytest.mark.parametrize("kind", ["0", "1"])
+@pytest.mark.parametrize(
+    "stat, expected", [("0", "open"), ("1", "rejected"), ("2", "rejected"), ("3", "cancelled"),
+                       ("4", "unknown"), ("9", "unknown")]
+)
+def test_us_original_status_table(kind, stat, expected):
+    base = fx("history_us")["data"][0]
+    base.update(oder_rctf_cncl_cls_code=kind, ovrs_stck_oder_stat_cls_code=stat, orgl_oder_no=76 if kind == "1" else 0)
+    broker, _, _ = make({("GET", US_HISTORY): [history(base)]}, **US)
+    assert broker.list_orders()[0].status == expected
+
+@pytest.mark.parametrize("kind", ["1", "2"])
+@pytest.mark.parametrize(
+    "stat, expected", [("0", "confirmed"), ("1", "open"), ("2", "open"), ("3", "unknown"),
+                       ("4", "unknown"), ("9", "unknown")]
+)
+def test_us_child_status_table(kind, stat, expected):
+    base = fx("history_us")["data"][0]
+    child = {**base, "oder_no": 78, "orgl_oder_no": 77, "oder_rctf_cncl_cls_code": kind,
+             "ovrs_stck_oder_stat_cls_code": stat}
+    broker, _, _ = make({("GET", US_HISTORY): [history(base, child)]}, **US)
+    parent = next(o for o in broker.list_orders() if o.id == "77")
+    assert parent.status == ({"confirmed": "cancelled" if kind == "2" else "unknown"}.get(expected, expected))

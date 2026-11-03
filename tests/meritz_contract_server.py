@@ -207,7 +207,7 @@ class ContractServer:
                     original["cncl_qty"] += body["odqt"]
                     original["cnfr_qty"] += body["odqt"]
                 row.update(rctf_cncl_cls_code="3", odqt=body["odqt"], total_cntg_qty=0, ncnt_qty=0,
-                           cncl_qty=body["odqt"], cnfr_qty=body["odqt"])
+                           cncl_qty=body["odqt"], cnfr_qty=body["odqt"], oder_pros_stat_cls_code="2")
         else:
             assert body["oder_date"] == original["oder_date"]
             assert body["odqt"] <= Decimal(original["oder_dqty"]) - Decimal(original["cntg_dqty"])

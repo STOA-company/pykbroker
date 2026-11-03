@@ -588,6 +588,12 @@ class Meritz(BaseBroker):
         for row in rows:
             if str(row.get("rmnd_clcd")) != "1":  # 소수·대출 잔고는 이 어댑터의 정수 주문 경로 밖
                 continue
+            exchange = str(row.get("ovrs_exch_vndr_idno") or "").strip()
+            currency = str(row.get("crcd") or "").strip()
+            if exchange in {"0104", "0215", "0106"} and currency:
+                continue
+            if exchange not in {"0537", "0321", "0066"} or currency != "USD":
+                raise InvalidResponseError("Meritz overseas holding has an unidentifiable market or currency")
             held = whole(row["rmnd_dqty"])
             positions.append(
                 Position(
@@ -644,21 +650,32 @@ class Meritz(BaseBroker):
             quantity, filled = whole(row["odqt"]), whole(row["total_cntg_qty"])
             cancelled = 0
             modified = False
+            uncertain = False
             for other in touched.get(number, []):
-                if str(other.get("oder_pros_stat_cls_code")) == "3":
-                    continue  # a refused cancel/modify changed nothing
-                if str(other["rctf_cncl_cls_code"]) == "3":
-                    cancelled += whole(other["cncl_qty"])
+                child_stat = str(other.get("oder_pros_stat_cls_code"))
+                if child_stat == "3":
+                    continue
+                if child_stat != "2":
+                    uncertain = True
+                elif str(other["rctf_cncl_cls_code"]) == "3":
+                    confirmed = whole(other["cnfr_qty"]) if other.get("cnfr_qty") is not None else None
+                    if confirmed is None or confirmed != whole(other["cncl_qty"]):
+                        uncertain = True
+                    else:
+                        cancelled += confirmed
                 else:
                     modified = True
+            stat = str(row.get("oder_pros_stat_cls_code"))
             status, remaining = self._derive(
-                rejected=str(row.get("oder_pros_stat_cls_code")) == "3",
+                rejected=stat == "3",
                 quantity=quantity,
                 filled=filled,
                 cancelled=cancelled,
                 venue_remaining=whole(row["ncnt_qty"]),
-                touched=bool(touched.get(number)),
+                touched=False,
             )
+            if uncertain or stat not in {"1", "2", "3"}:
+                status, remaining = "unknown", None
             if modified:
                 # Official corrections: KR changes all point at the FIRST order, so how a modify and a later cancel
                 # split the quantity is not shown by the ledger. Unknown, never a guess.
@@ -690,12 +707,12 @@ class Meritz(BaseBroker):
         left = quantity - filled - cancelled
         if left < 0:
             return "unknown", 0
+        if not touched and venue_remaining != left:
+            return "unknown", left  # the venue's own remainder disagrees with the arithmetic
         if filled == quantity and not cancelled:
             return "filled", 0
         if left == 0:
             return ("cancelled" if cancelled else "filled"), 0
-        if not touched and venue_remaining != left:
-            return "unknown", left  # the venue's own remainder disagrees with the arithmetic
         return ("partial" if filled else "open"), left
 
     def _open_sell_quantity(self) -> dict[str, int]:
@@ -726,8 +743,13 @@ class Meritz(BaseBroker):
             quantity, filled = whole(row["oder_dqty"]), whole(row["cntg_dqty"])
             cancelled = 0
             modified = False
+            uncertain = False
             for other in touched.get(number, []):
-                if str(other.get("ovrs_stck_oder_stat_cls_code")) in {"1", "2", "4"}:
+                child_stat = str(other.get("ovrs_stck_oder_stat_cls_code"))
+                if child_stat in {"1", "2"}:
+                    continue
+                if child_stat != "0":
+                    uncertain = True
                     continue
                 if str(other.get("oder_rctf_cncl_cls_code")) == "1":
                     modified = True
@@ -744,6 +766,8 @@ class Meritz(BaseBroker):
             )
             if stat == "3" and status in {"open", "partial"}:
                 status, remaining = "cancelled", 0  # 자동취소(체결후): the rest was cancelled by the venue
+            if uncertain or stat not in {"0", "1", "2", "3"}:
+                status, remaining = "unknown", None
             if modified:
                 status, remaining = "unknown", None  # superseded by its replacement: that number carries the order
             orders.append(
