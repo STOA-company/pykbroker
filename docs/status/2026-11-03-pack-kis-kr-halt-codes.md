@@ -1,0 +1,11 @@
+# D12021 — 한투 국내 halted 판정
+- 고객 장면: 삼성전자 1주 확인 시 정상 상태 코드 55가 halted 거부로 끝나던 경로.
+- 변경: `src/pykbroker/brokers/kis.py`의 공식 비정지 코드 집합만 확장.
+- 정지: 58. 비정지: 00·51·52·53·54·55·57·59. 표 밖·빈 값: None.
+- 공식 표 전사·출처·조회일·수록 경위: `tests/fixtures/kis/official/inquire-price-status-codes.md`.
+- 전사는 발주자 제공이며 이번 작업에서 증권사 네트워크 재조회 없음.
+- temp_stop_yn·외부 정지 통보 우선 처리 불변. 읽을 수 없는 신호는 거래를 열지 않음.
+- SDK 회귀: `tests/test_halt_judgement.py`의 공식 코드·미상·빈 값·임시정지·통보.
+- 소비자: quantus-trader의 pykbroker gitlink가 이 수정 커밋을 가리켜야 함.
+- 소비자 계약 모의: code55/N 주문 POST1, code58/N·55/Y·99/N·빈 값/N POST0.
+- 검증 경계: 격리 runner로 관련 시험·정적검사만; 실주문·dev/운영 경로는 안 걸어 봄.

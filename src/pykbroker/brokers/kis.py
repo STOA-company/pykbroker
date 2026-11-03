@@ -20,10 +20,11 @@ from ._common import BaseBroker, check_response, decimal, field, optional_price,
 
 # KIS 국내주식 현재가 시세 output — two independent halt signals, both on the price row
 # (_pykis/scope/stock/api/response/price.py:4 iscd_stat_cls_code, :16 temp_stop_yn).
-# 58 is 거래정지 and 00 is 그외(정상). 51 관리·52 위험·53 경고 and friends are neither:
-# they are restrictions we have not verified, so they read as «unknown», never as «trading».
+# Official iscd_stat_cls_code table: tests/fixtures/kis/official/inquire-price-status-codes.md:11-15.
+# Only 58 means 거래정지. The other published codes below are non-halt designations;
+# codes outside that table stay unknown. temp_stop_yn remains an independent halt signal.
 KR_HALT_CODES = {"58"}
-KR_TRADING_CODES = {"00"}
+KR_TRADING_CODES = {"00", "51", "52", "53", "54", "55", "57", "59"}
 YES_NO = {"Y": True, "N": False}
 
 VENUES = {"NASDAQ": ("NAS", "NASD"), "NYSE": ("NYS", "NYSE"), "AMEX": ("AMS", "AMEX")}
