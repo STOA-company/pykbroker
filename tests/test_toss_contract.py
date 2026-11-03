@@ -354,3 +354,126 @@ def test_toss_kr_limit_sell_translation_unchanged(live_safety):
         "005930", "SELL", "LIMIT", "DAY", "70000"
     )
     broker.close()
+@pytest.mark.parametrize("key", ["code", "errorCode"])
+@pytest.mark.parametrize("status,code,unknown", [
+    (422, "amount-order-outside-regular-hours", False),
+    (422, "fractional-quantity-outside-regular-hours", False),
+    (422, "account-restricted", False),
+    (422, "idempotency-key-conflict", True),
+    (409, "request-in-progress", True),
+    (408, "request-timeout", True),
+    (429, "rate-limit-exceeded", False),
+    (401, "expired-token", False),
+    (401, "token-revoked", False),
+    (500, "internal-error", True),
+    (503, "internal-error", True),
+])
+def test_broker_body_real_sdk_to_write_error(key, status, code, unknown):
+    """Official nested code/message; errorCode is compatibility, not an official example."""
+    pytest.importorskip("toss_openapi")
+    import httpx
+    from toss_openapi.transport.http import HttpTransport
+
+    from pykbroker.brokers.toss import _TossBridge
+    from pykbroker.exceptions import TossRejectedError, TransportError
+
+    error = HttpTransport._error_from_response(
+        "POST", "/api/v1/orders", httpx.Response(status, json={"error": {key: code, "message": "fixture-원문"}})
+    )
+    with pytest.raises(TransportError if unknown else TossRejectedError) as info:
+        _TossBridge.__new__(_TossBridge)._raise_write_error(error)
+    if not unknown:
+        assert (info.value.code, info.value.message, info.value.http_status) == (code, "fixture-원문", status)
+        expected = (
+            ("token_expired", "token_expired")
+            if code in {"expired-token", "token-revoked"} else ("rejected", None)
+        )
+        assert (info.value.kind, info.value.reason) == expected
+    assert "fixture-원문" not in str(info.value)
+    assert "fixture-원문" not in repr(info.value)
+
+
+@pytest.mark.parametrize("content", [b"", b"not-json", b"[]", b"null"])
+@pytest.mark.parametrize("status", [422, 500])
+def test_broker_body_empty_or_malformed_keeps_existing_classification(content, status):
+    pytest.importorskip("toss_openapi")
+    import httpx
+    from toss_openapi.transport.http import HttpTransport
+
+    from pykbroker.brokers.toss import _TossBridge
+    from pykbroker.exceptions import TossRejectedError, TransportError
+
+    error = HttpTransport._error_from_response("POST", "/orders", httpx.Response(status, content=content))
+    with pytest.raises(TossRejectedError if status == 422 else TransportError):
+        _TossBridge.__new__(_TossBridge)._raise_write_error(error)
+
+
+def test_broker_body_raw_code_does_not_change_toss_classification():
+    pytest.importorskip("toss_openapi")
+    from toss_openapi.errors import TossApiError
+
+    from pykbroker.brokers.toss import _TossBridge
+    from pykbroker.exceptions import TossRejectedError
+
+    code = " expired-token "
+    with pytest.raises(TossRejectedError) as info:
+        _TossBridge.__new__(_TossBridge)._raise_write_error(TossApiError("safe", status_code=401, code=code))
+    assert info.value.code == code
+    assert (info.value.kind, info.value.reason) == ("rejected", None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", ["code", "errorCode"])
+async def test_broker_body_nvda_amount_http_through_submit(key, monkeypatch, caplog):
+    pytest.importorskip("toss_openapi")
+    import json
+    import logging
+
+    import httpx
+    from toss_openapi.config import TossSettings
+    from toss_openapi.transport.http import HttpTransport
+
+    from pykbroker.exceptions import TossRejectedError
+    from tests.test_toss_us_fractional import _real_bridge
+
+    monkeypatch.setenv("TOSS_LIVE_TRADING_ENABLED", "true")  # guard only; MockTransport handles every POST.
+    calls = []
+
+    def reject(request):
+        calls.append(json.loads(request.content))
+        return httpx.Response(422, json={"error": {
+            key: "amount-order-outside-regular-hours", "message": "fixture-NVDA 거절 원문"}})
+
+    with caplog.at_level(logging.DEBUG):
+        async with httpx.AsyncClient(base_url="https://test.invalid", transport=httpx.MockTransport(reject)) as client:
+            transport = HttpTransport(TossSettings(), client=client)
+            bridge_type, manager = _real_bridge(transport)
+            with pytest.raises(TossRejectedError) as info:
+                await bridge_type().submit_order(symbol="NVDA", side="BUY", order_type="MARKET",
+                                                order_amount="6.66", quantity=None, price=None,
+                                                time_in_force=None, client_order_id="fixture-nvda-intent")
+    assert len(calls) == 1 and manager.calls == 1
+    assert calls[0]["symbol"] == "NVDA" and calls[0]["orderAmount"] == "6.66"
+    assert (info.value.code, info.value.message, info.value.http_status) == (
+        "amount-order-outside-regular-hours", "fixture-NVDA 거절 원문", 422)
+    assert "fixture-NVDA 거절 원문" not in caplog.text
+
+
+def test_broker_body_sdk_timeout_remains_unknown():
+    pytest.importorskip("toss_openapi")
+    import httpx
+    from toss_openapi.config import TossSettings
+    from toss_openapi.transport.http import HttpTransport
+
+    from pykbroker.brokers._common import BaseBroker
+    from pykbroker.exceptions import TransportError
+
+    async def call():
+        def timeout(request):
+            raise httpx.ReadTimeout("fixture-timeout", request=request)
+
+        async with httpx.AsyncClient(base_url="https://test.invalid", transport=httpx.MockTransport(timeout)) as client:
+            await HttpTransport(TossSettings(), client=client).request("POST", "/api/v1/orders")
+
+    with pytest.raises(TransportError):
+        BaseBroker(account="fixture")._call(lambda: asyncio.run(call()))

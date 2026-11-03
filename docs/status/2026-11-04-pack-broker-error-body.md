@@ -1,0 +1,32 @@
+# Broker error metadata contract — 2026-11-04
+
+- Scope: preserve details on existing rejections; no classification table, write replay, network, account state or safety policy change.
+- Base: `5fb05b789ea49b7794f8554b6238017df20cecae`.
+- SDK source verified with this change: toss-openapi `418476e122e146f920ef2552e30d0f5c6c42ffed`.
+- No existing Toss dependency SHA pin exists: pyproject.toml:32 is an httpx/settings extra; README.md:75 and docs/getting-started.md:31 require external source/injection. No new dependency mechanism was added.
+- `src/pykbroker/exceptions.py:62`: code/message/http_status are explicit metadata; message is unmasked, max 4096 characters, None when absent/invalid; str/repr keep the safe summary.
+- `src/pykbroker/exceptions.py:82` and `src/pykbroker/brokers/toss.py:207`: existing normalized code still decides Toss kind/reason, then code retains the raw value; HTTP status and raw SDK message propagate.
+- Toss idempotency-key-conflict (any status), 409 request-in-progress, 408 and 5xx remain TransportError; 429 remains the prior rejection kind/reason.
+- `src/pykbroker/brokers/_common.py:103`: KIS msg_cd/msg1 and DBFI rsp_cd/rsp_msg propagate from direct envelopes; only an available status_code is attached.
+- `src/pykbroker/reject_codes.py:105` and `:129`: after the unchanged classifier decides rejection, Pykis ValueError envelopes and HTTP-error response bodies supply raw metadata; normalized lookup continues to decide kind/reason.
+- `src/pykbroker/reject_codes.py:159`: KB processCode/o_msg preserved from the existing official-only refusal branch; HTTP status is not inferred from resultCode.
+- KB source: `tests/fixtures/kb/official/SSAM1801.json:1` output; the existing 1853 refusal and zero-order-number requirements remain.
+- `src/pykbroker/brokers/kiwoom.py:111`: return_code/return_msg preserved; integer-only return_code alias remains; 1999/malformed write codes remain unknown.
+- Kiwoom source: `tests/fixtures/kiwoom/official/error_codes.json:1`, `official/SOURCE.md:3` and `official/kt10000.json:12`; failure response combines documented field shape and official table value offline.
+- `src/pykbroker/brokers/nh.py:438`, `:441`, `:754`, `:769`: existing read, authorization and definite write rejections retain rsp_cd and rsp_msg or message.usr_msg plus measured HTTP status.
+- NH field source: `tests/fixtures/nh/official/gbstock.json:544`; reject-code provenance remains `docs/status/2026-10-29-pack-nh-ls-reject-cancel.md:1`.
+- `src/pykbroker/brokers/ls.py:335`, `:341`: existing write/read rejections preserve rsp_cd/rsp_msg. The LS write allowlist remains empty; no new refusal code is enabled.
+- KIS/DBFI SDK envelope tests and NH/LS failure values are compatibility mocks, not claimed as official broker recordings. Existing source provenance: docs/notice.md:17 and fixture SOURCE.md files.
+- Missing HTTP status stays None (Kiwoom/LS/KB JSON boundaries); no body field or business result is treated as an HTTP status.
+- `tests/test_reject_codes.py:99`: all metadata branches, raw code with normalized classification, KB official response, Kiwoom official table, NH statuses and message bound/privacy.
+- `tests/test_toss_contract.py:371`: actual SDK parser → write-error mapping, code/errorCode × documented 422/409 cases, 408/429/5xx/token errors; malformed/empty JSON unchanged.
+- `tests/test_toss_contract.py:427`: actual MockTransport → HttpTransport → submit_order → TossRejectedError for NVDA 6.66, one POST, raw message absent from logs.
+- `tests/test_toss_contract.py:462`: actual SDK timeout remains TransportError at the common boundary.
+- Same-kind inventory: _common check_response and BaseBroker._call; reject_codes definitive_rejection and kb_order_rejection; Toss write mapping; Kiwoom _unpack; NH read/auth/write; LS read/write (all updated).
+- Remaining Toss submission/cancel acknowledgement errors at brokers/toss.py:642/:673 have no documented vendor error payload; generic summaries remain.
+- Experimental Kiwoom is outside the factory (factory.py:11/:18), its order path is disabled; no dead/experimental path was changed. meritz is absent; PREMISE.md records the omission.
+- Offline regression: red-broker 23 fail/16 pass, green-broker 39 pass; final 12 related files: 1119 pass, 1 existing KB cancellation xfail, zero skipped.
+- SDK related error file: 19 pass. External evidence: `/home/quantus/coding/cx-fix-brokerbody-1104/worker-artifacts/` red/green logs, source manifests and same-kind inventories.
+- Scoped Ruff: no new diagnostics; four pre-existing findings match the approved base exactly (lint-broker-delta.log). SDK scoped Ruff passes.
+- Isolation: existing Python 3.11 venv, worktree src imports, bwrap unshare-net, /run and /var/run hidden, docker/rm blocked, short tracebacks, mock inputs only.
+- Review scope ends at local commits. Claude Opus independent review, push/PR and any customer/live verification belong to the main owner; no deployment was attempted.

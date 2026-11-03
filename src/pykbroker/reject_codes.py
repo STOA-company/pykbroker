@@ -102,6 +102,30 @@ def classify(broker: str, exc: BaseException) -> tuple[str | None, RejectCode | 
     return code, entry, by_envelope
 
 
+def _rejection_details(exc: BaseException) -> dict[str, Any]:
+    """Read metadata only after the existing classifier proves a rejection."""
+    if isinstance(exc, ValueError) and exc.args and isinstance(exc.args[0], Mapping):
+        payload = exc.args[0]
+        detail = payload.get("detail")
+        if isinstance(detail, Mapping) and "rt_cd" in detail:
+            return {"code": payload.get("code"), "vendor_message": payload.get("msg"),
+                    "http_status": payload.get("status_code")}
+        if isinstance(detail, Mapping) and isinstance(detail.get("text"), Mapping):
+            body = detail["text"]
+            return {"code": body.get("msg_cd"), "vendor_message": body.get("msg1"),
+                    "http_status": payload.get("status_code")}
+    response = getattr(exc, "response", None)
+    try:
+        body = response.json()
+    except Exception:
+        return {}
+    if not isinstance(body, Mapping):
+        return {}
+    return {"code": body.get("rsp_cd") or body.get("msg_cd"),
+            "vendor_message": body.get("rsp_msg") if "rsp_cd" in body else body.get("msg1"),
+            "http_status": getattr(response, "status_code", None)}
+
+
 def definitive_rejection(broker: str, exc: BaseException):
     """BrokerRejectedError when the vendor's answer proves «not accepted», else None (stays unknown)."""
     from pykbroker.exceptions import BrokerRejectedError
@@ -109,10 +133,11 @@ def definitive_rejection(broker: str, exc: BaseException):
     code, entry, by_envelope = classify(broker, exc)
     if entry is not None:
         return BrokerRejectedError(
-            "Broker did not accept the request", code=code, kind=entry.kind, reason=entry.reason)
+            "Broker did not accept the request", kind=entry.kind, reason=entry.reason,
+            **_rejection_details(exc))
     if by_envelope:
         return BrokerRejectedError("Broker rejected the request; inspect vendor status securely",
-                                   code=code, kind=REJECTED, reason="broker_rejected")
+                                   kind=REJECTED, reason="broker_rejected", **_rejection_details(exc))
     return None
 
 
@@ -152,4 +177,5 @@ def kb_order_rejection(tr: str, result: Any):
     if not isinstance(number, str) or number.strip("0 ") or not number.strip():
         return None
     return BrokerRejectedError("KB did not accept the order request; no order replay occurred",
-                               code=code, kind=entry.kind, reason=entry.reason)
+                               code=header.get("processCode"), kind=entry.kind, reason=entry.reason,
+                               vendor_message=data.get("o_msg") if isinstance(data, Mapping) else None)
