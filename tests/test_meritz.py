@@ -921,25 +921,58 @@ def test_string_zero_warning_code_is_accepted_and_string_one_is_rejected(unlocke
         broker.place_order(buy('k2'))
 
 
-def test_us_balance_only_counts_known_usd_us_exchanges():
+@pytest.mark.parametrize(
+    "other_symbol, other_currency, other_exchange",
+    [
+        ("TYO", "JPY", "0106"),
+        ("HKG", "HKD", "0104"),
+        ("SHA", "CNY", "0215"),
+        ("SHE", "CNY", "0214"),
+        ("OSA", "JPY", "0107"),
+        ("JAS", "JPY", "0112"),
+        ("HCM", "VND", "0770"),
+        ("HAN", "VND", "0771"),
+        ("OTHER", "GBP", "9999"),
+    ],
+)
+def test_us_balance_only_counts_known_usd_us_exchanges(other_symbol, other_currency, other_exchange):
     body = fx("holdings_us")
     base = body["data"][0]
     body["data"] = [{**base, "iscd": sym, "ovrs_stck_symb_iscd": sym, "crcd": cur,
                      "ovrs_exch_vndr_idno": exch, "frcr_vltn_amt": val}
                     for sym, cur, exch, val in [("NAS", "USD", "0537", "10"), ("NYS", "USD", "0321", "20"),
-                    ("AMX", "USD", "0066", "30"), ("TYO", "JPY", "0106", "2000"), ("HKG", "HKD", "0104", "3000")]]
+                    ("AMX", "USD", "0066", "30"), (other_symbol, other_currency, other_exchange, "2000")]]
     broker, _, _ = make({("GET", "/accounts/v1/me/overseas/holdings"): [body],
                         ("GET", "/trading/v1/overseas/orders/estimate"): [fx("estimate_us")]}, **US)
     assert {p.symbol for p in broker.get_positions()} == {"NAS", "NYS", "AMX"}
     assert broker.get_balance().position_value == Decimal(60)
 
-@pytest.mark.parametrize("field", ["crcd", "ovrs_exch_vndr_idno"])
-def test_us_balance_refuses_unidentifiable_position(field):
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("crcd", None),
+        ("ovrs_exch_vndr_idno", None),
+        ("crcd", ""),
+        ("ovrs_exch_vndr_idno", ""),
+        ("crcd", " "),
+        ("ovrs_exch_vndr_idno", " "),
+        ("crcd", "JPY"),
+        ("ovrs_exch_vndr_idno", "0000"),
+        ("ovrs_exch_vndr_idno", "0104"),
+        ("ovrs_exch_vndr_idno", "0214"),
+    ],
+)
+def test_us_balance_refuses_unidentifiable_position(field, value):
     body = fx("holdings_us")
-    body["data"][0].pop(field)
+    if value is None:
+        body["data"][0].pop(field)
+    else:
+        body["data"][0][field] = value
     broker, _, _ = make({("GET", "/accounts/v1/me/overseas/holdings"): [body]}, **US)
     with pytest.raises(InvalidResponseError):
         broker.get_positions()
+    with pytest.raises(InvalidResponseError):
+        broker.get_balance()
 
 @pytest.mark.parametrize(
     "stat, expected", [("0", "unknown"), ("1", "open"), ("2", "open"), ("3", "rejected"), ("9", "unknown")]

@@ -590,7 +590,7 @@ class Meritz(BaseBroker):
                 continue
             exchange = str(row.get("ovrs_exch_vndr_idno") or "").strip()
             currency = str(row.get("crcd") or "").strip()
-            if exchange in {"0104", "0215", "0106"} and currency:
+            if exchange and exchange not in {"0537", "0321", "0066"} and currency and currency != "USD":
                 continue
             if exchange not in {"0537", "0321", "0066"} or currency != "USD":
                 raise InvalidResponseError("Meritz overseas holding has an unidentifiable market or currency")
