@@ -333,11 +333,13 @@ class LS(RestBroker):
             if write:
                 if self._definite_rejects and _ls_definite_write_failure(result, tr):
                     raise BrokerRejectedError("LS did not accept the order request; no order replay occurred",
-                                              code=_reject_code(code), kind="rejected", reason="broker_rejected")
+                                              code=code, kind="rejected", reason="broker_rejected",
+                                              vendor_message=result.get("rsp_msg"))
                 # The TR guide has no order success-code table. Even OrdNo > 0
                 # cannot prove acceptance for an unknown code; retain the claim.
                 raise InvalidResponseError("Unverified LS write result; reconcile before retrying")
-            raise BrokerRejectedError("LS rejected the read request")
+            raise BrokerRejectedError("LS rejected the read request", code=code,
+                                      vendor_message=result.get("rsp_msg"))
         if write:
             block = result.get(tr + "OutBlock2")
             self._order_id(block.get("OrdNo") if isinstance(block, dict) else None)

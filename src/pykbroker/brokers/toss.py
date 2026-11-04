@@ -215,7 +215,11 @@ class _TossBridge:
                 if isinstance(raw_code, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,40}", raw_code)
                 else None
             )
-            raise TossRejectedError(code) from None
+            error = TossRejectedError(code, vendor_message=getattr(exc, "message", None),
+                                      http_status=exc.status_code)
+            # The sanitized code above still decides kind/reason; metadata keeps the vendor value.
+            error.code = raw_code
+            raise error from None
         raise TransportError("Toss write outcome is uncertain; reconcile before another order") from None
 
     async def submit_order(self, **kwargs):
