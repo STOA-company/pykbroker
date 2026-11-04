@@ -435,9 +435,11 @@ class NH(BaseBroker):
         if message is not None and not isinstance(message, str):
             raise InvalidResponseError("NH response message is malformed")
         if code not in NH_SUCCESS_CODES | NH_CONTINUATION_CODES:
-            raise BrokerRejectedError("NH read rejected")
+            raise BrokerRejectedError("NH read rejected", code=body.get("rsp_cd"),
+                                      vendor_message=message, http_status=status)
         if message and re.search(r"완료되지|미완료|불완료|실패|오류|에러", message):
-            raise BrokerRejectedError("NH read rejected")
+            raise BrokerRejectedError("NH read rejected", code=body.get("rsp_cd"),
+                                      vendor_message=message, http_status=status)
         # Documented blocks are optional in the wire schema, but a money/price read
         # without the expected block cannot be interpreted as zero or success.
         if expected is not None and (expected not in body or body[expected] is None):
@@ -747,7 +749,10 @@ class NH(BaseBroker):
         status, body, _ = self._post_raw(self._client, path, headers, data)
         if status == 401 or (status == 200 and str(body.get("rsp_cd", "")).strip() == "IGW40043"):
             self._discard_token()
-            raise BrokerRejectedError("NH order authorization rejected; no order replay occurred")
+            nested = body.get("message")
+            message = body.get("rsp_msg") or (nested.get("usr_msg") if isinstance(nested, Mapping) else None)
+            raise BrokerRejectedError("NH order authorization rejected; no order replay occurred",
+                                      code=body.get("rsp_cd"), vendor_message=message, http_status=status)
         if status != 200:
             raise TransportError("NH order outcome is unknown; reconcile before retrying")
         code = body.get("rsp_cd")
@@ -762,7 +767,8 @@ class NH(BaseBroker):
         completed = bool(message and _COMPLETED.search(message))
         if self._definite_rejects and _nh_definite_write_failure(code, message, body.get("Output_0"), number_field):
             raise BrokerRejectedError("NH did not accept the order request; no order replay occurred",
-                                      code=_reject_code(code), kind="rejected", reason="broker_rejected")
+                                      code=code, kind="rejected", reason="broker_rejected",
+                                      vendor_message=message, http_status=status)
         # Only known success codes plus a valid market order number acknowledge a write.
         if code is None or code.strip() not in NH_SUCCESS_CODES:
             raise InvalidResponseError("NH order outcome is unknown; reconcile before retrying")

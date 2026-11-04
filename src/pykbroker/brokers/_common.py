@@ -104,7 +104,12 @@ def check_response(value: Any, broker: str) -> Any:
     envelope = field(value, "json_data", value)
     code = field(envelope, "rt_cd" if broker == "kis" else "rsp_cd")
     if code is not None and str(code) not in ({"0"} if broker == "kis" else {"00000", "0"}):
-        raise BrokerRejectedError("Broker rejected the request; inspect vendor status securely")
+        raise BrokerRejectedError(
+            "Broker rejected the request; inspect vendor status securely",
+            code=field(envelope, "msg_cd") if broker == "kis" else code,
+            vendor_message=field(envelope, "msg1" if broker == "kis" else "rsp_msg"),
+            http_status=field(value, "status_code"),
+        )
     return envelope
 
 
