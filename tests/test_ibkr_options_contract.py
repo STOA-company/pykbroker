@@ -94,12 +94,13 @@ def test_scene2_history_bars_from_spec_example():
 def test_scene2_history_bid_ask_source_uses_its_own_example():
     ib, _ = make(IbkrContractMock())
     bars = ib.history(7001, "1w", "1d", source="Bid_Ask")
-    assert bars[0].close == Decimal("212.11") and bars[0].volume == 0
+    assert bars[0].close == Decimal("212.11") and bars[0].volume is None  # IB "Always returns 0" = no value
 
 
 def test_scene2_history_midpoint_source():
     ib, _ = make(IbkrContractMock())
-    assert ib.history(7001, "1w", "1d", source="Midpoint")[0].close == Decimal("212.42")
+    bars = ib.history(7001, "1w", "1d", source="Midpoint")
+    assert bars[0].close == Decimal("212.42") and bars[0].volume is None
 
 
 def test_scene3_snapshot_asks_again_until_data_arrives():

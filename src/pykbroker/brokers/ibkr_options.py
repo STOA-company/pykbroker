@@ -289,7 +289,7 @@ class IbkrOptions:
                 bars.append(Bar(
                     time=datetime.fromtimestamp(int(b["t"]) / 1000, UTC),
                     open=Decimal(str(b["o"])), high=Decimal(str(b["h"])), low=Decimal(str(b["l"])),
-                    close=Decimal(str(b["c"])), volume=_dec(b.get("v")),
+                    close=Decimal(str(b["c"])), volume=_dec(b.get("v")) if source == "Last" else None,  # Bid_Ask/Midpoint: OpenAPI says v "Always returns 0" = no value
                 ))  # fmt: skip
             except (KeyError, TypeError, ValueError, InvalidOperation) as exc:
                 raise InvalidResponseError("marketdata/history: bad bar") from exc
