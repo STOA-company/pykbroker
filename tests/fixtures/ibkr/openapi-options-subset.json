@@ -1,0 +1,1857 @@
+{
+ "openapi": "3.0.0",
+ "info": {
+  "title": "IB REST API",
+  "description": "The IB REST API reference documentation",
+  "contact": {
+   "name": "API support",
+   "email": "api@interactivebrokers.com"
+  },
+  "version": "2.41.0"
+ },
+ "servers": [
+  {
+   "url": "https://localhost:5000",
+   "description": "Client Portal Gateway"
+  },
+  {
+   "url": "https://api.ibkr.com",
+   "description": "Production"
+  },
+  {
+   "url": "https://qa.interactivebrokers.com",
+   "description": "Sandbox"
+  }
+ ],
+ "paths": {
+  "/v1/api/iserver/secdef/search": {
+   "post": {
+    "tags": [
+     "Trading Contracts"
+    ],
+    "summary": "Search Instruments By Symbol",
+    "description": "Returns a list of contracts based on the search symbol provided as a query param.",
+    "operationId": "getContractSymbolsFromBody",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "required": [
+         "symbol"
+        ],
+        "type": "object",
+        "properties": {
+         "symbol": {
+          "type": "string",
+          "description": "The ticker symbol, bond issuer type, or company name of the equity you are looking to trade.",
+          "example": "AAPL"
+         },
+         "secType": {
+          "type": "string",
+          "description": "Available underlying security types:\n  * `STK` - Represents an underlying as a Stock security type.\n  * `IND` - Represents an underlying as an Index security type.\n  * `BOND` - Represents an underlying as a Bond security type.\n",
+          "default": "STK",
+          "enum": [
+           "STK",
+           "IND",
+           "BOND"
+          ]
+         },
+         "name": {
+          "type": "boolean",
+          "description": "Denotes if the symbol value is the ticker symbol or part of the company's name."
+         },
+         "more": {
+          "type": "boolean"
+         },
+         "fund": {
+          "type": "boolean",
+          "description": "fund search"
+         },
+         "fundFamilyConidEx": {
+          "type": "string"
+         },
+         "pattern": {
+          "type": "boolean",
+          "description": "pattern search"
+         },
+         "referrer": {
+          "type": "string"
+         }
+        }
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "An array of objects detailing contract information.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/secdefSearchResponse"
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "500": {
+      "$ref": "#/components/responses/InternalServerError"
+     },
+     "503": {
+      "$ref": "#/components/responses/ServiceUnavailable"
+     }
+    },
+    "security": [
+     {
+      "ssoBearer": []
+     }
+    ],
+    "x-ib-provider": "iblink"
+   },
+   "get": {
+    "tags": [
+     "Trading Contracts"
+    ],
+    "summary": "Search Instruments By Symbol",
+    "description": "Returns a list of contracts based on the search symbol provided as a query param.",
+    "operationId": "getContractSymbols",
+    "parameters": [
+     {
+      "name": "symbol",
+      "in": "query",
+      "required": false,
+      "style": "form",
+      "explode": false,
+      "schema": {
+       "type": "string",
+       "description": "The ticker symbol, bond issuer type, or company name of the equity you are looking to trade.",
+       "example": "AAPL"
+      }
+     },
+     {
+      "name": "secType",
+      "in": "query",
+      "description": "Available underlying security types:\n  * `STK` - Represents an underlying as a Stock security type.\n  * `IND` - Represents an underlying as an Index security type.\n  * `BOND` - Represents an underlying as a Bond security type.\n",
+      "required": false,
+      "style": "form",
+      "explode": false,
+      "schema": {
+       "type": "string",
+       "default": "STK",
+       "enum": [
+        "STK",
+        "IND",
+        "BOND"
+       ]
+      }
+     },
+     {
+      "name": "name",
+      "in": "query",
+      "required": false,
+      "style": "form",
+      "explode": false,
+      "schema": {
+       "type": "boolean",
+       "description": "Denotes if the symbol value is the ticker symbol or part of the company's name."
+      }
+     },
+     {
+      "name": "more",
+      "in": "query",
+      "required": false,
+      "style": "form",
+      "explode": false,
+      "schema": {
+       "type": "boolean"
+      }
+     },
+     {
+      "name": "fund",
+      "in": "query",
+      "required": false,
+      "style": "form",
+      "explode": false,
+      "schema": {
+       "type": "boolean",
+       "description": "fund search"
+      }
+     },
+     {
+      "name": "fundFamilyConidEx",
+      "in": "query",
+      "required": false,
+      "style": "form",
+      "explode": false,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "pattern",
+      "in": "query",
+      "required": false,
+      "style": "form",
+      "explode": false,
+      "schema": {
+       "type": "boolean",
+       "description": "pattern search"
+      }
+     },
+     {
+      "name": "referrer",
+      "in": "query",
+      "required": false,
+      "style": "form",
+      "explode": false,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "An array of objects detailing contract information.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/secdefSearchResponse"
+        },
+        "examples": {
+         "found": {
+          "value": [
+           {
+            "conid": "8314",
+            "companyHeader": "INTL BUSINESS MACHINES CORP - NYSE",
+            "companyName": "INTL BUSINESS MACHINES CORP",
+            "symbol": "IBM",
+            "description": "NYSE",
+            "restricted": null,
+            "fop": null,
+            "opt": "20240315;20240322;20240328;20240405;20240412;20240419;20240426;20240517;20240621;20240719;20240920;20241018;20250117;20250620;20260116",
+            "war": "20240208;20240213;20240214;20240215;20240216;20240222;20240226;20240227;20240228;20240229;20240301;20240304;20240305;20240306;20240307;20240308;20240311;20240312;20240313;20240314;20240315;20240416;20240418;20240514;20240516;20240618;20240619;20240620;20240621;20240718;20240917;20240918;20240919;20240920;20241017;20241217;20241218;20241219;20241220;20250114;20250115;20250116;20250117;20250319;20250320;20250617;20250618;20250619;20250620;20250918;20251216;20251218;20260113;20260115",
+            "sections": [
+             {
+              "secType": "STK"
+             },
+             {
+              "secType": "OPT",
+              "months": "MAR24;APR24;MAY24;JUN24;JUL24;SEP24;OCT24;JAN25;JUN25;JAN26",
+              "exchange": "SMART;AMEX;BATS;BOX;CBOE;CBOE2;EDGX;EMERALD;GEMINI;IBUSOPT;ISE;MEMX;MERCURY;MIAX;NASDAQBX;NASDAQOM;PEARL;PHLX;PSE"
+             },
+             {
+              "secType": "WAR",
+              "months": "FEB24;MAR24;APR24;MAY24;JUN24;JUL24;SEP24;OCT24;DEC24;JAN25;MAR25;JUN25;SEP25;DEC25;JAN26",
+              "exchange": "EBS;FWB;GETTEX;SBF;SWB"
+             },
+             {
+              "secType": "IOPT"
+             },
+             {
+              "secType": "CFD",
+              "exchange": "SMART",
+              "conid": "118239202"
+             },
+             {
+              "secType": "BAG"
+             }
+            ]
+           },
+           {
+            "conid": "41645598",
+            "companyHeader": "INTL BUSINESS MACHINES CORP - LSE",
+            "companyName": "INTL BUSINESS MACHINES CORP",
+            "symbol": "IBM",
+            "description": "LSE",
+            "restricted": null,
+            "fop": null,
+            "opt": null,
+            "war": null,
+            "sections": [
+             {
+              "secType": "STK"
+             }
+            ]
+           },
+           {
+            "issuers": [
+             {
+              "id": "e5499005",
+              "name": "IBM International Capital Pte Ltd"
+             },
+             {
+              "id": "e1580374",
+              "name": "IBM-CALL"
+             },
+             {
+              "id": "e1400789",
+              "name": "International Business Machines Corp"
+             },
+             {
+              "id": "e1658116",
+              "name": "Truven Health Analytics Inc"
+             }
+            ],
+            "bondid": 5,
+            "conid": "2147483647",
+            "companyHeader": "Corporate Fixed Income",
+            "companyName": null,
+            "symbol": null,
+            "description": null,
+            "restricted": null,
+            "fop": null,
+            "opt": null,
+            "war": null,
+            "sections": [
+             {
+              "secType": "BOND"
+             }
+            ]
+           }
+          ]
+         }
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "500": {
+      "$ref": "#/components/responses/InternalServerError"
+     },
+     "503": {
+      "$ref": "#/components/responses/ServiceUnavailable"
+     }
+    },
+    "security": [
+     {
+      "ssoBearer": []
+     }
+    ],
+    "x-ib-provider": "iblink"
+   }
+  },
+  "/v1/api/iserver/secdef/strikes": {
+   "get": {
+    "tags": [
+     "Trading Contracts"
+    ],
+    "summary": "Search Strikes For An Underlier",
+    "description": "Returns lists of valid strikes for options contracts on a given underlier, for all currently trading expirations. The /iserver/secdef/search endpoint must be called prior for the underlying. Otherwise empty arrays will return for \"puts\" and \"calls\".\n",
+    "operationId": "getContractStrikes",
+    "parameters": [
+     {
+      "name": "conid",
+      "in": "query",
+      "required": true,
+      "style": "form",
+      "explode": false,
+      "schema": {
+       "type": "string",
+       "description": "Contract identifier of the underlying. May also pass the final derivative conid directly.",
+       "example": "265598"
+      }
+     },
+     {
+      "name": "sectype",
+      "in": "query",
+      "required": true,
+      "style": "form",
+      "explode": false,
+      "schema": {
+       "type": "string",
+       "description": "Security type of the requested contract of interest. Valid asset classes are:\n * `FOP` - Futures Option\n * `OPT` - Option\n * `WAR` - Warrant\n",
+       "enum": [
+        "OPT",
+        "FOP",
+        "WAR"
+       ]
+      }
+     },
+     {
+      "name": "month",
+      "in": "query",
+      "required": true,
+      "style": "form",
+      "explode": false,
+      "schema": {
+       "type": "string",
+       "description": "Expiration month for the given derivative. Expiration months can be retrieved from /iserver/secdef/search under an {object}/sections/{object}/months\n",
+       "example": "JAN24"
+      }
+     },
+     {
+      "name": "exchange",
+      "in": "query",
+      "required": false,
+      "style": "form",
+      "explode": false,
+      "schema": {
+       "type": "string",
+       "description": "Exchange from which derivatives should be retrieved from. This field is mandatory when requesting Futures Options strikes.\n",
+       "example": "CME",
+       "default": "SMART"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful response containing a contract's security definition.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "properties": {
+          "call": {
+           "type": "array",
+           "description": "Array containing a series of comma separated values representing potential call strikes for the instrument.",
+           "items": {
+            "type": "number",
+            "description": "strike price"
+           }
+          },
+          "put": {
+           "type": "array",
+           "description": "Array containing a series of comma separated values representing potential put strikes for the instrument.",
+           "items": {
+            "type": "number",
+            "description": "strike price"
+           }
+          }
+         }
+        },
+        "examples": {
+         "strikes": {
+          "value": {
+           "call": [
+            70.0,
+            75.0,
+            80.0,
+            85.0,
+            90.0,
+            95.0,
+            100.0
+           ],
+           "put": [
+            70.0,
+            75.0,
+            80.0,
+            85.0,
+            90.0,
+            95.0,
+            100.0
+           ]
+          }
+         }
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "500": {
+      "$ref": "#/components/responses/InternalServerError"
+     },
+     "503": {
+      "$ref": "#/components/responses/ServiceUnavailable"
+     }
+    },
+    "security": [
+     {
+      "ssoBearer": []
+     }
+    ],
+    "x-ib-provider": "iblink"
+   }
+  },
+  "/v1/api/iserver/secdef/info": {
+   "get": {
+    "tags": [
+     "Trading Contracts"
+    ],
+    "summary": "Instrument Attributes Detail",
+    "description": "Returns the attributes of the instrument.",
+    "operationId": "getContractInfo",
+    "parameters": [
+     {
+      "name": "conid",
+      "in": "query",
+      "required": false,
+      "style": "form",
+      "explode": false,
+      "schema": {
+       "type": "string",
+       "description": "Contract identifier of the underlying. May also pass the final derivative conid directly.",
+       "example": "265598"
+      }
+     },
+     {
+      "name": "sectype",
+      "in": "query",
+      "required": false,
+      "style": "form",
+      "explode": false,
+      "schema": {
+       "description": "Security type of the requested contract of interest."
+      }
+     },
+     {
+      "name": "month",
+      "in": "query",
+      "required": false,
+      "style": "form",
+      "explode": false,
+      "schema": {
+       "description": "Expiration month for the given derivative."
+      }
+     },
+     {
+      "name": "exchange",
+      "in": "query",
+      "required": false,
+      "style": "form",
+      "explode": false,
+      "schema": {
+       "description": "Designate the exchange you wish to receive information for in relation to the contract."
+      }
+     },
+     {
+      "name": "strike",
+      "in": "query",
+      "required": false,
+      "style": "form",
+      "explode": false,
+      "schema": {
+       "description": "Set the strike price for the requested contract details"
+      }
+     },
+     {
+      "name": "right",
+      "in": "query",
+      "required": false,
+      "style": "form",
+      "explode": false,
+      "schema": {
+       "description": "Set the right for the given contract. * `C` - for Call options. * `P` - for Put options.\n",
+       "enum": [
+        "C",
+        "P"
+       ]
+      }
+     },
+     {
+      "name": "issuerId",
+      "in": "query",
+      "required": false,
+      "style": "form",
+      "explode": false,
+      "schema": {
+       "type": "string",
+       "description": "Set the issuerId for the given bond issuer type.",
+       "example": "e1234567"
+      }
+     },
+     {
+      "name": "filters",
+      "in": "query",
+      "required": false,
+      "style": "form",
+      "explode": false,
+      "schema": {
+       "description": "comma separted list of additional filters. Applicable when SecTyp is BOND"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful response containing a contract's security definition.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/secDefInfoResponse"
+        },
+        "examples": {
+         "infoBy-symbol-exchange-conid": {
+          "value": {
+           "conid": 8314,
+           "ticker": "IBM",
+           "secType": "STK",
+           "listingExchange": "NYSE",
+           "exchange": "SMART",
+           "companyName": "INTL BUSINESS MACHINES CORP",
+           "currency": "USD",
+           "validExchanges": "SMART,AMEX,NYSE,CBOE,PHLX,ISE,CHX,ARCA,NASDAQ,DRCTEDGE,BEX,BATS,EDGEA,BYX,NYSEDARK,NASDDARK,IEX,EDGX,FOXRIVER,PEARL,NYSENAT,IEXMID,JANELP,IMCLP,LTSE,MEMX,JUMPLP,OLDMCLP,RBCCMALP,IBEOS,GSLP,BLUEOCEAN,OVERNIGHT,JANEMID,G1XLP,PSX",
+           "priceRendering": null,
+           "maturityDate": null,
+           "right": "?",
+           "strike": 0.0
+          }
+         }
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "500": {
+      "$ref": "#/components/responses/InternalServerError"
+     },
+     "503": {
+      "$ref": "#/components/responses/ServiceUnavailable"
+     }
+    },
+    "security": [
+     {
+      "ssoBearer": []
+     }
+    ],
+    "x-ib-provider": "iblink"
+   }
+  },
+  "/v1/api/iserver/marketdata/snapshot": {
+   "get": {
+    "tags": [
+     "Trading Market Data"
+    ],
+    "summary": "Live Market Data Snapshot",
+    "description": "Get Market Data for the given conid(s). A pre-flight request must be made prior to ever receiving data. For some fields, it may take more than a few moments to receive information. See response fields for a list of available fields that can be request via fields argument. The endpoint /iserver/accounts must be called prior to /iserver/marketdata/snapshot. For derivative contracts the endpoint /iserver/secdef/search must be called first.\n",
+    "operationId": "getMdSnapshot",
+    "parameters": [
+     {
+      "name": "conids",
+      "in": "query",
+      "required": true,
+      "style": "form",
+      "explode": false,
+      "schema": {
+       "type": "string",
+       "description": "Contract identifiers for the contracts of interest. May provide a comma-separated series of contract identifiers. A maximum of 100 conids may be specified at one time.\n",
+       "example": "265598,8314"
+      }
+     },
+     {
+      "name": "fields",
+      "in": "query",
+      "required": false,
+      "style": "form",
+      "explode": false,
+      "schema": {
+       "$ref": "#/components/schemas/mdFields"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successfully requested market data",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/iserverSnapshot"
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "500": {
+      "$ref": "#/components/responses/InternalServerError"
+     },
+     "503": {
+      "$ref": "#/components/responses/ServiceUnavailable"
+     }
+    },
+    "security": [
+     {
+      "ssoBearer": []
+     }
+    ],
+    "x-ib-provider": "iblink"
+   }
+  },
+  "/v1/api/iserver/marketdata/history": {
+   "get": {
+    "tags": [
+     "Trading Market Data"
+    ],
+    "summary": "Historical OHLC Bar Data",
+    "description": "Request historical data for an instrument in the form of OHLC bars.",
+    "operationId": "getMdHistory",
+    "parameters": [
+     {
+      "name": "conid",
+      "in": "query",
+      "description": "IB contract ID of the requested instrument.",
+      "required": true,
+      "style": "form",
+      "explode": false,
+      "schema": {
+       "type": "integer",
+       "format": "int64",
+       "example": 265598
+      }
+     },
+     {
+      "name": "period",
+      "in": "query",
+      "description": "A time duration away from startTime into the future to be divided into bars of the specified width. Supported Period Sizes\n  * `min` - Minutes\n  * `h` - Hour(s)\n  * `d` - Day(s)\n  * `w` - Week(s)\n  * `m` - Month(s)\n  * `y` - Year(s)\n",
+      "required": true,
+      "style": "form",
+      "explode": false,
+      "schema": {
+       "type": "string",
+       "example": "6d",
+       "default": "1d"
+      }
+     },
+     {
+      "name": "bar",
+      "in": "query",
+      "description": "The width of the bars into which the interval determined by period and startTime will be divided. It is not required that bar evenly divide period; partial bars can be returned. Supported Bar Sizes\n  * `S` - Second(s)\n  * `min` - Minute(s)\n  * `h` - Hour(s)\n  * `d` - Day(s)\n  * `w` - Week(s)\n  * `m` - Month(s)\n",
+      "required": true,
+      "style": "form",
+      "explode": false,
+      "schema": {
+       "type": "string",
+       "example": "5min",
+       "default": "1min"
+      }
+     },
+     {
+      "name": "exchange",
+      "in": "query",
+      "description": "Exchange (or SMART) from which data is requested.",
+      "required": false,
+      "style": "form",
+      "explode": false,
+      "schema": {
+       "type": "string",
+       "example": "NASDAQ"
+      }
+     },
+     {
+      "name": "outsideRth",
+      "in": "query",
+      "description": "Indicates whether data outside of regular trading hours should be included in response.",
+      "required": false,
+      "style": "form",
+      "explode": false,
+      "schema": {
+       "type": "boolean",
+       "default": false
+      }
+     },
+     {
+      "name": "startTime",
+      "in": "query",
+      "description": "A fixed UTC date-time reference point for the historical data request, from which the specified period extends. Format is YYYYMMDD-hh:mm:ss. If omitted, the current time is used, and direction must be omitted or 1.",
+      "required": false,
+      "style": "form",
+      "explode": false,
+      "schema": {
+       "$ref": "#/components/schemas/utcDateTime"
+      }
+     },
+     {
+      "name": "direction",
+      "in": "query",
+      "description": "Indicates whether data should begin or end at the start time.\n  * `-1` - Historical data will begin away from the start time, ending at the current time/startTime.\n  * `1` - Historical data begins at the start time, moving towards the current time. Only supported when startTime is included.\n",
+      "required": false,
+      "style": "form",
+      "explode": false,
+      "schema": {
+       "type": "integer",
+       "format": "int64",
+       "default": -1,
+       "enum": [
+        -1,
+        1
+       ]
+      }
+     },
+     {
+      "name": "source",
+      "in": "query",
+      "description": "The type of data to be returned in the historical bars. Supported Bar Sizes\n  * `Bid_Ask` - The OHLC bid/ask values.\n  * `Last` - The OHLC trade values.\n  * `Midpoint` - The OHLC of the Bid-Ask midpoint.\n",
+      "required": false,
+      "style": "form",
+      "explode": false,
+      "schema": {
+       "type": "string",
+       "example": "Midpoint",
+       "default": "Last"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Historical data query successfully returned data.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "oneOf": [
+          {
+           "$ref": "#/components/schemas/iserverHistoryBidAskResponse"
+          },
+          {
+           "$ref": "#/components/schemas/iserverHistoryLastResponse"
+          },
+          {
+           "$ref": "#/components/schemas/iserverHistoryMidpointResponse"
+          }
+         ]
+        },
+        "examples": {
+         "iserverHistoryBidAskSuccessExample": {
+          "value": {
+           "barLength": 86400,
+           "chartPanStartTime": "20250521-00:00:00",
+           "data": [
+            {
+             "c": 212.11,
+             "h": 213.94,
+             "l": 210.58,
+             "o": 212.09,
+             "t": 1747229400000,
+             "v": 0
+            },
+            {
+             "c": 211.34,
+             "h": 212.97,
+             "l": 209.53,
+             "o": 211.32,
+             "t": 1747315800000,
+             "v": 0
+            },
+            {
+             "c": 211.07,
+             "h": 212.56,
+             "l": 209.77,
+             "o": 211.05,
+             "t": 1747402200000,
+             "v": 0
+            },
+            {
+             "c": 207.86,
+             "h": 209.48,
+             "l": 204.25,
+             "o": 207.84,
+             "t": 1747661400000,
+             "v": 0
+            }
+           ],
+           "direction": -1,
+           "high": "21394/0/1440",
+           "low": "20425/0/8640",
+           "mdAvailability": "S",
+           "messageVersion": 2,
+           "mktDataDelay": 0,
+           "negativeCapable": false,
+           "outsideRth": false,
+           "points": 3,
+           "priceDisplayRule": 1,
+           "priceDisplayValue": "2",
+           "priceFactor": 100,
+           "serverId": "4155828",
+           "startTime": "20250513-13:30:00",
+           "symbol": "AAPL",
+           "text": "APPLE INC",
+           "timePeriod": "1w",
+           "travelTime": 2,
+           "volumeFactor": 100
+          }
+         },
+         "iserverHistoryLastSuccessExample": {
+          "value": {
+           "barLength": 86400,
+           "chartPanStartTime": "20250521-00:00:00",
+           "data": [
+            {
+             "c": 212.33,
+             "h": 213.94,
+             "l": 210.58,
+             "o": 212.43,
+             "t": 1747229400000,
+             "v": 266616.18
+            },
+            {
+             "c": 211.45,
+             "h": 212.96,
+             "l": 209.54,
+             "o": 210.95,
+             "t": 1747315800000,
+             "v": 256847.25
+            },
+            {
+             "c": 211.26,
+             "h": 212.57,
+             "l": 209.77,
+             "o": 212.36,
+             "t": 1747402200000,
+             "v": 235240.24
+            },
+            {
+             "c": 208.78,
+             "h": 209.48,
+             "l": 204.26,
+             "o": 207.78,
+             "t": 1747661400000,
+             "v": 267569.89
+            }
+           ],
+           "direction": -1,
+           "high": "21394/266616.18/1440",
+           "low": "20426/267569.89/8640",
+           "mdAvailability": "S",
+           "messageVersion": 2,
+           "mktDataDelay": 0,
+           "negativeCapable": false,
+           "outsideRth": false,
+           "points": 3,
+           "priceDisplayRule": 1,
+           "priceDisplayValue": "2",
+           "priceFactor": 100,
+           "serverId": "4155816",
+           "startTime": "20250513-13:30:00",
+           "symbol": "AAPL",
+           "text": "APPLE INC",
+           "timePeriod": "1w",
+           "travelTime": 7,
+           "volumeFactor": 100
+          }
+         },
+         "iserverHistoryMidpointSuccessExample": {
+          "value": {
+           "barLength": 86400,
+           "chartPanStartTime": "20250521-00:00:00",
+           "data": [
+            {
+             "c": 212.42,
+             "h": 213.94,
+             "l": 210.59,
+             "o": 212.37,
+             "t": 1747229400000,
+             "v": 0
+            },
+            {
+             "c": 211.43,
+             "h": 212.97,
+             "l": 209.53,
+             "o": 210.98,
+             "t": 1747315800000,
+             "v": 0
+            },
+            {
+             "c": 211.19,
+             "h": 212.5,
+             "l": 209.77,
+             "o": 212.36,
+             "t": 1747402200000,
+             "v": 0
+            },
+            {
+             "c": 208.72,
+             "h": 209.48,
+             "l": 204.26,
+             "o": 207.94,
+             "t": 1747661400000,
+             "v": 0
+            }
+           ],
+           "direction": -1,
+           "high": "21394/0/1440",
+           "low": "20426/0/8640",
+           "mdAvailability": "S",
+           "messageVersion": 2,
+           "mktDataDelay": 0,
+           "negativeCapable": false,
+           "outsideRth": false,
+           "points": 3,
+           "priceDisplayRule": 1,
+           "priceDisplayValue": "2",
+           "priceFactor": 100,
+           "serverId": "4155818",
+           "startTime": "20250513-13:30:00",
+           "symbol": "AAPL",
+           "text": "APPLE INC",
+           "timePeriod": "1w",
+           "travelTime": 7,
+           "volumeFactor": 100
+          }
+         }
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/BadRequest"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "500": {
+      "$ref": "#/components/responses/InternalServerError"
+     },
+     "503": {
+      "$ref": "#/components/responses/ServiceUnavailable"
+     }
+    },
+    "security": [
+     {
+      "ssoBearer": []
+     }
+    ],
+    "x-ib-provider": "iblink"
+   }
+  },
+  "/v1/api/iserver/marketdata/unsubscribeall": {
+   "get": {
+    "tags": [
+     "Trading Market Data"
+    ],
+    "summary": "Close All Backend Data Streams",
+    "description": "Instruct IServer to close all of its open backend data streams for all instruments.",
+    "operationId": "closeAllMdStreams",
+    "responses": {
+     "200": {
+      "description": "Indicates a successful request to unsubscribe all streams.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "unsubscribed": {
+           "type": "boolean",
+           "description": "The sole key 'unsubscribed' will have boolean value true."
+          }
+         },
+         "description": "Indicates a successful request to unsubscribe all streams."
+        },
+        "examples": {
+         "marketdataUnsubscribeAllSuccessExample": {
+          "value": {
+           "unsubscribed": true
+          }
+         }
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "500": {
+      "$ref": "#/components/responses/InternalServerError"
+     },
+     "503": {
+      "$ref": "#/components/responses/ServiceUnavailable"
+     }
+    },
+    "security": [
+     {
+      "ssoBearer": []
+     }
+    ],
+    "x-ib-provider": "iblink"
+   }
+  }
+ },
+ "components": {
+  "schemas": {
+   "secdefSearchResponse": {
+    "type": "array",
+    "items": {
+     "type": "object",
+     "properties": {
+      "bondid": {
+       "type": "integer",
+       "description": "applicable for bonds",
+       "format": "int64"
+      },
+      "conid": {
+       "type": "string",
+       "description": "Contract identifier for the unique contract."
+      },
+      "companyHeader": {
+       "type": "string",
+       "description": "Company Name - Exchange"
+      },
+      "companyName": {
+       "type": "string",
+       "description": "Formal name of the company.",
+       "nullable": true
+      },
+      "symbol": {
+       "type": "string",
+       "description": "Underlying ticker symbol."
+      },
+      "description": {
+       "type": "string",
+       "description": "Primary exchange of the contract"
+      },
+      "restricted": {
+       "type": "boolean",
+       "description": "Returns if the contract is available for trading.",
+       "nullable": true
+      },
+      "fop": {
+       "type": "string",
+       "description": "Returns a string of dates, separated by semicolons.",
+       "nullable": true
+      },
+      "opt": {
+       "type": "string",
+       "description": "Returns a string of dates, separated by semicolons.",
+       "nullable": true
+      },
+      "war": {
+       "type": "string",
+       "description": "Returns a string of dates, separated by semicolons.",
+       "nullable": true
+      },
+      "sections": {
+       "type": "array",
+       "items": {
+        "type": "object",
+        "properties": {
+         "secType": {
+          "type": "string"
+         },
+         "months": {
+          "type": "string",
+          "description": "semicolon separated list of months"
+         },
+         "exchange": {
+          "type": "string",
+          "description": "semicolon separated list of exchanges"
+         }
+        }
+       }
+      },
+      "issuers": {
+       "type": "array",
+       "items": {
+        "type": "object",
+        "properties": {
+         "id": {
+          "type": "string"
+         },
+         "name": {
+          "type": "string"
+         }
+        }
+       }
+      }
+     }
+    }
+   },
+   "secDefInfoResponse": {
+    "properties": {
+     "conid": {
+      "type": "integer",
+      "description": "Contract Identifier of the given contract.",
+      "format": "int64"
+     },
+     "ticker": {
+      "type": "string",
+      "description": "Ticker symbol for the given contract"
+     },
+     "secType": {
+      "type": "string",
+      "description": "Security type for the given contract."
+     },
+     "listingExchange": {
+      "type": "string",
+      "description": "Primary listing exchange for the given contract."
+     },
+     "exchange": {
+      "type": "string",
+      "description": "Exchange requesting data for."
+     },
+     "companyName": {
+      "type": "string",
+      "description": "Name of the company for the given contract."
+     },
+     "currency": {
+      "type": "string",
+      "description": "Traded currency allowed for the given contract."
+     },
+     "validExchanges": {
+      "type": "string",
+      "description": "Series of all valid exchanges the contract can be traded on in a single comma-separated string."
+     },
+     "priceRendering": {
+      "type": "string",
+      "nullable": true
+     },
+     "maturityDate": {
+      "type": "string",
+      "description": "Date of expiration for the given contract.",
+      "nullable": true
+     },
+     "right": {
+      "type": "string",
+      "description": "Set the right for the given contract. * `C` - for Call options. * `P` - for Put options.\n",
+      "enum": [
+       "P",
+       "C"
+      ]
+     },
+     "strike": {
+      "type": "number",
+      "description": "Returns the given strike value for the given contract."
+     }
+    }
+   },
+   "mdFields": {
+    "type": "string",
+    "description": "Market Data fields enumerating tick ids to their respective value. May provide a comma-separated series of fields. A maximum of 50 fields may be specified at one time.\n  * `31` - Last Price. The last price at which the contract traded. May contain one of the following prefixes: C - Previous day's closing price. H - Trading has halted.\n  * `55` - Symbol. \n  * `58` - Text. \n  * `70` - High. Current day high price\n  * `71` - Low. Current day low price\n  * `73` - Market Value. The current market value of your position in the security. Market Value is calculated with real time market data (even when not subscribed to market data).\n  * `74` - Avg Price. The average price of the position.\n  * `75` - Unrealized PnL. Unrealized profit or loss. Unrealized PnL is calculated with real time market data (even when not subscribed to market data).\n  * `76` - Formatted position. \n  * `77` - Formatted Unrealized PnL. \n  * `78` - Daily PnL. Your profit or loss of the day since prior close. Daily PnL is calculated with real time market data (even when not subscribed to market data).\n  * `79` - Realized PnL. Realized profit or loss. Realized PnL is calculated with real time market data (even when not subscribed to market data).\n  * `80` - Unrealized PnL %. Unrealized profit or loss expressed in percentage.\n  * `82` - Change. The difference between the last price and the close on the previous trading day\n  * `83` - Change %. The difference between the last price and the close on the previous trading day in percentage.\n  * `84` - Bid Price. The highest-priced bid on the contract.\n  * `85` - Ask Size. The number of contracts or shares offered at the ask price. For US stocks\n  * `86` - Ask Price. The lowest-priced offer on the contract.\n  * `87` - Volume. Volume for the day\n  * `88` - Bid Size. The number of contracts or shares bid for at the bid price. For US stocks\n  * `201` - Right. Declares the Right of the Option, Call or Put.\n  * `6004` - Exchange. \n  * `6008` - Conid. Contract identifier from IBKR's database.\n  * `6070` - SecType. The asset class of the instrument.\n  * `6072` - Months. \n  * `6073` - Regular Expiry. \n  * `6119` - Marker for market data delivery method (similar to request id). \n  * `6457` - Underlying Conid. Use /trsrv/secdef to get more information about the security. \n  * `6508` - Service Params.. \n  * `6509` - Market Data Availability. The field may contain three chars. First char defines: R = RealTime, D = Delayed, Z = Frozen, Y = Frozen Delayed, N = Not Subscribed, i - incomplete, v - VDR Exempt (Vendor Display Rule 603c). Second char defines: P = Snapshot, p = Consolidated. Third char defines: B = Book. RealTime Data is relayed back in real time without delay, market data subscription(s) are required. Delayed - Data is relayed back 15-20 min delayed. Frozen - Last recorded data at market close.  relayed back in real time. Frozen Delayed - Last recorded data at market close, relayed back delayed. Not Subscribed - User does not have the required market data subscription(s) to relay back either real time or delayed data. Snapshot - Snapshot request is available for contract. Consolidated - Market data is aggregated across multiple exchanges or venues. Book - Top of the book data is available for contract.\n  * `7051` - Company name. \n  * `7057` - Ask Exch. Displays the exchange(s) offering the SMART price. A=AMEX, C=CBOE, I=ISE, X=PHLX, N=PSE, B=BOX, Q=NASDAQOM, Z=BATS, W=CBOE2, T=NASDAQBX, M=MIAX, H=GEMINI, E=EDGX, J=MERCURY\n  * `7058` - Last Exch. Displays the exchange(s) offering the SMART price. A=AMEX, C=CBOE, I=ISE, X=PHLX, N=PSE, B=BOX, Q=NASDAQOM, Z=BATS, W=CBOE2, T=NASDAQBX, M=MIAX, H=GEMINI, E=EDGX, J=MERCURY\n  * `7059` - Last Size. The number of unites traded at the last price\n  * `7068` - Bid Exch. Displays the exchange(s) offering the SMART price. A=AMEX, C=CBOE, I=ISE, X=PHLX, N=PSE, B=BOX, Q=NASDAQOM, Z=BATS, W=CBOE2, T=NASDAQBX, M=MIAX, H=GEMINI, E=EDGX, J=MERCURY\n  * `7084` - Implied Vol./Hist. Vol %. The ratio of the implied volatility over the historical volatility, expressed as a percentage.\n  * `7085` - Total Put option open interest divided by the Call option open interest for the trading day. May only be used on underlyings.\n  * `7086` - Put/Call Volume. Put option volume/call option volume for the trading day.\n  * `7087` - Hist. Vol. %. 30-day real-time historical volatility.\n  * `7088` - Hist. Vol. Close %. Shows the historical volatility based on previous close price.\n  * `7089` - Opt. Volume. Option Volume\n  * `7094` - Conid + Exchange.\n  * `7184` - canBeTraded. If contract is a trade-able instrument. Returns 1(true) or 0(false).\n  * `7219` - Contract Description.\n  * `7220` - Contract Description.\n  * `7221` - Listing Exchange.\n  * `7280` - Industry. Displays the type of industry under which the underlying company can be categorized.\n  * `7281` - Category. Displays a more detailed level of description within the industry under which the underlying company can be categorized.\n  * `7282` - Average Volume. The average daily trading volume over 90 days.\n  * `7283` - Option Implied Vol. %. A prediction of how volatile an underlying will be in the future.At the market volatility estimated for a maturity thirty calendar days forward of the current trading day, and based on option prices from two consecutive expiration months. To query the Implied Vol. % of a specific strike refer to field 7633.\n  * `7284` - Historical volatility %. Deprecated\n  * `7285` - Put/Call Ratio.\n  * `7292` - Cost Basis. Your current position in this security multiplied by the average price and multiplier.        \n  * `7293` - 52 Week High. The highest price for the past 52 weeks.\n  * `7294` - 52 Week Low. The lowest price for the past 52 weeks.\n  * `7295` - Open. Today's opening price.\n  * `7296` - Close. Today's closing price.\n  * `7308` - Delta. The ratio of the change in the price of the option to the corresponding change in the price of the underlying.\n  * `7309` - Gamma. The rate of change for the delta with respect to the underlying asset's price.\n  * `7310` - Theta. A measure of the rate of decline the value of an option due to the passage of time.\n  * `7311` - Vega. The amount that the price of an option changes compared to a 1% change in the volatility.\n  * `7607` - Opt. Volume Change %. Today's option volume as a percentage of the average option volume.\n  * `7633` - Implied Vol. %. The implied volatility for the specific strike of the option in percentage. To query the Option Implied Vol. % from the underlying refer to field 7283.\n  * `7635` - Mark. The mark price is\n  * `7636` - Shortable Shares. Number of shares available for shorting.\n  * `7637` - Fee Rate. Interest rate charged on borrowed shares.\n  * `7638` - Option Open Interest. Available for Underlyings and Derivatives.\n  * `7639` - % of Mark Value. Displays the market value of the contract as a percentage of the total market value of the account. Mark Value is calculated with real time market data (even when not subscribed to market data).\n  * `7644` - Shortable. Describes the level of difficulty with which the security can be sold short.       \n  * `7671` - Dividends. This value is the total of the expected dividend payments over the next twelve months per share.\n  * `7672` - Dividends TTM. This value is the total of the expected dividend payments over the last twelve months per share.\n  * `7674` - EMA(200). Exponential moving average (N=200).\n  * `7675` - EMA(100). Exponential moving average (N=100).\n  * `7676` - EMA(50). Exponential moving average (N=50).\n  * `7677` - EMA(20). Exponential moving average (N=20).\n  * `7678` - Price/EMA(200). Price to Exponential moving average (N=200) ratio -1\n  * `7679` - Price/EMA(100). Price to Exponential moving average (N=100) ratio -1\n  * `7724` - Price/EMA(50). Price to Exponential moving average (N=50) ratio -1\n  * `7681` - Price/EMA(20). Price to Exponential moving average (N=20) ratio -1\n  * `7682` - Change Since Open. The difference between the last price and the open price.\n  * `7683` - Upcoming Event. Shows the next major company event. Requires Wall Street Horizon subscription.\n  * `7684` - Upcoming Event Date. The date of the next major company event. Requires Wall Street Horizon subscription. \n  * `7685` - Upcoming Analyst Meeting. The date and time of the next scheduled analyst meeting. Requires Wall Street Horizon subscription.\n  * `7686` - Upcoming Earnings. The date and time of the next scheduled earnings/earnings call event. Requires Wall Street Horizon subscription.\n  * `7687` - Upcoming Misc Event. The date and time of the next shareholder meeting\n  * `7688` - Recent Analyst Meeting. The date and time of the most recent analyst meeting. Requires Wall Street Horizon subscription.\n  * `7689` - Recent Earnings. The date and time of the most recent earnings/earning call event. Requires Wall Street Horizon subscription.\n  * `7690` - Recent Misc Event. The date and time of the most recent shareholder meeting\n  * `7694` - Probability of Max Return. Customer implied probability of maximum potential gain.\n  * `7695` - Break Even. Break even points\n  * `7696` - SPX Delta. Beta Weighted Delta is calculated using the formula; Delta x dollar adjusted beta\n  * `7697` - Futures Open Interest. Total number of outstanding futures contracts\n  * `7698` - Last Yield. Implied yield of the bond if it is purchased at the current last price. Last yield is calculated using the Last price on all possible call dates. It is assumed that prepayment occurs if the bond has call or put provisions and the issuer can offer a lower coupon rate based on current market rates. The yield to worst will be the lowest of the yield to maturity or yield to call (if the bond has prepayment provisions). Yield to worse may be the same as yield to maturity but never higher.\n  * `7699` - Bid Yield. Implied yield of the bond if it is purchased at the current bid price. Bid yield is calculated using the Ask on all possible call dates. It is assumed that prepayment occurs if the bond has call or put provisions and the issuer can offer a lower coupon rate based on current market rates. The yield to worst will be the lowest of the yield to maturity or yield to call (if the bond has prepayment provisions). Yield to worse may be the same as yield to maturity but never higher.\n  * `7700` - Probability of Max Return. Customer implied probability of maximum potential gain.\n  * `7702` - Probability of Max Loss. Customer implied probability of maximum potential loss.\n  * `7703` - Profit Probability. Customer implied probability of any gain.\n  * `7704` - Organization Type.\n  * `7705` - Debt Class.\n  * `7706` - Ratings. Ratings issued for bond contract.\n  * `7707` - Bond State Code.\n  * `7708` - Bond Type.\n  * `7714` - Last Trading Date.\n  * `7715` - Issue Date.\n  * `7720` - Ask Yield. Implied yield of the bond if it is purchased at the current offer. Ask yield is calculated using the Bid on all possible call dates. It is assumed that prepayment occurs if the bond has call or put provisions and the issuer can offer a lower coupon rate based on current market rates. The yield to worst will be the lowest of the yield to maturity or yield to call (if the bond has prepayment provisions). Yield to worse may be the same as yield to maturity but never higher.\n  * `7741` - Prior Close. Yesterday's closing price\n  * `7762` - Volume Long. High precision volume for the day. For formatted volume refer to field 87.\n  * `7768` - hasTradingPermissions. if user has trading permissions for specified contract. Returns 1(true) or 0(false).\n  * `7899` - Stock Type. Determines the stock type. Includes: Common, CORP, ADR, ETF, ETN, EFN, REIT, CEF, ETMF.\n  * `7920` - Daily PnL Raw. Your profit or loss of the day since prior close. Daily PnL is calculated with real-time market data (even when not subscribed to market data).\n  * `7921` - Cost Basis Raw. Your current position in this security multiplied by the average price and and multiplier.\n  * `7943` - Rebate Rate. Fed funds or other currency-relevant Benchmark rate minus the interest rate charged on borrowed shares.\n",
+    "example": "55,31,84,86"
+   },
+   "iserverSnapshot": {
+    "type": "array",
+    "description": "Returns an object for each conId requested.",
+    "items": {
+     "type": "object",
+     "properties": {
+      "conidEx": {
+       "type": "string",
+       "description": "Returns the contract identifier or contract identfier@exchange depending on the request.",
+       "example": "265598@SMART"
+      },
+      "conid": {
+       "type": "integer",
+       "description": "Returns the contract identifier of the request.",
+       "format": "int64",
+       "example": 265598
+      },
+      "6509": {
+       "type": "string",
+       "description": "Market Data Availability. The field may contain three chars. First char defines: R = RealTime, D = Delayed, Z = Frozen, Y = Frozen Delayed, N = Not Subscribed, i - incomplete, v - VDR Exempt (Vendor Display Rule 603c). Second char defines: P = Snapshot, p = Consolidated. Third char defines: B = Book. RealTime Data is relayed back in real time without delay, market data subscription(s) are required. Delayed - Data is relayed back 15-20 min delayed. Frozen - Last recorded data at market close.  relayed back in real time. Frozen Delayed - Last recorded data at market close, relayed back delayed. Not Subscribed - User does not have the required market data subscription(s) to relay back either real time or delayed data. Snapshot - Snapshot request is available for contract. Consolidated - Market data is aggregated across multiple exchanges or venues. Book - Top of the book data is available for contract.",
+       "example": "RpB"
+      },
+      "_updated": {
+       "type": "integer",
+       "description": "Returns the UTC timestamp of the data's return.",
+       "format": "int64",
+       "example": 1564652478
+      },
+      "6119": {
+       "type": "string",
+       "description": "Returns the server identifier for the market data request.",
+       "example": "q0"
+      },
+      "server_id": {
+       "type": "string",
+       "description": "Returns the server identifier for the market data request.",
+       "example": "q0"
+      },
+      "MD_Field": {
+       "description": "Can be any of the market data fields submitted in the request. Types may vary from string, integer, and boolean depending on the topic.\n"
+      }
+     },
+     "anyOf": [
+      {
+       "required": [
+        "conid",
+        "conidEx"
+       ]
+      }
+     ]
+    }
+   },
+   "utcDateTime": {
+    "type": "string",
+    "description": "UTC datetime string in format YYYYMMDD-hh:mm:ss.",
+    "example": "20231018-16:00:00"
+   },
+   "iserverHistoryBidAskResponse": {
+    "type": "object",
+    "properties": {
+     "serverId": {
+      "type": "string",
+      "description": "Internal use. Identifier of the request."
+     },
+     "symbol": {
+      "type": "string",
+      "description": "Symbol of the request instrument."
+     },
+     "text": {
+      "type": "string",
+      "description": "Description or company name of the instrument."
+     },
+     "priceFactor": {
+      "type": "integer",
+      "description": "Internal use. Used to scale Client Portal chart Y-axis.",
+      "format": "int64"
+     },
+     "startTime": {
+      "type": "string",
+      "description": "UTC date and time of the start (chronologically earlier) of the complete period in format YYYYMMDD-hh:mm:ss."
+     },
+     "high": {
+      "type": "string",
+      "description": "Internal use. Delivers highest price value in total interval. Used for chart scaling. A string constructed as 'highestPrice*priceFactor/totalVolume*volumeFactor/minutesFromStartTime'."
+     },
+     "low": {
+      "type": "string",
+      "description": "Internal use. Delivers lowest price value in total interval. Used for chart scaling. A string constructed as 'lowestPrice*priceFactor/totalVolume*volumeFactor/minutesFromStartTime'."
+     },
+     "timePeriod": {
+      "type": "string",
+      "description": "The client-specified period value."
+     },
+     "barLength": {
+      "type": "integer",
+      "description": "The client-specified bar width, represented in seconds.",
+      "format": "int64"
+     },
+     "mdAvailability": {
+      "type": "string",
+      "description": "A three-character string reflecting the nature of available data. R = Realtime, D = Delayed, Z = Frozen, Y = Frozen Delayed, N = Not Subscribed. P = Snapshot, p = Consolidated. B = Top of book."
+     },
+     "outsideRth": {
+      "type": "boolean",
+      "description": "Indicates whether data from outside regular trading hours is included in the response."
+     },
+     "tradingDayDuration": {
+      "type": "integer",
+      "description": "Length of instrument's trading day in seconds.",
+      "format": "int64"
+     },
+     "volumeFactor": {
+      "type": "integer",
+      "description": "Internal use. Used to scale volume histograms.",
+      "format": "int64"
+     },
+     "priceDisplayRule": {
+      "type": "integer",
+      "description": "Internal use. Governs application of pricing display rule.",
+      "format": "int64"
+     },
+     "priceDisplayValue": {
+      "type": "string",
+      "description": "Internal use. Governs rendering of displayed pricing."
+     },
+     "chartPanStartTime": {
+      "type": "string",
+      "description": "Internal use. UTC datetime string used to center Client Portal charts. Format YYYYMMDD-hh:mm:ss."
+     },
+     "direction": {
+      "type": "integer",
+      "description": "Indicates how the period is applied in relation to the startTime. Value will always be -1, indicating that the period extends from the startTime forward into the future.",
+      "format": "int64",
+      "enum": [
+       -1
+      ]
+     },
+     "negativeCapable": {
+      "type": "boolean",
+      "description": "Indicates whether instrument is capable of negative pricing."
+     },
+     "messageVersion": {
+      "type": "integer",
+      "description": "Internal use. Reflects the version of the response schema used.",
+      "format": "int64"
+     },
+     "travelTime": {
+      "type": "integer",
+      "description": "Internal time in flight to serve the request.",
+      "format": "int64"
+     },
+     "data": {
+      "type": "array",
+      "description": "Array containing OHLC bars for the requested period.",
+      "items": {
+       "$ref": "#/components/schemas/singleHistoricalBarBidAsk"
+      }
+     },
+     "points": {
+      "type": "integer",
+      "description": "Count of the number of bars returned in the data array.",
+      "format": "int64"
+     },
+     "mktDataDelay": {
+      "type": "integer",
+      "description": "Number of milliseconds taken to satisfy this historical data request.",
+      "format": "int64"
+     }
+    },
+    "description": "Object containing the requested historical data and related metadata."
+   },
+   "iserverHistoryLastResponse": {
+    "type": "object",
+    "properties": {
+     "serverId": {
+      "type": "string",
+      "description": "Internal use. Identifier of the request."
+     },
+     "symbol": {
+      "type": "string",
+      "description": "Symbol of the request instrument."
+     },
+     "text": {
+      "type": "string",
+      "description": "Description or company name of the instrument."
+     },
+     "priceFactor": {
+      "type": "integer",
+      "description": "Internal use. Used to scale Client Portal chart Y-axis.",
+      "format": "int64"
+     },
+     "startTime": {
+      "type": "string",
+      "description": "UTC date and time of the start (chronologically earlier) of the complete period in format YYYYMMDD-hh:mm:ss."
+     },
+     "high": {
+      "type": "string",
+      "description": "Internal use. Delivers highest price value in total interval. Used for chart scaling. A string constructed as 'highestPrice*priceFactor/totalVolume*volumeFactor/minutesFromStartTime'."
+     },
+     "low": {
+      "type": "string",
+      "description": "Internal use. Delivers lowest price value in total interval. Used for chart scaling. A string constructed as 'lowestPrice*priceFactor/totalVolume*volumeFactor/minutesFromStartTime'."
+     },
+     "timePeriod": {
+      "type": "string",
+      "description": "The client-specified period value."
+     },
+     "barLength": {
+      "type": "integer",
+      "description": "The client-specified bar width, represented in seconds.",
+      "format": "int64"
+     },
+     "mdAvailability": {
+      "type": "string",
+      "description": "A three-character string reflecting the nature of available data. R = Realtime, D = Delayed, Z = Frozen, Y = Frozen Delayed, N = Not Subscribed. P = Snapshot, p = Consolidated. B = Top of book."
+     },
+     "outsideRth": {
+      "type": "boolean",
+      "description": "Indicates whether data from outside regular trading hours is included in the response."
+     },
+     "tradingDayDuration": {
+      "type": "integer",
+      "description": "Length of instrument's trading day in seconds.",
+      "format": "int64"
+     },
+     "volumeFactor": {
+      "type": "integer",
+      "description": "Internal use. Used to scale volume histograms.",
+      "format": "int64"
+     },
+     "priceDisplayRule": {
+      "type": "integer",
+      "description": "Internal use. Governs application of pricing display rule.",
+      "format": "int64"
+     },
+     "priceDisplayValue": {
+      "type": "string",
+      "description": "Internal use. Governs rendering of displayed pricing."
+     },
+     "chartPanStartTime": {
+      "type": "string",
+      "description": "Internal use. UTC datetime string used to center Client Portal charts. Format YYYYMMDD-hh:mm:ss."
+     },
+     "direction": {
+      "type": "integer",
+      "description": "Indicates how the period is applied in relation to the startTime. Value will always be -1, indicating that the period extends from the startTime forward into the future.",
+      "format": "int64",
+      "enum": [
+       -1
+      ]
+     },
+     "negativeCapable": {
+      "type": "boolean",
+      "description": "Indicates whether instrument is capable of negative pricing."
+     },
+     "messageVersion": {
+      "type": "integer",
+      "description": "Internal use. Reflects the version of the response schema used.",
+      "format": "int64"
+     },
+     "travelTime": {
+      "type": "integer",
+      "description": "Internal time in flight to serve the request.",
+      "format": "int64"
+     },
+     "data": {
+      "type": "array",
+      "description": "Array containing OHLC bars for the requested period.",
+      "items": {
+       "$ref": "#/components/schemas/singleHistoricalBarLast"
+      }
+     },
+     "points": {
+      "type": "integer",
+      "description": "Count of the number of bars returned in the data array.",
+      "format": "int64"
+     },
+     "mktDataDelay": {
+      "type": "integer",
+      "description": "Number of milliseconds taken to satisfy this historical data request.",
+      "format": "int64"
+     }
+    },
+    "description": "Object containing the requested historical data and related metadata."
+   },
+   "iserverHistoryMidpointResponse": {
+    "type": "object",
+    "properties": {
+     "serverId": {
+      "type": "string",
+      "description": "Internal use. Identifier of the request."
+     },
+     "symbol": {
+      "type": "string",
+      "description": "Symbol of the request instrument."
+     },
+     "text": {
+      "type": "string",
+      "description": "Description or company name of the instrument."
+     },
+     "priceFactor": {
+      "type": "integer",
+      "description": "Internal use. Used to scale Client Portal chart Y-axis.",
+      "format": "int64"
+     },
+     "startTime": {
+      "type": "string",
+      "description": "UTC date and time of the start (chronologically earlier) of the complete period in format YYYYMMDD-hh:mm:ss."
+     },
+     "high": {
+      "type": "string",
+      "description": "Internal use. Delivers highest price value in total interval. Used for chart scaling. A string constructed as 'highestPrice*priceFactor/totalVolume*volumeFactor/minutesFromStartTime'."
+     },
+     "low": {
+      "type": "string",
+      "description": "Internal use. Delivers lowest price value in total interval. Used for chart scaling. A string constructed as 'lowestPrice*priceFactor/totalVolume*volumeFactor/minutesFromStartTime'."
+     },
+     "timePeriod": {
+      "type": "string",
+      "description": "The client-specified period value."
+     },
+     "barLength": {
+      "type": "integer",
+      "description": "The client-specified bar width, represented in seconds.",
+      "format": "int64"
+     },
+     "mdAvailability": {
+      "type": "string",
+      "description": "A three-character string reflecting the nature of available data. R = Realtime, D = Delayed, Z = Frozen, Y = Frozen Delayed, N = Not Subscribed. P = Snapshot, p = Consolidated. B = Top of book."
+     },
+     "outsideRth": {
+      "type": "boolean",
+      "description": "Indicates whether data from outside regular trading hours is included in the response."
+     },
+     "tradingDayDuration": {
+      "type": "integer",
+      "description": "Length of instrument's trading day in seconds.",
+      "format": "int64"
+     },
+     "volumeFactor": {
+      "type": "integer",
+      "description": "Internal use. Used to scale volume histograms.",
+      "format": "int64"
+     },
+     "priceDisplayRule": {
+      "type": "integer",
+      "description": "Internal use. Governs application of pricing display rule.",
+      "format": "int64"
+     },
+     "priceDisplayValue": {
+      "type": "string",
+      "description": "Internal use. Governs rendering of displayed pricing."
+     },
+     "chartPanStartTime": {
+      "type": "string",
+      "description": "Internal use. UTC datetime string used to center Client Portal charts. Format YYYYMMDD-hh:mm:ss."
+     },
+     "direction": {
+      "type": "integer",
+      "description": "Indicates how the period is applied in relation to the startTime. Value will always be -1, indicating that the period extends from the startTime forward into the future.",
+      "format": "int64",
+      "enum": [
+       -1
+      ]
+     },
+     "negativeCapable": {
+      "type": "boolean",
+      "description": "Indicates whether instrument is capable of negative pricing."
+     },
+     "messageVersion": {
+      "type": "integer",
+      "description": "Internal use. Reflects the version of the response schema used.",
+      "format": "int64"
+     },
+     "travelTime": {
+      "type": "integer",
+      "description": "Internal time in flight to serve the request.",
+      "format": "int64"
+     },
+     "data": {
+      "type": "array",
+      "description": "Array containing OHLC bars for the requested period.",
+      "items": {
+       "$ref": "#/components/schemas/singleHistoricalBarMidpoint"
+      }
+     },
+     "points": {
+      "type": "integer",
+      "description": "Count of the number of bars returned in the data array.",
+      "format": "int64"
+     },
+     "mktDataDelay": {
+      "type": "integer",
+      "description": "Number of milliseconds taken to satisfy this historical data request.",
+      "format": "int64"
+     }
+    },
+    "description": "Object containing the requested historical data and related metadata."
+   },
+   "singleHistoricalBarMidpoint": {
+    "type": "object",
+    "properties": {
+     "o": {
+      "type": "number",
+      "description": "Opening value of the bar. Indicates the starting midpoint price traded price during the bar."
+     },
+     "c": {
+      "type": "number",
+      "description": "Closing value of the bar. Indicates the last midpoint price traded price during the bar."
+     },
+     "h": {
+      "type": "number",
+      "description": "High value of the bar. Indicates the highest midpoint price traded price during the bar."
+     },
+     "l": {
+      "type": "number",
+      "description": "Low value of the bar. Indicates the lowest midpoint price traded price during the bar."
+     },
+     "v": {
+      "type": "number",
+      "description": "Volume value of the bar. Always returns 0."
+     },
+     "t": {
+      "type": "integer",
+      "description": "Unix timestamp of the start (chronologically earlier) of the bar.",
+      "format": "int64"
+     }
+    },
+    "description": "Object containing Midpoint data for a single OHLC bar."
+   },
+   "singleHistoricalBarLast": {
+    "type": "object",
+    "properties": {
+     "o": {
+      "type": "number",
+      "description": "Opening value of the bar. Indicates first traded price of the bar."
+     },
+     "c": {
+      "type": "number",
+      "description": "Closing value of the bar. Indicates the final traded price of the bar."
+     },
+     "h": {
+      "type": "number",
+      "description": "High value of the bar. Indicates the highest traded price of the bar."
+     },
+     "l": {
+      "type": "number",
+      "description": "Low value of the bar. Indicates the lowest traded price of the bar."
+     },
+     "v": {
+      "type": "number",
+      "description": "Volume value of the bar, returned only for \"Last\" barType."
+     },
+     "t": {
+      "type": "integer",
+      "description": "Unix timestamp of the start (chronologically earlier) of the bar.",
+      "format": "int64"
+     }
+    },
+    "description": "Object containing Last or Trades data for a single OHLC bar."
+   },
+   "singleHistoricalBarBidAsk": {
+    "type": "object",
+    "properties": {
+     "o": {
+      "type": "number",
+      "description": "Opening value of the bar. Indicates the time average bid during the bar."
+     },
+     "c": {
+      "type": "number",
+      "description": "Closing value of the bar. Indicates the time average ask during the bar."
+     },
+     "h": {
+      "type": "number",
+      "description": "High value of the bar. Indicates the highest ask price during the bar."
+     },
+     "l": {
+      "type": "number",
+      "description": "Low value of the bar. Indicates the lowest bid price during the bar."
+     },
+     "v": {
+      "type": "number",
+      "description": "Volume value of the bar. Always returns 0."
+     },
+     "t": {
+      "type": "integer",
+      "description": "Unix timestamp of the start (chronologically earlier) of the bar.",
+      "format": "int64"
+     }
+    },
+    "description": "Object containing Bid and Ask data for a single OHLC bar."
+   },
+   "errorResponse": {
+    "type": "object",
+    "properties": {
+     "error": {
+      "type": "string",
+      "description": "error reason"
+     },
+     "statusCode": {
+      "type": "integer",
+      "description": "mimic response status code",
+      "format": "int64"
+     }
+    }
+   },
+   "errorOnlyResponse": {
+    "type": "object",
+    "properties": {
+     "error": {
+      "type": "string",
+      "description": "error reason"
+     }
+    }
+   },
+   "ErrorResponse": {
+    "type": "object",
+    "properties": {
+     "status": {
+      "type": "integer",
+      "format": "int64"
+     },
+     "error": {
+      "type": "string"
+     },
+     "message": {
+      "type": "string"
+     }
+    }
+   }
+  },
+  "responses": {
+   "BadRequest": {
+    "description": "Missing, empty, non-numeric, or out-of-range parameter. The `error` field is always prefixed with `Bad Request:`.",
+    "content": {
+     "application/json": {
+      "schema": {
+       "$ref": "#/components/schemas/ErrorResponse"
+      },
+      "examples": {
+       "missingParam": {
+        "summary": "Required parameter absent",
+        "value": {
+         "error": "Bad Request: Missing required param: userName",
+         "statusCode": 400
+        }
+       },
+       "emptyParam": {
+        "summary": "String parameter present but empty or whitespace",
+        "value": {
+         "error": "Bad Request: userName must not be empty",
+         "statusCode": 400
+        }
+       },
+       "tooLong": {
+        "summary": "String parameter exceeds maximum length of 64",
+        "value": {
+         "error": "Bad Request: userName exceeds maximum allowed length of 64",
+         "statusCode": 400
+        }
+       },
+       "notNumeric": {
+        "summary": "Non-numeric or decimal value for an integer parameter",
+        "value": {
+         "error": "Bad Request: restrictionId must be a numeric value",
+         "statusCode": 400
+        }
+       },
+       "restrictionIdOutOfRange": {
+        "summary": "restrictionId ≤ 0",
+        "value": {
+         "error": "Bad Request: restrictionId is out of range",
+         "statusCode": 400
+        }
+       },
+       "listIdOutOfRange": {
+        "summary": "listId ≤ 0 or > 2147483647",
+        "value": {
+         "error": "Bad Request: listId is out of range",
+         "statusCode": 400
+        }
+       }
+      }
+     }
+    }
+   },
+   "Unauthorized": {
+    "description": "Missing, invalid, or unparseable Authorization token.",
+    "content": {
+     "application/json": {
+      "schema": {
+       "$ref": "#/components/schemas/ErrorResponse"
+      },
+      "examples": {
+       "unauthorized": {
+        "value": {
+         "error": "Unauthorized",
+         "statusCode": 401
+        }
+       }
+      }
+     }
+    }
+   },
+   "InternalServerError": {
+    "description": "internal server error, returned when incoming request cannot be processed. It can sometimes include subset of bad requests.  For example, wrong accountId passed and it can only be detected later in handling request. Error contains reason of the problem.\n",
+    "content": {
+     "application/json": {
+      "schema": {
+       "$ref": "#/components/schemas/errorOnlyResponse"
+      }
+     }
+    }
+   },
+   "ServiceUnavailable": {
+    "description": "service is unavailable. For example if request takes more than 10s due to some internal service unavailability,  request aborted and this status returned\n",
+    "content": {
+     "application/json; charset=utf-8": {
+      "schema": {
+       "$ref": "#/components/schemas/errorResponse"
+      }
+     }
+    }
+   }
+  }
+ }
+}
