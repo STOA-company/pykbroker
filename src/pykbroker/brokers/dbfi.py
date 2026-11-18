@@ -188,9 +188,12 @@ class DBFI(BaseBroker):
                 else:
                     usd = [row for page in self._balance_pages() for row in page["Out1"]
                            if row.get("CrcyCode") == "USD"]
-                    if len(usd) != 1:
+                    if not usd:
+                        cash = Decimal(0)  # 달러 예수금 줄이 없는 계좌 = 달러 현금 0(11-18 운영 4계좌). 2줄 이상만 오류.
+                    elif len(usd) != 1:
                         raise InvalidResponseError("DBFI native cash requires one USD row")
-                    cash = min(decimal(usd[0]["FcurrDps"]), decimal(usd[0]["AstkMnyoutAbleAmt"]))
+                    else:
+                        cash = min(decimal(usd[0]["FcurrDps"]), decimal(usd[0]["AstkMnyoutAbleAmt"]))
                 return Balance(currency="USD", cash_available=cash,
                                position_value=sum((p.market_value for p in self.get_positions()), Decimal(0)))
             data = self._balance_pages()[0]["Out"]

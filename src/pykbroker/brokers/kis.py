@@ -387,6 +387,10 @@ class KIS(BaseBroker):
         if not isinstance(rows, list):
             raise InvalidResponseError("KIS native cash block missing")
         usd = [row for row in rows if field(row, "crcy_cd") == "USD"]
+        if not usd:
+            # 달러 예수금 줄이 아예 없는 계좌(한 번도 달러를 넣지 않음)는 «달러 현금 0» 이 사실이다.
+            # 11-18 운영 잔고조회 4계좌가 이 경우로 매 회차 실패하던 것을 고친다. 2줄 이상은 모호해 그대로 오류.
+            return Decimal(0)
         if len(usd) != 1:
             raise InvalidResponseError("KIS native cash requires one USD row")
         return min(decimal(field(usd[0], "frcr_dncl_amt_2")), decimal(field(usd[0], "frcr_drwg_psbl_amt_1")))
