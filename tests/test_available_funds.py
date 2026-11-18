@@ -263,3 +263,33 @@ def test_kis_kr_explicit_unified_cash100_is_budget_not_balance(kis, value):
     before = scope.client.request.call_count
     assert broker.available_cash() == Decimal("200000")
     assert scope.client.request.call_count == before
+
+
+@pytest.mark.parametrize("broker_type", ["kis", "dbfi"])
+@pytest.mark.parametrize("rows,expect", [(0, Decimal("0")), (2, "raise")])
+def test_us_native_cash_no_usd_row_is_zero_two_rows_raise(broker_type, rows, expect):
+    """11-18: 달러 예수금 줄이 없는 계좌는 현금 0(매 회차 실패 대신), 2줄 이상은 모호해 오류 그대로."""
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from pykbroker.brokers.dbfi import DBFI
+    from pykbroker.brokers.kis import KIS
+    from pykbroker.exceptions import InvalidResponseError
+    client, api, scope = Mock(), Mock(), Mock()
+    if broker_type == "kis":
+        usd = {"crcy_cd": "USD", "frcr_dncl_amt_2": "100", "frcr_drwg_psbl_amt_1": "80"}
+        client.key = SimpleNamespace(virtual_account=False)
+        client.account.return_value = scope
+        api.get_balances.return_value = {"rt_cd": "0", "output1": [], "output2": [
+            {"crcy_cd": "KRW", "frcr_dncl_amt_2": "5", "frcr_drwg_psbl_amt_1": "5"}] + [usd] * rows}
+        broker = KIS(account="fixture", market="US", venue="NASDAQ", client=client, api=api, is_integrated=True)
+    else:
+        usd = {"CrcyCode": "USD", "FcurrDps": "100", "AstkMnyoutAbleAmt": "80", "CrcyOrdAbleAmt0": "9999"}
+        client.get_stock_balance.return_value = [{"rsp_cd": "00000", "Out2": [], "Out1": [
+            {"CrcyCode": "KRW", "FcurrDps": "5", "AstkMnyoutAbleAmt": "5"}] + [usd] * rows}]
+        broker = DBFI(account="fixture", market="US", venue="NASDAQ", client=client, is_integrated=True)
+    if expect == "raise":
+        with pytest.raises(InvalidResponseError, match="one USD row"):
+            broker.get_balance()
+    else:
+        assert broker.get_balance().cash_available == expect
