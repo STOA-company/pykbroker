@@ -263,3 +263,236 @@ def test_kis_kr_explicit_unified_cash100_is_budget_not_balance(kis, value):
     before = scope.client.request.call_count
     assert broker.available_cash() == Decimal("200000")
     assert scope.client.request.call_count == before
+
+
+@pytest.mark.parametrize("broker_type", ["kis", "dbfi"])
+@pytest.mark.parametrize("rows,expect", [(0, Decimal("0")), (2, "raise")])
+def test_us_native_cash_no_usd_row_is_zero_two_rows_raise(broker_type, rows, expect):
+    """11-18: 달러 예수금 줄이 없는 계좌는 현금 0(매 회차 실패 대신), 2줄 이상은 모호해 오류 그대로."""
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from pykbroker.brokers.dbfi import DBFI
+    from pykbroker.brokers.kis import KIS
+    from pykbroker.exceptions import InvalidResponseError
+    client, api, scope = Mock(), Mock(), Mock()
+    if broker_type == "kis":
+        usd = {"crcy_cd": "USD", "frcr_dncl_amt_2": "100", "frcr_drwg_psbl_amt_1": "80"}
+        client.key = SimpleNamespace(virtual_account=False)
+        client.account.return_value = scope
+        api.get_balances.return_value = {"rt_cd": "0", "output1": [], "output2": [
+            {"crcy_cd": "KRW", "frcr_dncl_amt_2": "5", "frcr_drwg_psbl_amt_1": "5"}] + [usd] * rows}
+        broker = KIS(account="fixture", market="US", venue="NASDAQ", client=client, api=api, is_integrated=True)
+    else:
+        usd = {"CrcyCode": "USD", "FcurrDps": "100", "AstkMnyoutAbleAmt": "80", "CrcyOrdAbleAmt0": "9999"}
+        client.get_stock_balance.return_value = [{"rsp_cd": "00000", "Out2": [], "Out1": [
+            {"CrcyCode": "KRW", "FcurrDps": "5", "AstkMnyoutAbleAmt": "5"}] + [usd] * rows}]
+        broker = DBFI(account="fixture", market="US", venue="NASDAQ", client=client, is_integrated=True)
+    if expect == "raise":
+        with pytest.raises(InvalidResponseError, match="one USD row"):
+            broker.get_balance()
+    else:
+        assert broker.get_balance().cash_available == expect
+
+
+@pytest.mark.parametrize("payload", [
+    {"json_data": {"output1": [], "output2": []}, "tr_cont": "D"},
+    {"json_data": {"rt_cd": None, "output1": [], "output2": []}, "tr_cont": "D"},
+    {"output1": [], "output2": []},
+    {"rt_cd": None, "output1": [], "output2": []},
+])
+def test_kis_us_native_cash_requires_explicit_success_status(payload):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from pykbroker.brokers.kis import KIS
+
+    client, api, scope = Mock(), Mock(), Mock()
+    client.key = SimpleNamespace(virtual_account=False)
+    client.account.return_value = scope
+    api.get_balances.return_value = payload
+    broker = KIS(account="fixture", market="US", venue="NASDAQ", client=client, api=api, is_integrated=True)
+    with pytest.raises(InvalidResponseError, match="success status"):
+        broker.get_balance()
+
+
+@pytest.mark.parametrize("pages", [
+    [{"Out1": [], "Out2": []}],
+    [{"rsp_cd": None, "Out1": [], "Out2": []}],
+    [{"rsp_cd": "0", "Out1": [], "Out2": []}],
+    [{"rsp_cd": "00000", "Out1": [], "Out2": []}, {"Out1": [], "Out2": []}],
+    [{"rsp_cd": "00000", "Out1": [], "Out2": []}, {"rsp_cd": "0", "Out1": [], "Out2": []}],
+    [None],
+])
+def test_dbfi_us_native_cash_requires_explicit_success_status(pages):
+    from unittest.mock import Mock
+
+    from pykbroker.brokers.dbfi import DBFI
+
+    client = Mock()
+    client.get_stock_balance.return_value = pages
+    broker = DBFI(account="fixture", market="US", venue="NASDAQ", client=client, is_integrated=True)
+    with pytest.raises(InvalidResponseError, match="success status"):
+        broker.get_balance()
+
+
+@pytest.mark.parametrize("pages,match", [
+    ([{"rsp_cd": "00000", "Out1": "", "Out2": []}], "block missing"),
+    ([{"rsp_cd": "00000", "Out1": {}, "Out2": []}], "block missing"),
+    ([{"rsp_cd": "00000", "Out1": None, "Out2": []}], "block missing"),
+    ([{"rsp_cd": "00000", "Out2": []}], "block missing"),
+    ([{"rsp_cd": "00000", "Out1": [], "Out2": []}, {"rsp_cd": "00000", "Out1": "", "Out2": []}], "block missing"),
+    ([{"rsp_cd": "00000", "Out1": [{}], "Out2": []}], "currency code"),
+    ([{"rsp_cd": "00000", "Out1": [{"CrcyCode": ""}], "Out2": []}], "currency code"),
+    ([{"rsp_cd": "00000", "Out1": [{"CrcyCode": "   "}], "Out2": []}], "currency code"),
+    ([{"rsp_cd": "00000", "Out1": [{"CrcyCode": None}], "Out2": []}], "currency code"),
+    ([{"rsp_cd": "00000", "Out1": [None], "Out2": []}], "currency code"),
+    ([{"rsp_cd": "00000", "Out1": ["err"], "Out2": []}], "currency code"),
+])
+def test_dbfi_us_native_cash_rejects_non_list_out1_and_malformed_rows(pages, match):
+    from unittest.mock import Mock
+
+    from pykbroker.brokers.dbfi import DBFI
+
+    client = Mock()
+    client.get_stock_balance.return_value = pages
+    broker = DBFI(account="fixture", market="US", venue="NASDAQ", client=client, is_integrated=True)
+    with pytest.raises(InvalidResponseError, match=match):
+        broker.get_balance()
+
+
+@pytest.mark.parametrize("rows", [
+    [None],
+    [{}],
+    ["err"],
+    [{"crcy_cd": ""}],
+    [{"crcy_cd": "   "}],
+    [{"crcy_cd": None}],
+])
+def test_kis_us_native_cash_rejects_malformed_rows(rows):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from pykbroker.brokers.kis import KIS
+
+    client, api, scope = Mock(), Mock(), Mock()
+    client.key = SimpleNamespace(virtual_account=False)
+    client.account.return_value = scope
+    api.get_balances.return_value = {"json_data": {"rt_cd": "0", "output1": [], "output2": rows}, "tr_cont": "D"}
+    broker = KIS(account="fixture", market="US", venue="NASDAQ", client=client, api=api, is_integrated=True)
+    with pytest.raises(InvalidResponseError, match="currency code"):
+        broker.get_balance()
+
+
+def test_kis_us_native_cash_empty_output2_and_object_rows_via_pykis_envelope():
+    from types import SimpleNamespace
+
+    from pykbroker.brokers.kis import KIS
+    from tests.vendor_chain import VendorClient, VendorOverseas
+
+    vendor_client = VendorClient(virtual=False, fixtures={})
+    vendor_api = VendorOverseas(fixtures={})
+    vendor_client.scope.us_cash_rows = []
+    broker = KIS(account="fixture", market="US", venue="NASDAQ",
+                 client=vendor_client, api=vendor_api, is_integrated=True)
+    balance = broker.get_balance()
+    assert balance.currency == "USD"
+    assert balance.cash_available == Decimal("0")
+    assert balance.position_value == Decimal("0")
+    assert balance.total == Decimal("0")
+    assert balance.orderable_cash is None
+
+    vendor_client.scope.us_cash_rows = [SimpleNamespace(crcy_cd="KRW")]
+    assert broker.get_balance().cash_available == Decimal("0")
+    vendor_client.scope.us_cash_rows = [SimpleNamespace(crcy_cd="")]
+    with pytest.raises(InvalidResponseError, match="currency code"):
+        broker.get_balance()
+
+
+@pytest.mark.parametrize("pages", [
+    [{"rsp_cd": "00000", "Out1": [], "Out2": []}],
+    [
+        {"rsp_cd": "00000", "Out1": [{"CrcyCode": "KRW", "FcurrDps": "5", "AstkMnyoutAbleAmt": "5"}], "Out2": []},
+        {"rsp_cd": "00000", "Out1": [], "Out2": []},
+    ],
+    [
+        {"rsp_cd": "00000", "Out1": [{"CrcyCode": "KRW", "FcurrDps": "5", "AstkMnyoutAbleAmt": "5"}], "Out2": []},
+        {"rsp_cd": "00000", "Out1": [{"CrcyCode": "JPY", "FcurrDps": "10", "AstkMnyoutAbleAmt": "10"}], "Out2": []},
+    ],
+])
+def test_dbfi_us_native_cash_empty_and_multipage_no_usd_is_zero(pages):
+    from unittest.mock import Mock
+
+    from pykbroker.brokers.dbfi import DBFI
+
+    client = Mock()
+    client.get_stock_balance.return_value = pages
+    broker = DBFI(account="fixture", market="US", venue="NASDAQ", client=client, is_integrated=True)
+    balance = broker.get_balance()
+    assert balance.currency == "USD"
+    assert balance.cash_available == Decimal("0")
+    assert balance.position_value == Decimal("0")
+    assert balance.total == Decimal("0")
+    assert balance.orderable_cash is None
+
+
+@pytest.mark.parametrize("broker_type", ["kis", "dbfi"])
+def test_us_native_cash_zero_preserves_holdings_and_available_cash_separation(broker_type):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from pykbroker.brokers.dbfi import DBFI
+    from pykbroker.brokers.kis import KIS
+
+    if broker_type == "kis":
+        client, api, scope = Mock(), Mock(), Mock()
+        client.key = SimpleNamespace(virtual_account=False)
+        client.account.return_value = scope
+        scope.account.build_body.side_effect = lambda params: params
+        scope.client.request.return_value = SimpleNamespace(
+            status_code=200,
+            json=lambda: {"rt_cd": "0", "output": {
+                "usd_itgr_ord_psbl_amt": "150.25", "usd_gnrl_ord_psbl_amt": "0",
+            }},
+        )
+        api.get_balances.return_value = {
+            "json_data": {
+                "rt_cd": "0",
+                "output1": [{
+                    "pdno": "AAPL", "prdt_name": "Apple",
+                    "ccld_qty_smtl1": "2", "ord_psbl_qty1": "2",
+                    "avg_unpr3": "100", "ovrs_now_pric1": "120.50", "frcr_evlu_amt2": "241.00",
+                }],
+                "output2": [],
+            },
+            "tr_cont": "D",
+        }
+        broker = KIS(account="fixture", market="US", venue="NASDAQ", client=client, api=api, is_integrated=True)
+    else:
+        client = Mock()
+        client.get_stock_balance.return_value = [{
+            "rsp_cd": "00000",
+            "Out1": [],
+            "Out2": [{
+                "SymCode": "AAPL", "AstkHanglIsuNm": "Apple",
+                "AstkExecBaseQty": "2", "AstkOrdAbleQty": "2",
+                "AstkAvrPchsPrc": "100", "AstkNowPrc": "120.50", "AstkEvalAmt": "241.00",
+            }],
+        }]
+        client.get_able_order_quantity.return_value = {
+            "rsp_cd": "00000",
+            "Out": {"CsldtMgnUseYn": "Y", "AstkOrdAbleAmt0": "150.25", "AstkOrdAbleAmt": "0"},
+        }
+        broker = DBFI(account="fixture", market="US", venue="NASDAQ", client=client, is_integrated=True)
+
+    balance = broker.get_balance()
+    assert balance.currency == "USD"
+    assert balance.cash_available == Decimal("0")
+    assert balance.position_value == Decimal("241.00")
+    assert balance.total == balance.position_value
+    assert balance.orderable_cash is None
+    if broker_type == "kis":
+        scope.client.request.assert_not_called()
+    else:
+        client.get_able_order_quantity.assert_not_called()
+    assert broker.available_cash() == Decimal("150.25")

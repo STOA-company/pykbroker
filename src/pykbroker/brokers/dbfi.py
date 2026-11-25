@@ -186,11 +186,27 @@ class DBFI(BaseBroker):
                 if self._cash_provider is not None:
                     cash = decimal(self._cash_provider(client))
                 else:
-                    usd = [row for page in self._balance_pages() for row in page["Out1"]
-                           if row.get("CrcyCode") == "USD"]
-                    if len(usd) != 1:
+                    usd = []
+                    for page in self._balance_pages():
+                        if not isinstance(page, Mapping) or page.get("rsp_cd") != "00000":
+                            raise InvalidResponseError("DBFI native cash response lacks a success status")
+                        out1 = page.get("Out1")
+                        if not isinstance(out1, list):
+                            raise InvalidResponseError("DBFI native cash block missing")
+                        for row in out1:
+                            if not isinstance(row, Mapping):
+                                raise InvalidResponseError("DBFI native cash row missing currency code")
+                            code = row.get("CrcyCode")
+                            if not isinstance(code, str) or not code.strip():
+                                raise InvalidResponseError("DBFI native cash row missing currency code")
+                            if code == "USD":
+                                usd.append(row)
+                    if not usd:
+                        cash = Decimal(0)  # 달러 예수금 줄이 없는 계좌 = 달러 현금 0(11-18 운영 4계좌). 2줄 이상만 오류.
+                    elif len(usd) != 1:
                         raise InvalidResponseError("DBFI native cash requires one USD row")
-                    cash = min(decimal(usd[0]["FcurrDps"]), decimal(usd[0]["AstkMnyoutAbleAmt"]))
+                    else:
+                        cash = min(decimal(usd[0]["FcurrDps"]), decimal(usd[0]["AstkMnyoutAbleAmt"]))
                 return Balance(currency="USD", cash_available=cash,
                                position_value=sum((p.market_value for p in self.get_positions()), Decimal(0)))
             data = self._balance_pages()[0]["Out"]
